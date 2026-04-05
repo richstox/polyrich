@@ -20,6 +20,8 @@ const marketSnapshotSchema = new mongoose.Schema({
   spread: String,
   volume24hr: String,
   liquidity: String,
+  endDate: String,
+  hoursLeft: Number,
   scanId: String,
   createdAt: {
     type: Date,
@@ -65,6 +67,14 @@ async function fetchPolymarkets() {
   return results.flat();
 }
 
+function getHoursLeft(endDate) {
+  if (!endDate) return null;
+  const end = new Date(endDate).getTime();
+  const now = Date.now();
+  const diffMs = end - now;
+  return diffMs / (1000 * 60 * 60);
+}
+
 async function runScan() {
   console.log("running auto scan...");
 
@@ -90,12 +100,18 @@ async function runScan() {
       const volume = Number(item.volume24hr || item.volume || 0);
       const spread = Number(item.spread || 999);
       const priceYes = Number(prices[0] || 0);
+      const endDate = item.endDate || "";
+      const hoursLeft = getHoursLeft(endDate);
+
+      const nearEndBonus =
+        hoursLeft !== null && hoursLeft > 0 && hoursLeft < 72 ? 300 : 0;
 
       const score =
-        liquidity * 0.4 +
-        volume * 0.4 +
-        (spread > 0 ? (1 / spread) * 1000 : 0) * 0.2 +
-        (priceYes > 0.1 && priceYes < 0.9 ? 500 : 0);
+        liquidity * 0.35 +
+        volume * 0.35 +
+        (spread > 0 ? (1 / spread) * 1000 : 0) * 0.15 +
+        (priceYes > 0.1 && priceYes < 0.9 ? 500 : 0) +
+        nearEndBonus;
 
       return {
         question: item.question,
@@ -107,11 +123,13 @@ async function runScan() {
         spread: item.spread,
         volume24hr: item.volume24hr || 0,
         liquidity: item.liquidityNum || item.liquidity || 0,
+        endDate,
+        hoursLeft,
         score
       };
     })
     .sort((a, b) => b.score - a.score)
-    .slice(0, 80);
+    .slice(0, 120);
 
   if (candidates.length > 0) {
     await MarketSnapshot.insertMany(
@@ -125,6 +143,8 @@ async function runScan() {
         spread: String(item.spread),
         volume24hr: String(item.volume24hr),
         liquidity: String(item.liquidity),
+        endDate: item.endDate,
+        hoursLeft: item.hoursLeft,
         scanId
       }))
     );
@@ -182,14 +202,15 @@ const server = http.createServer(async (req, res) => {
       <p>Scan byl právě spuštěn ručně.</p>
       <p><a href="/ideas">Otevřít scanner dashboard</a></p>
       <ol>
-        ${candidates.map((item) => `
+        ${candidates.slice(0, 30).map((item) => `
           <li style="margin-bottom:18px;">
             <strong>${item.question}</strong><br>
-            category: ${item.category}<br>
             YES: ${item.priceYes} | NO: ${item.priceNo}<br>
-            bestBid: ${item.bestBid} | bestAsk: ${item.bestAsk} | spread: ${item.spread}<br>
+            spread: ${item.spread}<br>
+            liquidity: ${item.liquidity}<br>
             volume24hr: ${item.volume24hr}<br>
-            liquidity: ${item.liquidity}
+            endDate: ${item.endDate || "-"}<br>
+            hoursLeft: ${item.hoursLeft !== null ? item.hoursLeft.toFixed(1) : "-"}
           </li>
         `).join("")}
       </ol>
@@ -210,11 +231,12 @@ const server = http.createServer(async (req, res) => {
         ${items.map((item) => `
           <li style="margin-bottom:16px;">
             <strong>${item.question}</strong><br>
-            category: ${item.category}<br>
             YES: ${item.priceYes} | NO: ${item.priceNo}<br>
             spread: ${item.spread}<br>
-            volume24hr: ${item.volume24hr}<br>
             liquidity: ${item.liquidity}<br>
+            volume24hr: ${item.volume24hr}<br>
+            endDate: ${item.endDate || "-"}<br>
+            hoursLeft: ${item.hoursLeft !== null ? item.hoursLeft.toFixed(1) : "-"}<br>
             scanId: ${item.scanId || "-"}<br>
             createdAt: ${new Date(item.createdAt).toLocaleString("cs-CZ")}
           </li>
@@ -239,18 +261,23 @@ const server = http.createServer(async (req, res) => {
           const spread = Number(item.spread || 999);
           const liquidity = Number(item.liquidity || 0);
           const volume24hr = Number(item.volume24hr || 0);
+          const hoursLeft = Number(item.hoursLeft);
 
-          const tradable =
+          const intraday =
             latestYes > 0.15 &&
             latestYes < 0.85 &&
             spread > 0 &&
             spread < 0.15 &&
-            liquidity > 100;
+            liquidity > 100 &&
+            hoursLeft > 0 &&
+            hoursLeft < 72;
 
           const score =
             (volume24hr / 1000) * 3 +
             (liquidity / 1000) * 2 -
             spread * 50 +
+            (hoursLeft < 24 ? 10 : 0) +
+            (hoursLeft < 12 ? 10 : 0) +
             (latestYes > 0.2 && latestYes < 0.8 ? 5 : 0);
 
           return {
@@ -260,12 +287,14 @@ const server = http.createServer(async (req, res) => {
             spread,
             liquidity,
             volume24hr,
+            endDate: item.endDate || "",
+            hoursLeft,
             score,
-            tradable
+            intraday
           };
         })
-        .filter((item) => item.tradable)
-        .sort((a, b) => b.score - a.score);
+        .filter((item) => item.intraday)
+        .sort((a, b) => a.hoursLeft - b.hoursLeft || b.score - a.score);
     }
 
     scanStatus.lastInterestingCount = ideas.length;
@@ -279,22 +308,23 @@ const server = http.createServer(async (req, res) => {
         <p><strong>Další scan:</strong> ${scanStatus.nextScanAt ? scanStatus.nextScanAt.toLocaleString("cs-CZ") : "nenaplánován"}</p>
         <p><strong>Stažených marketů:</strong> ${scanStatus.lastTotalFetched}</p>
         <p><strong>Uložených kandidátů:</strong> ${scanStatus.lastSavedCount}</p>
-        <p><strong>Zajímavých nápadů:</strong> ${scanStatus.lastInterestingCount}</p>
+        <p><strong>Intraday nápadů:</strong> ${scanStatus.lastInterestingCount}</p>
         <p><strong>Poslední scanId:</strong> ${scanStatus.lastScanId || "-"}</p>
         <p><strong>Chyba:</strong> ${scanStatus.lastError || "žádná"}</p>
       </div>
 
-      <p>Tady jsou nejlepší aktuální kandidáti z posledního scanu.</p>
+      <p>Tady jsou markety, které končí relativně brzo a mají šanci být použitelné pro kratší trading.</p>
 
       <ol>
         ${ideas.slice(0, 30).map((item) => `
           <li style="margin-bottom:18px;">
             <strong>${item.question}</strong><br>
-            category: ${item.category}<br>
             YES: ${item.latestYes}<br>
             spread: ${item.spread}<br>
             liquidity: ${item.liquidity}<br>
             volume24hr: ${item.volume24hr}<br>
+            endDate: ${item.endDate || "-"}<br>
+            hoursLeft: ${item.hoursLeft.toFixed(1)}<br>
             score: ${item.score.toFixed(2)}
           </li>
         `).join("")}
