@@ -12,15 +12,33 @@ const settingsSchema = new mongoose.Schema({
 
 const Settings = mongoose.model("Settings", settingsSchema);
 
+const categories = [
+  { key: "politics", label: "Politics" },
+  { key: "sports", label: "Sports" },
+  { key: "crypto", label: "Crypto" },
+  { key: "tech", label: "Tech" },
+  { key: "culture", label: "Culture" },
+  { key: "world", label: "World" }
+];
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
 
   if (url.pathname === "/") {
+    const html = `
+      <h1>Polyrich</h1>
+      <p>Vyber kategorii:</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        ${categories.map((cat) => `
+          <a href="/category/${cat.key}" style="padding:10px 14px;border:1px solid #ccc;text-decoration:none;border-radius:8px;">
+            ${cat.label}
+          </a>
+        `).join("")}
+      </div>
+    `;
+
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(`
-      <h1>polyrich ok</h1>
-      <p><a href="/tags">Otevřít kategorie</a></p>
-    `);
+    res.end(html);
     return;
   }
 
@@ -42,23 +60,39 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === "/tags") {
-    const response = await fetch("https://gamma-api.polymarket.com/tags");
+  if (url.pathname.startsWith("/category/")) {
+    const key = url.pathname.replace("/category/", "");
+
+    const response = await fetch("https://gamma-api.polymarket.com/markets?closed=false");
     const data = await response.json();
 
-    const top = data.slice(0, 30);
+    const filtered = data.filter((item) => {
+      const category = String(item.category || "").toLowerCase();
+      return category.includes(key);
+    });
+
+    const top = filtered.slice(0, 30);
 
     const html = `
-      <h1>Kategorie</h1>
-      <p>Klikni na kategorii:</p>
+      <h1>Kategorie: ${key}</h1>
+      <p><a href="/">← Zpět</a></p>
       <ul>
-        ${top.map((item) => `
-          <li>
-            ${item.label || item.slug || item.id}
-          </li>
-        `).join("")}
+        ${top.map((item) => {
+          let prices = ["?", "?"];
+          try {
+            prices = JSON.parse(item.outcomePrices || "[\"?\",\"?\"]");
+          } catch (e) {}
+
+          return `
+            <li style="margin-bottom:16px;">
+              <strong>${item.question}</strong><br>
+              YES: ${prices[0]} | NO: ${prices[1]}<br>
+              volume: ${item.volume || 0}<br>
+              endDate: ${item.endDate || "-"}
+            </li>
+          `;
+        }).join("")}
       </ul>
-      <p><a href="/">Zpět</a></p>
     `;
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
