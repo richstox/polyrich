@@ -1,4 +1,9 @@
 const http = require("http");
+const mongoose = require("mongoose");
+
+mongoose.connect(process.env.MONGO_URL)
+  .then(() => console.log("mongo connected"))
+  .catch((err) => console.error("mongo error", err));
 
 const server = http.createServer((req, res) => {
   if (req.url === "/") {
@@ -11,7 +16,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify({
       ok: true,
-      hasMongoUrl: !!process.env.MONGO_URL
+      mongoReady: mongoose.connection.readyState
     }));
     return;
   }
