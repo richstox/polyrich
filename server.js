@@ -47,11 +47,17 @@ let scanStatus = {
   lastError: null
 };
 
+async function fetchPolymarkets() {
+  const response = await fetch(
+    "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=1000&order=volume24hr&dir=desc"
+  );
+  return response.json();
+}
+
 async function runScan() {
   console.log("running auto scan...");
 
-  const response = await fetch("https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=200");
-  const data = await response.json();
+  const data = await fetchPolymarkets();
 
   const candidates = data
     .filter((item) =>
@@ -72,8 +78,8 @@ async function runScan() {
       const volume = Number(item.volume24hr || item.volume || 0);
       const spread = Number(item.spread || 999);
       const score =
-        liquidity * 0.5 +
-        volume * 0.3 +
+        liquidity * 0.4 +
+        volume * 0.4 +
         (spread > 0 ? (1 / spread) * 1000 : 0) * 0.2;
 
       return {
@@ -90,7 +96,7 @@ async function runScan() {
       };
     })
     .sort((a, b) => b.score - a.score)
-    .slice(0, 20);
+    .slice(0, 50);
 
   if (candidates.length > 0) {
     await MarketSnapshot.insertMany(
@@ -115,7 +121,6 @@ async function runScan() {
   scanStatus.nextScanAt = next;
   scanStatus.lastSavedCount = candidates.length;
   scanStatus.lastTotalFetched = data.length;
-  scanStatus.lastInterestingCount = candidates.length;
   scanStatus.lastError = null;
 
   console.log(`auto scan done: ${candidates.length} candidates saved`);
@@ -150,7 +155,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname.startsWith("/category/")) {
     const key = url.pathname.replace("/category/", "");
 
-    const response = await fetch("https://gamma-api.polymarket.com/markets?closed=false");
+    const response = await fetch("https://gamma-api.polymarket.com/markets?closed=false&limit=300");
     const data = await response.json();
 
     const filtered = data.filter((item) => {
@@ -283,8 +288,7 @@ const server = http.createServer(async (req, res) => {
         spreadDiff: latestSpread - previousSpread,
         latestLiquidity,
         previousLiquidity,
-        liquidityDiff: latestLiquidity - previousLiquidity,
-        latestCreatedAt: latest.createdAt
+        liquidityDiff: latestLiquidity - previousLiquidity
       });
     }
 
@@ -340,17 +344,17 @@ const server = http.createServer(async (req, res) => {
 
       const tradable =
         spread > 0 &&
-        spread < 0.03 &&
-        liquidity > 1000 &&
-        latestYes > 0.1 &&
-        latestYes < 0.9 &&
-        move > 0.01;
+        spread < 0.1 &&
+        liquidity > 100 &&
+        latestYes > 0.05 &&
+        latestYes < 0.95 &&
+        move > 0.005;
 
       const score =
         move * 100 +
         (liquidity / 1000) * 2 +
         (volume24hr / 1000) -
-        spread * 100;
+        spread * 50;
 
       if (tradable) {
         ideas.push({
@@ -369,6 +373,8 @@ const server = http.createServer(async (req, res) => {
 
     ideas.sort((a, b) => b.score - a.score);
 
+    scanStatus.lastInterestingCount = ideas.length;
+
     const html = `
       <h1>Scanner dashboard</h1>
       <p><a href="/">← Zpět</a></p>
@@ -378,14 +384,14 @@ const server = http.createServer(async (req, res) => {
         <p><strong>Další scan:</strong> ${scanStatus.nextScanAt ? scanStatus.nextScanAt.toLocaleString("cs-CZ") : "nenaplánován"}</p>
         <p><strong>Stažených marketů:</strong> ${scanStatus.lastTotalFetched}</p>
         <p><strong>Uložených kandidátů:</strong> ${scanStatus.lastSavedCount}</p>
-        <p><strong>Zajímavých tradable nápadů:</strong> ${ideas.length}</p>
+        <p><strong>Zajímavých tradable nápadů:</strong> ${scanStatus.lastInterestingCount}</p>
         <p><strong>Chyba:</strong> ${scanStatus.lastError || "žádná"}</p>
       </div>
 
-      <p>Tady jsou kandidáti, kde je pohyb, rozumná likvidita a rozumný spread.</p>
+      <p>Tady jsou kandidáti, kde je pohyb, likvidita a spread už není extrémně špatný.</p>
 
       <ol>
-        ${ideas.slice(0, 20).map((item) => `
+        ${ideas.slice(0, 30).map((item) => `
           <li style="margin-bottom:18px;">
             <strong>${item.question}</strong><br>
             category: ${item.category}<br>
