@@ -26,7 +26,7 @@ const marketSnapshotSchema = new mongoose.Schema({
   }
 });
 
-const Settings = mongoose.model("Settings", settingsSchema);
+const MarketSnapshot = mongoose.model("MarketSnapshot", marketSnapshotSchema);
 
 const categories = [
   { key: "politics", label: "Politics" },
