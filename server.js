@@ -20,6 +20,7 @@ const marketSnapshotSchema = new mongoose.Schema({
   spread: String,
   volume24hr: String,
   liquidity: String,
+  scanId: String,
   createdAt: {
     type: Date,
     default: Date.now
@@ -44,20 +45,31 @@ let scanStatus = {
   lastSavedCount: 0,
   lastTotalFetched: 0,
   lastInterestingCount: 0,
-  lastError: null
+  lastError: null,
+  lastScanId: null
 };
 
 async function fetchPolymarkets() {
-  const response = await fetch(
-    "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=1000&order=volume24hr&dir=desc"
+  const urls = [
+    "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=500&offset=0&order=volume24hr&dir=desc",
+    "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=500&offset=500&order=volume24hr&dir=desc"
+  ];
+
+  const results = await Promise.all(
+    urls.map(async (url) => {
+      const response = await fetch(url);
+      return response.json();
+    })
   );
-  return response.json();
+
+  return results.flat();
 }
 
 async function runScan() {
   console.log("running auto scan...");
 
   const data = await fetchPolymarkets();
+  const scanId = new Date().toISOString();
 
   const candidates = data
     .filter((item) =>
@@ -112,7 +124,8 @@ async function runScan() {
         bestAsk: String(item.bestAsk),
         spread: String(item.spread),
         volume24hr: String(item.volume24hr),
-        liquidity: String(item.liquidity)
+        liquidity: String(item.liquidity),
+        scanId
       }))
     );
   }
@@ -125,6 +138,7 @@ async function runScan() {
   scanStatus.lastSavedCount = candidates.length;
   scanStatus.lastTotalFetched = data.length;
   scanStatus.lastError = null;
+  scanStatus.lastScanId = scanId;
 
   console.log(`auto scan done: ${candidates.length} candidates saved`);
   return candidates;
@@ -146,48 +160,7 @@ const server = http.createServer(async (req, res) => {
       </div>
       <p style="margin-top:20px;"><a href="/scan">Spustit scan teď</a></p>
       <p><a href="/snapshots">Snapshoty</a></p>
-      <p><a href="/changes">Změny</a></p>
       <p><a href="/ideas">Scanner dashboard</a></p>
-    `;
-
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(html);
-    return;
-  }
-
-  if (url.pathname.startsWith("/category/")) {
-    const key = url.pathname.replace("/category/", "");
-
-    const response = await fetch("https://gamma-api.polymarket.com/markets?closed=false&limit=300");
-    const data = await response.json();
-
-    const filtered = data.filter((item) => {
-      const category = String(item.category || "").toLowerCase();
-      return category.includes(key);
-    });
-
-    const top = filtered.slice(0, 30);
-
-    const html = `
-      <h1>Kategorie: ${key}</h1>
-      <p><a href="/">← Zpět</a></p>
-      <ul>
-        ${top.map((item) => {
-          let prices = ["?", "?"];
-          try {
-            prices = JSON.parse(item.outcomePrices || "[\"?\",\"?\"]");
-          } catch (e) {}
-
-          return `
-            <li style="margin-bottom:16px;">
-              <strong>${item.question}</strong><br>
-              YES: ${prices[0]} | NO: ${prices[1]}<br>
-              volume: ${item.volume || 0}<br>
-              endDate: ${item.endDate || "-"}
-            </li>
-          `;
-        }).join("")}
-      </ul>
     `;
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -242,6 +215,7 @@ const server = http.createServer(async (req, res) => {
             spread: ${item.spread}<br>
             volume24hr: ${item.volume24hr}<br>
             liquidity: ${item.liquidity}<br>
+            scanId: ${item.scanId || "-"}<br>
             createdAt: ${new Date(item.createdAt).toLocaleString("cs-CZ")}
           </li>
         `).join("")}
@@ -253,125 +227,46 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === "/changes") {
-    const items = await MarketSnapshot.find().sort({ createdAt: -1 }).lean();
-
-    const latestByQuestion = new Map();
-    const previousByQuestion = new Map();
-
-    for (const item of items) {
-      if (!latestByQuestion.has(item.question)) {
-        latestByQuestion.set(item.question, item);
-      } else if (!previousByQuestion.has(item.question)) {
-        previousByQuestion.set(item.question, item);
-      }
-    }
-
-    const changes = [];
-
-    for (const [question, latest] of latestByQuestion.entries()) {
-      const previous = previousByQuestion.get(question);
-      if (!previous) continue;
-
-      const latestYes = Number(latest.priceYes || 0);
-      const previousYes = Number(previous.priceYes || 0);
-      const latestSpread = Number(latest.spread || 0);
-      const previousSpread = Number(previous.spread || 0);
-      const latestLiquidity = Number(latest.liquidity || 0);
-      const previousLiquidity = Number(previous.liquidity || 0);
-
-      changes.push({
-        question,
-        category: latest.category || "",
-        latestYes,
-        previousYes,
-        yesDiff: latestYes - previousYes,
-        latestSpread,
-        previousSpread,
-        spreadDiff: latestSpread - previousSpread,
-        latestLiquidity,
-        previousLiquidity,
-        liquidityDiff: latestLiquidity - previousLiquidity
-      });
-    }
-
-    changes.sort((a, b) => Math.abs(b.yesDiff) - Math.abs(a.yesDiff));
-
-    const html = `
-      <h1>Změny</h1>
-      <p><a href="/">← Zpět</a></p>
-      <ul>
-        ${changes.slice(0, 30).map((item) => `
-          <li style="margin-bottom:18px;">
-            <strong>${item.question}</strong><br>
-            category: ${item.category}<br>
-            YES změna: ${item.previousYes} → ${item.latestYes} (${item.yesDiff >= 0 ? "+" : ""}${item.yesDiff.toFixed(3)})<br>
-            spread změna: ${item.previousSpread} → ${item.latestSpread} (${item.spreadDiff >= 0 ? "+" : ""}${item.spreadDiff.toFixed(3)})<br>
-            liquidity změna: ${item.previousLiquidity} → ${item.latestLiquidity} (${item.liquidityDiff >= 0 ? "+" : ""}${item.liquidityDiff.toFixed(2)})
-          </li>
-        `).join("")}
-      </ul>
-    `;
-
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(html);
-    return;
-  }
-
   if (url.pathname === "/ideas") {
-    const items = await MarketSnapshot.find().sort({ createdAt: -1 }).lean();
+    let ideas = [];
 
-    const latestByQuestion = new Map();
-    const previousByQuestion = new Map();
+    if (scanStatus.lastScanId) {
+      const items = await MarketSnapshot.find({ scanId: scanStatus.lastScanId }).lean();
 
-    for (const item of items) {
-      if (!latestByQuestion.has(item.question)) {
-        latestByQuestion.set(item.question, item);
-      } else if (!previousByQuestion.has(item.question)) {
-        previousByQuestion.set(item.question, item);
-      }
+      ideas = items
+        .map((item) => {
+          const latestYes = Number(item.priceYes || 0);
+          const spread = Number(item.spread || 999);
+          const liquidity = Number(item.liquidity || 0);
+          const volume24hr = Number(item.volume24hr || 0);
+
+          const tradable =
+            latestYes > 0.15 &&
+            latestYes < 0.85 &&
+            spread > 0 &&
+            spread < 0.15 &&
+            liquidity > 100;
+
+          const score =
+            (volume24hr / 1000) * 3 +
+            (liquidity / 1000) * 2 -
+            spread * 50 +
+            (latestYes > 0.2 && latestYes < 0.8 ? 5 : 0);
+
+          return {
+            question: item.question,
+            category: item.category || "",
+            latestYes,
+            spread,
+            liquidity,
+            volume24hr,
+            score,
+            tradable
+          };
+        })
+        .filter((item) => item.tradable)
+        .sort((a, b) => b.score - a.score);
     }
-
-    const ideas = [];
-
-    for (const [question, latest] of latestByQuestion.entries()) {
-      const previous = previousByQuestion.get(question);
-      if (!previous) continue;
-
-      const latestYes = Number(latest.priceYes || 0);
-      const previousYes = Number(previous.priceYes || 0);
-      const spread = Number(latest.spread || 999);
-      const liquidity = Number(latest.liquidity || 0);
-      const volume24hr = Number(latest.volume24hr || 0);
-      const move = Math.abs(latestYes - previousYes);
-
-      const tradable =
-        move > 0 &&
-        latestYes > 0.15 &&
-        latestYes < 0.85;
-
-      const score =
-        move * 100 +
-        (liquidity / 1000) * 2 +
-        (volume24hr / 1000) -
-        spread * 50;
-
-      if (tradable) {
-        ideas.push({
-          question,
-          category: latest.category || "",
-          latestYes,
-          previousYes,
-          move,
-          spread,
-          liquidity,
-          volume24hr,
-          score
-        });
-      }
-    }
-
-    ideas.sort((a, b) => b.score - a.score);
 
     scanStatus.lastInterestingCount = ideas.length;
 
@@ -385,18 +280,18 @@ const server = http.createServer(async (req, res) => {
         <p><strong>Stažených marketů:</strong> ${scanStatus.lastTotalFetched}</p>
         <p><strong>Uložených kandidátů:</strong> ${scanStatus.lastSavedCount}</p>
         <p><strong>Zajímavých nápadů:</strong> ${scanStatus.lastInterestingCount}</p>
+        <p><strong>Poslední scanId:</strong> ${scanStatus.lastScanId || "-"}</p>
         <p><strong>Chyba:</strong> ${scanStatus.lastError || "žádná"}</p>
       </div>
 
-      <p>Tady jsou markety, kde se cena pohnula a YES není extrémně blízko 0 nebo 1.</p>
+      <p>Tady jsou nejlepší aktuální kandidáti z posledního scanu.</p>
 
       <ol>
         ${ideas.slice(0, 30).map((item) => `
           <li style="margin-bottom:18px;">
             <strong>${item.question}</strong><br>
             category: ${item.category}<br>
-            YES: ${item.previousYes} → ${item.latestYes}<br>
-            move: ${item.move.toFixed(3)}<br>
+            YES: ${item.latestYes}<br>
             spread: ${item.spread}<br>
             liquidity: ${item.liquidity}<br>
             volume24hr: ${item.volume24hr}<br>
