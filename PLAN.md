@@ -145,3 +145,10 @@ Projekt je úspěšný, když:
 - bezpečně odešle obchod
 - uloží vše do databáze
 - umí běžet automaticky bez ruční práce
+
+## Aktualni rozhodnuti
+- ted jeste nebudeme delat realne obchody
+- nejdriv udelame bezpecne backend napojeni
+- relayer api key sam o sobe nestaci
+- citlive klice nebudou v githubu ani v mongo
+- citlive klice budou jen v Railway Variables
