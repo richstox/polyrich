@@ -13,13 +13,15 @@ const settingsSchema = new mongoose.Schema({
 const Settings = mongoose.model("Settings", settingsSchema);
 
 const server = http.createServer(async (req, res) => {
-  if (req.url === "/") {
+  const url = new URL(req.url, "http://localhost");
+
+  if (url.pathname === "/") {
     res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("polyrich ok");
     return;
   }
 
-  if (req.url === "/save-settings") {
+  if (url.pathname === "/save-settings") {
     const item = await Settings.create({
       walletAddress: "sem_prijde_wallet",
       privateKey: "sem_prijde_private_key"
@@ -30,18 +32,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.url === "/settings") {
+  if (url.pathname === "/settings") {
     const items = await Settings.find().sort({ _id: -1 }).lean();
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(items));
     return;
   }
 
-  if (req.url === "/markets") {
+  if (url.pathname === "/markets") {
+    const limit = Number(url.searchParams.get("limit")) || 20;
+
     const response = await fetch("https://gamma-api.polymarket.com/markets?closed=false");
     const data = await response.json();
 
-    const simple = data.slice(0, 20).map((item) => ({
+    const simple = data.slice(0, limit).map((item) => ({
       question: item.question,
       priceYes: JSON.parse(item.outcomePrices)[0],
       priceNo: JSON.parse(item.outcomePrices)[1],
