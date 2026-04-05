@@ -77,10 +77,13 @@ async function runScan() {
       const liquidity = Number(item.liquidityNum || item.liquidity || 0);
       const volume = Number(item.volume24hr || item.volume || 0);
       const spread = Number(item.spread || 999);
+      const priceYes = Number(prices[0] || 0);
+
       const score =
         liquidity * 0.4 +
         volume * 0.4 +
-        (spread > 0 ? (1 / spread) * 1000 : 0) * 0.2;
+        (spread > 0 ? (1 / spread) * 1000 : 0) * 0.2 +
+        (priceYes > 0.1 && priceYes < 0.9 ? 500 : 0);
 
       return {
         question: item.question,
@@ -96,7 +99,7 @@ async function runScan() {
       };
     })
     .sort((a, b) => b.score - a.score)
-    .slice(0, 50);
+    .slice(0, 80);
 
   if (candidates.length > 0) {
     await MarketSnapshot.insertMany(
@@ -342,7 +345,10 @@ const server = http.createServer(async (req, res) => {
       const volume24hr = Number(latest.volume24hr || 0);
       const move = Math.abs(latestYes - previousYes);
 
-      const tradable = move > 0;
+      const tradable =
+        move > 0 &&
+        latestYes > 0.15 &&
+        latestYes < 0.85;
 
       const score =
         move * 100 +
@@ -382,7 +388,7 @@ const server = http.createServer(async (req, res) => {
         <p><strong>Chyba:</strong> ${scanStatus.lastError || "žádná"}</p>
       </div>
 
-      <p>Tady jsou markety, kde se mezi snapshoty pohnula cena YES.</p>
+      <p>Tady jsou markety, kde se cena pohnula a YES není extrémně blízko 0 nebo 1.</p>
 
       <ol>
         ${ideas.slice(0, 30).map((item) => `
