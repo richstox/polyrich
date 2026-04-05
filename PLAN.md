@@ -152,3 +152,13 @@ Projekt je úspěšný, když:
 - relayer api key sam o sobe nestaci
 - citlive klice nebudou v githubu ani v mongo
 - citlive klice budou jen v Railway Variables
+
+- ## Co uz funguje navic
+- app se umi pripojit na Polymarket
+- app umi nacist otevrene trhy
+- app umi zobrazit jednoduchy vystup:
+  - question
+  - priceYes
+  - priceNo
+  - volume
+  - endDate
