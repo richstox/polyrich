@@ -19,7 +19,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(`
       <h1>polyrich ok</h1>
-      <p><a href="/events">Otevřít skupiny marketů</a></p>
+      <p><a href="/tags">Otevřít kategorie</a></p>
     `);
     return;
   }
@@ -42,68 +42,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === "/events") {
-    const response = await fetch("https://gamma-api.polymarket.com/events?active=true&closed=false");
+  if (url.pathname === "/tags") {
+    const response = await fetch("https://gamma-api.polymarket.com/tags");
     const data = await response.json();
 
     const top = data.slice(0, 30);
 
     const html = `
-      <h1>Skupiny marketů</h1>
-      <p>Klikni na skupinu:</p>
+      <h1>Kategorie</h1>
+      <p>Klikni na kategorii:</p>
       <ul>
         ${top.map((item) => `
           <li>
-            <a href="/event/${item.slug}">
-              ${item.title || item.slug}
-            </a>
+            ${item.label || item.slug || item.id}
           </li>
         `).join("")}
       </ul>
       <p><a href="/">Zpět</a></p>
-    `;
-
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(html);
-    return;
-  }
-
-  if (url.pathname.startsWith("/event/")) {
-    const slug = url.pathname.replace("/event/", "");
-
-    const response = await fetch("https://gamma-api.polymarket.com/events?active=true&closed=false");
-    const data = await response.json();
-
-    const event = data.find((item) => item.slug === slug);
-
-    if (!event) {
-      res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-      res.end("<h1>Skupina nenalezena</h1><p><a href='/events'>Zpět</a></p>");
-      return;
-    }
-
-    const markets = (event.markets || []).map((item) => {
-      let prices = ["?", "?"];
-      try {
-        prices = JSON.parse(item.outcomePrices || "[\"?\",\"?\"]");
-      } catch (e) {}
-
-      return `
-        <li>
-          <strong>${item.question}</strong><br>
-          YES: ${prices[0]} | NO: ${prices[1]}<br>
-          volume: ${item.volume || 0}<br>
-          endDate: ${item.endDate || "-"}
-        </li>
-      `;
-    }).join("");
-
-    const html = `
-      <h1>${event.title || event.slug}</h1>
-      <p><a href="/events">← Zpět na skupiny</a></p>
-      <ul>
-        ${markets || "<li>Žádné markety</li>"}
-      </ul>
     `;
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
