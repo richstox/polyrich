@@ -164,6 +164,12 @@ async function runScan() {
   return candidates;
 }
 
+function formatHoursLeft(hoursLeft) {
+  if (hoursLeft === null || Number.isNaN(hoursLeft)) return "-";
+  if (hoursLeft < 1) return `${(hoursLeft * 60).toFixed(0)} min`;
+  return `${hoursLeft.toFixed(1)} h`;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
 
@@ -210,7 +216,7 @@ const server = http.createServer(async (req, res) => {
             liquidity: ${item.liquidity}<br>
             volume24hr: ${item.volume24hr}<br>
             endDate: ${item.endDate || "-"}<br>
-            hoursLeft: ${item.hoursLeft !== null ? item.hoursLeft.toFixed(1) : "-"}
+            hoursLeft: ${item.hoursLeft !== null ? formatHoursLeft(item.hoursLeft) : "-"}
           </li>
         `).join("")}
       </ol>
@@ -236,7 +242,7 @@ const server = http.createServer(async (req, res) => {
             liquidity: ${item.liquidity}<br>
             volume24hr: ${item.volume24hr}<br>
             endDate: ${item.endDate || "-"}<br>
-            hoursLeft: ${item.hoursLeft !== null ? item.hoursLeft.toFixed(1) : "-"}<br>
+            hoursLeft: ${item.hoursLeft !== null ? formatHoursLeft(item.hoursLeft) : "-"}<br>
             scanId: ${item.scanId || "-"}<br>
             createdAt: ${new Date(item.createdAt).toLocaleString("cs-CZ")}
           </li>
@@ -255,47 +261,68 @@ const server = http.createServer(async (req, res) => {
     if (scanStatus.lastScanId) {
       const items = await MarketSnapshot.find({ scanId: scanStatus.lastScanId }).lean();
 
-      ideas = items
-        .map((item) => {
-          const latestYes = Number(item.priceYes || 0);
-          const spread = Number(item.spread || 999);
-          const liquidity = Number(item.liquidity || 0);
-          const volume24hr = Number(item.volume24hr || 0);
-          const hoursLeft = Number(item.hoursLeft);
+      ideas = items.map((item) => {
+        const latestYes = Number(item.priceYes || 0);
+        const spread = Number(item.spread || 999);
+        const liquidity = Number(item.liquidity || 0);
+        const volume24hr = Number(item.volume24hr || 0);
+        const hoursLeft = Number(item.hoursLeft);
 
-          const intraday =
-            latestYes > 0.15 &&
-            latestYes < 0.85 &&
-            spread > 0 &&
-            spread < 0.15 &&
-            liquidity > 100 &&
-            hoursLeft > 0 &&
-            hoursLeft < 72;
+        const isNearEnd = hoursLeft > 0 && hoursLeft < 72;
+        const isGoodPrice = latestYes > 0.2 && latestYes < 0.8;
+        const isTightSpread = spread > 0 && spread <= 0.03;
+        const isLiquid = liquidity > 1000;
 
-          const score =
-            (volume24hr / 1000) * 3 +
-            (liquidity / 1000) * 2 -
-            spread * 50 +
-            (hoursLeft < 24 ? 10 : 0) +
-            (hoursLeft < 12 ? 10 : 0) +
-            (latestYes > 0.2 && latestYes < 0.8 ? 5 : 0);
+        const intraday =
+          latestYes > 0.15 &&
+          latestYes < 0.85 &&
+          spread > 0 &&
+          spread < 0.15 &&
+          liquidity > 100 &&
+          hoursLeft > 0 &&
+          hoursLeft < 72;
 
-          return {
-            question: item.question,
-            category: item.category || "",
-            latestYes,
-            spread,
-            liquidity,
-            volume24hr,
-            endDate: item.endDate || "",
-            hoursLeft,
-            score,
-            intraday
-          };
-        })
-        .filter((item) => item.intraday)
-        .sort((a, b) => a.hoursLeft - b.hoursLeft || b.score - a.score);
+        const score =
+          (volume24hr / 1000) * 3 +
+          (liquidity / 1000) * 2 -
+          spread * 50 +
+          (hoursLeft < 24 ? 10 : 0) +
+          (hoursLeft < 12 ? 10 : 0) +
+          (isGoodPrice ? 5 : 0) +
+          (isTightSpread ? 5 : 0);
+
+        let note = "watch";
+        if (intraday && isNearEnd && isGoodPrice && isTightSpread && isLiquid) {
+          note = "best intraday";
+        } else if (intraday && isNearEnd) {
+          note = "near end";
+        } else if (intraday && isTightSpread) {
+          note = "tight spread";
+        }
+
+        return {
+          question: item.question,
+          category: item.category || "",
+          latestYes,
+          spread,
+          liquidity,
+          volume24hr,
+          endDate: item.endDate || "",
+          hoursLeft,
+          score,
+          intraday,
+          note
+        };
+      }).filter((item) => item.intraday);
     }
+
+    const soonestIdeas = [...ideas]
+      .sort((a, b) => a.hoursLeft - b.hoursLeft)
+      .slice(0, 10);
+
+    const bestIdeas = [...ideas]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
 
     scanStatus.lastInterestingCount = ideas.length;
 
@@ -313,18 +340,35 @@ const server = http.createServer(async (req, res) => {
         <p><strong>Chyba:</strong> ${scanStatus.lastError || "žádná"}</p>
       </div>
 
-      <p>Tady jsou markety, které končí relativně brzo a mají šanci být použitelné pro kratší trading.</p>
-
+      <h2>Nejbližší konce</h2>
       <ol>
-        ${ideas.slice(0, 30).map((item) => `
+        ${soonestIdeas.map((item) => `
           <li style="margin-bottom:18px;">
             <strong>${item.question}</strong><br>
+            tag: ${item.note}<br>
             YES: ${item.latestYes}<br>
             spread: ${item.spread}<br>
             liquidity: ${item.liquidity}<br>
             volume24hr: ${item.volume24hr}<br>
             endDate: ${item.endDate || "-"}<br>
-            hoursLeft: ${item.hoursLeft.toFixed(1)}<br>
+            hoursLeft: ${formatHoursLeft(item.hoursLeft)}<br>
+            score: ${item.score.toFixed(2)}
+          </li>
+        `).join("")}
+      </ol>
+
+      <h2>Nejlepší intraday kandidáti</h2>
+      <ol>
+        ${bestIdeas.map((item) => `
+          <li style="margin-bottom:18px;">
+            <strong>${item.question}</strong><br>
+            tag: ${item.note}<br>
+            YES: ${item.latestYes}<br>
+            spread: ${item.spread}<br>
+            liquidity: ${item.liquidity}<br>
+            volume24hr: ${item.volume24hr}<br>
+            endDate: ${item.endDate || "-"}<br>
+            hoursLeft: ${formatHoursLeft(item.hoursLeft)}<br>
             score: ${item.score.toFixed(2)}
           </li>
         `).join("")}
