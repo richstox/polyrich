@@ -38,7 +38,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.url === "/markets") {
-    const response = await fetch("https://gamma-api.polymarket.com/markets");
+    const response = await fetch("https://gamma-api.polymarket.com/markets?closed=false");
     const data = await response.json();
 
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
