@@ -10,6 +10,22 @@ const settingsSchema = new mongoose.Schema({
   privateKey: String
 });
 
+const marketSnapshotSchema = new mongoose.Schema({
+  question: String,
+  category: String,
+  priceYes: String,
+  priceNo: String,
+  bestBid: String,
+  bestAsk: String,
+  spread: String,
+  volume24hr: String,
+  liquidity: String,
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
 const Settings = mongoose.model("Settings", settingsSchema);
 
 const categories = [
