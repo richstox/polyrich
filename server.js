@@ -38,6 +38,15 @@ const categories = [
   { key: "world", label: "World" }
 ];
 
+let scanStatus = {
+  lastScanAt: null,
+  nextScanAt: null,
+  lastSavedCount: 0,
+  lastTotalFetched: 0,
+  lastInterestingCount: 0,
+  lastError: null
+};
+
 async function runScan() {
   console.log("running auto scan...");
 
@@ -99,6 +108,16 @@ async function runScan() {
     );
   }
 
+  const now = new Date();
+  const next = new Date(now.getTime() + 5 * 60 * 1000);
+
+  scanStatus.lastScanAt = now;
+  scanStatus.nextScanAt = next;
+  scanStatus.lastSavedCount = candidates.length;
+  scanStatus.lastTotalFetched = data.length;
+  scanStatus.lastInterestingCount = candidates.length;
+  scanStatus.lastError = null;
+
   console.log(`auto scan done: ${candidates.length} candidates saved`);
   return candidates;
 }
@@ -120,7 +139,7 @@ const server = http.createServer(async (req, res) => {
       <p style="margin-top:20px;"><a href="/scan">Spustit scan teď</a></p>
       <p><a href="/snapshots">Snapshoty</a></p>
       <p><a href="/changes">Změny</a></p>
-      <p><a href="/ideas">Top kandidáti pro test trade</a></p>
+      <p><a href="/ideas">Scanner dashboard</a></p>
     `;
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -169,12 +188,18 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === "/scan") {
-    const candidates = await runScan();
+    let candidates = [];
+    try {
+      candidates = await runScan();
+    } catch (err) {
+      scanStatus.lastError = err.message;
+    }
 
     const html = `
       <h1>Scan trhu</h1>
       <p><a href="/">← Zpět</a></p>
       <p>Scan byl právě spuštěn ručně.</p>
+      <p><a href="/ideas">Otevřít scanner dashboard</a></p>
       <ol>
         ${candidates.map((item) => `
           <li style="margin-bottom:18px;">
@@ -345,9 +370,20 @@ const server = http.createServer(async (req, res) => {
     ideas.sort((a, b) => b.score - a.score);
 
     const html = `
-      <h1>Top kandidáti pro test trade</h1>
+      <h1>Scanner dashboard</h1>
       <p><a href="/">← Zpět</a></p>
-      <p>Automatický scan běží po startu a pak každých 5 minut.</p>
+
+      <div style="padding:12px;border:1px solid #ccc;border-radius:8px;margin-bottom:20px;">
+        <p><strong>Poslední scan:</strong> ${scanStatus.lastScanAt ? scanStatus.lastScanAt.toLocaleString("cs-CZ") : "zatím neproběhl"}</p>
+        <p><strong>Další scan:</strong> ${scanStatus.nextScanAt ? scanStatus.nextScanAt.toLocaleString("cs-CZ") : "nenaplánován"}</p>
+        <p><strong>Stažených marketů:</strong> ${scanStatus.lastTotalFetched}</p>
+        <p><strong>Uložených kandidátů:</strong> ${scanStatus.lastSavedCount}</p>
+        <p><strong>Zajímavých tradable nápadů:</strong> ${ideas.length}</p>
+        <p><strong>Chyba:</strong> ${scanStatus.lastError || "žádná"}</p>
+      </div>
+
+      <p>Tady jsou kandidáti, kde je pohyb, rozumná likvidita a rozumný spread.</p>
+
       <ol>
         ${ideas.slice(0, 20).map((item) => `
           <li style="margin-bottom:18px;">
@@ -380,6 +416,7 @@ server.listen(port, async () => {
   try {
     await runScan();
   } catch (err) {
+    scanStatus.lastError = err.message;
     console.error("initial auto scan failed", err);
   }
 
@@ -387,6 +424,7 @@ server.listen(port, async () => {
     try {
       await runScan();
     } catch (err) {
+      scanStatus.lastError = err.message;
       console.error("scheduled auto scan failed", err);
     }
   }, 5 * 60 * 1000);
