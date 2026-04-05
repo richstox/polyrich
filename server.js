@@ -55,6 +55,9 @@ const server = http.createServer(async (req, res) => {
       <p style="margin-top:20px;">
         <a href="/scan">Najít top markety pro první trade</a>
       </p>
+      <p style="margin-top:10px;">
+        <a href="/snapshots">Zobrazit uložené snapshoty</a>
+      </p>
     `;
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -182,6 +185,7 @@ const server = http.createServer(async (req, res) => {
     const html = `
       <h1>Top kandidáti pro první trade</h1>
       <p><a href="/">← Zpět</a></p>
+      <p><a href="/snapshots">Zobrazit uložené snapshoty</a></p>
       <ol>
         ${candidates.map((item) => `
           <li style="margin-bottom:18px;">
@@ -195,6 +199,33 @@ const server = http.createServer(async (req, res) => {
           </li>
         `).join("")}
       </ol>
+    `;
+
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(html);
+    return;
+  }
+
+  if (url.pathname === "/snapshots") {
+    const items = await MarketSnapshot.find().sort({ _id: -1 }).limit(50).lean();
+
+    const html = `
+      <h1>Uložené snapshoty</h1>
+      <p><a href="/">← Zpět</a></p>
+      <ul>
+        ${items.map((item) => `
+          <li style="margin-bottom:16px;">
+            <strong>${item.question}</strong><br>
+            category: ${item.category}<br>
+            YES: ${item.priceYes} | NO: ${item.priceNo}<br>
+            bestBid: ${item.bestBid} | bestAsk: ${item.bestAsk}<br>
+            spread: ${item.spread}<br>
+            volume24hr: ${item.volume24hr}<br>
+            liquidity: ${item.liquidity}<br>
+            createdAt: ${new Date(item.createdAt).toLocaleString("cs-CZ")}
+          </li>
+        `).join("")}
+      </ul>
     `;
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
