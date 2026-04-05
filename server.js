@@ -342,13 +342,7 @@ const server = http.createServer(async (req, res) => {
       const volume24hr = Number(latest.volume24hr || 0);
       const move = Math.abs(latestYes - previousYes);
 
-      const tradable =
-        spread > 0 &&
-        spread < 0.1 &&
-        liquidity > 100 &&
-        latestYes > 0.05 &&
-        latestYes < 0.95 &&
-        move > 0.005;
+      const tradable = move > 0;
 
       const score =
         move * 100 +
@@ -384,11 +378,11 @@ const server = http.createServer(async (req, res) => {
         <p><strong>Další scan:</strong> ${scanStatus.nextScanAt ? scanStatus.nextScanAt.toLocaleString("cs-CZ") : "nenaplánován"}</p>
         <p><strong>Stažených marketů:</strong> ${scanStatus.lastTotalFetched}</p>
         <p><strong>Uložených kandidátů:</strong> ${scanStatus.lastSavedCount}</p>
-        <p><strong>Zajímavých tradable nápadů:</strong> ${scanStatus.lastInterestingCount}</p>
+        <p><strong>Zajímavých nápadů:</strong> ${scanStatus.lastInterestingCount}</p>
         <p><strong>Chyba:</strong> ${scanStatus.lastError || "žádná"}</p>
       </div>
 
-      <p>Tady jsou kandidáti, kde je pohyb, likvidita a spread už není extrémně špatný.</p>
+      <p>Tady jsou markety, kde se mezi snapshoty pohnula cena YES.</p>
 
       <ol>
         ${ideas.slice(0, 30).map((item) => `
