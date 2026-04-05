@@ -42,8 +42,8 @@ let scanStatus = {
 
 async function fetchPolymarkets() {
   const urls = [
-    "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=500&offset=0&order=volume_24hr&ascending=false",
-    "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=500&offset=500&order=volume_24hr&ascending=false"
+    "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=500&offset=0",
+    "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=500&offset=500"
   ];
 
   const results = await Promise.all(
@@ -82,6 +82,12 @@ function asNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function formatVolume(volume) {
+  if (volume >= 1000000) return `${(volume / 1000000).toFixed(2)}M`;
+  if (volume >= 1000) return `${(volume / 1000).toFixed(1)}k`;
+  return volume.toFixed(2);
+}
+
 function normalizeMarket(item) {
   let prices = ["0", "0"];
   try {
@@ -117,12 +123,6 @@ function marketKey(item) {
   return item.marketSlug || item.question;
 }
 
-function formatVolume(volume) {
-  if (volume >= 1000000) return `${(volume / 1000000).toFixed(2)}M`;
-  if (volume >= 1000) return `${(volume / 1000).toFixed(1)}k`;
-  return volume.toFixed(2);
-}
-
 async function runScan() {
   console.log("running auto scan...");
 
@@ -139,34 +139,11 @@ async function runScan() {
       item.spread !== null
     )
     .map(normalizeMarket)
-    .map((item) => {
-      const nearEndBonus =
-        item.hoursLeft !== null && item.hoursLeft > 0 && item.hoursLeft < 72 ? 250 : 0;
-
-      const balancedPriceBonus =
-        item.priceYes > 0.15 && item.priceYes < 0.85 ? 250 : 0;
-
-      const tightSpreadBonus =
-        item.spread > 0 && item.spread <= 0.03 ? 200 : 0;
-
-      const liveVolumeBonus =
-        item.volume24hr >= 100 ? 400 : 0;
-
-      const score =
-        item.liquidity * 0.002 +
-        item.volume24hr * 2 +
-        (item.spread > 0 ? 1 / item.spread : 0) * 5 +
-        nearEndBonus +
-        balancedPriceBonus +
-        tightSpreadBonus +
-        liveVolumeBonus;
-
-      return {
-        ...item,
-        score
-      };
+    .sort((a, b) => {
+      const aScore = a.liquidity + a.volume24hr * 100 - a.spread * 1000;
+      const bScore = b.liquidity + b.volume24hr * 100 - b.spread * 1000;
+      return bScore - aScore;
     })
-    .sort((a, b) => b.score - a.score)
     .slice(0, 200);
 
   const previousScanId = scanStatus.lastScanId || null;
@@ -239,11 +216,11 @@ async function buildIdeas() {
     const moveBps = moveSigned * 10000;
 
     const nearEnd = hoursLeft !== null && hoursLeft > 0 && hoursLeft < 48;
-    const tightSpread = spread > 0 && spread <= 0.03;
-    const decentSpread = spread > 0 && spread <= 0.08;
     const balancedPrice = latestYes >= 0.20 && latestYes <= 0.80;
     const liquid = liquidity >= 1000;
     const liveVolume = volume24hr >= 100;
+    const tightSpread = spread > 0 && spread <= 0.03;
+    const decentSpread = spread > 0 && spread <= 0.08;
     const someMove = moveAbs >= 0.003;
 
     const intradayCandidate =
@@ -256,13 +233,13 @@ async function buildIdeas() {
       liveVolume;
 
     let tag = "watch";
-    if (intradayCandidate && tightSpread && someMove && nearEnd && liveVolume) {
+    if (intradayCandidate && tightSpread && someMove && nearEnd) {
       tag = "live intraday";
-    } else if (intradayCandidate && liveVolume && someMove) {
+    } else if (intradayCandidate && someMove) {
       tag = "moving";
-    } else if (intradayCandidate && liveVolume && nearEnd) {
+    } else if (intradayCandidate && nearEnd) {
       tag = "near expiry";
-    } else if (intradayCandidate && liveVolume && tightSpread) {
+    } else if (intradayCandidate && tightSpread) {
       tag = "tight spread";
     } else if (!liveVolume) {
       tag = "low activity";
