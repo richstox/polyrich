@@ -37,6 +37,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.url === "/markets") {
+    const response = await fetch("https://gamma-api.polymarket.com/markets");
+    const data = await response.json();
+
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(data.slice(0, 5), null, 2));
+    return;
+  }
+
   res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("not found");
 });
