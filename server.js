@@ -35,6 +35,9 @@ const server = http.createServer(async (req, res) => {
           </a>
         `).join("")}
       </div>
+      <p style="margin-top:20px;">
+        <a href="/scan">Najít top markety pro první trade</a>
+      </p>
     `;
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -93,6 +96,74 @@ const server = http.createServer(async (req, res) => {
           `;
         }).join("")}
       </ul>
+    `;
+
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(html);
+    return;
+  }
+
+  if (url.pathname === "/scan") {
+    const response = await fetch("https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=200");
+    const data = await response.json();
+
+    const candidates = data
+      .filter((item) =>
+        item.acceptingOrders === true &&
+        item.active === true &&
+        item.closed === false &&
+        item.bestBid !== null &&
+        item.bestAsk !== null &&
+        item.spread !== null
+      )
+      .map((item) => {
+        let prices = ["?", "?"];
+        try {
+          prices = JSON.parse(item.outcomePrices || "[\"?\",\"?\"]");
+        } catch (e) {}
+
+        const liquidity = Number(item.liquidityNum || item.liquidity || 0);
+        const volume = Number(item.volume24hr || item.volume || 0);
+        const spread = Number(item.spread || 999);
+        const score =
+          liquidity * 0.5 +
+          volume * 0.3 +
+          (spread > 0 ? (1 / spread) * 1000 : 0) * 0.2;
+
+        return {
+          question: item.question,
+          category: item.category || "",
+          priceYes: prices[0],
+          priceNo: prices[1],
+          bestBid: item.bestBid,
+          bestAsk: item.bestAsk,
+          spread: item.spread,
+          volume24hr: item.volume24hr || 0,
+          liquidity: item.liquidityNum || item.liquidity || 0,
+          rewardsMinSize: item.rewardsMinSize || 0,
+          rewardsMaxSpread: item.rewardsMaxSpread || 0,
+          score
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20);
+
+    const html = `
+      <h1>Top kandidáti pro první trade</h1>
+      <p><a href="/">← Zpět</a></p>
+      <ol>
+        ${candidates.map((item) => `
+          <li style="margin-bottom:18px;">
+            <strong>${item.question}</strong><br>
+            category: ${item.category}<br>
+            YES: ${item.priceYes} | NO: ${item.priceNo}<br>
+            bestBid: ${item.bestBid} | bestAsk: ${item.bestAsk} | spread: ${item.spread}<br>
+            volume24hr: ${item.volume24hr}<br>
+            liquidity: ${item.liquidity}<br>
+            rewardsMinSize: ${item.rewardsMinSize} | rewardsMaxSpread: ${item.rewardsMaxSpread}
+          </li>
+        `).join("")}
+      </ol>
     `;
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
