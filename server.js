@@ -58,6 +58,9 @@ const server = http.createServer(async (req, res) => {
       <p style="margin-top:10px;">
         <a href="/snapshots">Zobrazit uložené snapshoty</a>
       </p>
+      <p style="margin-top:10px;">
+        <a href="/changes">Zobrazit změny mezi snapshoty</a>
+      </p>
     `;
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -186,6 +189,7 @@ const server = http.createServer(async (req, res) => {
       <h1>Top kandidáti pro první trade</h1>
       <p><a href="/">← Zpět</a></p>
       <p><a href="/snapshots">Zobrazit uložené snapshoty</a></p>
+      <p><a href="/changes">Zobrazit změny mezi snapshoty</a></p>
       <ol>
         ${candidates.map((item) => `
           <li style="margin-bottom:18px;">
@@ -223,6 +227,73 @@ const server = http.createServer(async (req, res) => {
             volume24hr: ${item.volume24hr}<br>
             liquidity: ${item.liquidity}<br>
             createdAt: ${new Date(item.createdAt).toLocaleString("cs-CZ")}
+          </li>
+        `).join("")}
+      </ul>
+    `;
+
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(html);
+    return;
+  }
+
+  if (url.pathname === "/changes") {
+    const items = await MarketSnapshot.find().sort({ createdAt: -1 }).lean();
+
+    const latestByQuestion = new Map();
+    const previousByQuestion = new Map();
+
+    for (const item of items) {
+      if (!latestByQuestion.has(item.question)) {
+        latestByQuestion.set(item.question, item);
+      } else if (!previousByQuestion.has(item.question)) {
+        previousByQuestion.set(item.question, item);
+      }
+    }
+
+    const changes = [];
+
+    for (const [question, latest] of latestByQuestion.entries()) {
+      const previous = previousByQuestion.get(question);
+      if (!previous) continue;
+
+      const latestYes = Number(latest.priceYes || 0);
+      const previousYes = Number(previous.priceYes || 0);
+      const latestSpread = Number(latest.spread || 0);
+      const previousSpread = Number(previous.spread || 0);
+      const latestLiquidity = Number(latest.liquidity || 0);
+      const previousLiquidity = Number(previous.liquidity || 0);
+
+      changes.push({
+        question,
+        category: latest.category || "",
+        latestYes,
+        previousYes,
+        yesDiff: latestYes - previousYes,
+        latestSpread,
+        previousSpread,
+        spreadDiff: latestSpread - previousSpread,
+        latestLiquidity,
+        previousLiquidity,
+        liquidityDiff: latestLiquidity - previousLiquidity,
+        latestCreatedAt: latest.createdAt
+      });
+    }
+
+    changes.sort((a, b) => Math.abs(b.yesDiff) - Math.abs(a.yesDiff));
+
+    const html = `
+      <h1>Změny mezi snapshoty</h1>
+      <p><a href="/">← Zpět</a></p>
+      <ul>
+        ${changes.slice(0, 30).map((item) => `
+          <li style="margin-bottom:18px;">
+            <strong>${item.question}</strong><br>
+            category: ${item.category}<br>
+            YES změna: ${item.previousYes} → ${item.latestYes} (${item.yesDiff >= 0 ? "+" : ""}${item.yesDiff.toFixed(3)})<br>
+            spread změna: ${item.previousSpread} → ${item.latestSpread} (${item.spreadDiff >= 0 ? "+" : ""}${item.spreadDiff.toFixed(3)})<br>
+            liquidity změna: ${item.previousLiquidity} → ${item.latestLiquidity} (${item.liquidityDiff >= 0 ? "+" : ""}${item.liquidityDiff.toFixed(2)})<br>
+            poslední snapshot: ${new Date(item.latestCreatedAt).toLocaleString("cs-CZ")}
           </li>
         `).join("")}
       </ul>
