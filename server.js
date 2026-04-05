@@ -38,6 +38,71 @@ const categories = [
   { key: "world", label: "World" }
 ];
 
+async function runScan() {
+  console.log("running auto scan...");
+
+  const response = await fetch("https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=200");
+  const data = await response.json();
+
+  const candidates = data
+    .filter((item) =>
+      item.acceptingOrders === true &&
+      item.active === true &&
+      item.closed === false &&
+      item.bestBid !== null &&
+      item.bestAsk !== null &&
+      item.spread !== null
+    )
+    .map((item) => {
+      let prices = ["?", "?"];
+      try {
+        prices = JSON.parse(item.outcomePrices || "[\"?\",\"?\"]");
+      } catch (e) {}
+
+      const liquidity = Number(item.liquidityNum || item.liquidity || 0);
+      const volume = Number(item.volume24hr || item.volume || 0);
+      const spread = Number(item.spread || 999);
+      const score =
+        liquidity * 0.5 +
+        volume * 0.3 +
+        (spread > 0 ? (1 / spread) * 1000 : 0) * 0.2;
+
+      return {
+        question: item.question,
+        category: item.category || "",
+        priceYes: prices[0],
+        priceNo: prices[1],
+        bestBid: item.bestBid,
+        bestAsk: item.bestAsk,
+        spread: item.spread,
+        volume24hr: item.volume24hr || 0,
+        liquidity: item.liquidityNum || item.liquidity || 0,
+        score
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 20);
+
+  if (candidates.length > 0) {
+    await MarketSnapshot.insertMany(
+      candidates.map((item) => ({
+        question: item.question,
+        category: item.category,
+        priceYes: item.priceYes,
+        priceNo: item.priceNo,
+        bestBid: String(item.bestBid),
+        bestAsk: String(item.bestAsk),
+        spread: String(item.spread),
+        volume24hr: String(item.volume24hr),
+        liquidity: String(item.liquidity)
+      }))
+    );
+  }
+
+  console.log(`auto scan done: ${candidates.length} candidates saved`);
+  return candidates;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
 
@@ -52,7 +117,7 @@ const server = http.createServer(async (req, res) => {
           </a>
         `).join("")}
       </div>
-      <p style="margin-top:20px;"><a href="/scan">Scan trhu</a></p>
+      <p style="margin-top:20px;"><a href="/scan">Spustit scan teď</a></p>
       <p><a href="/snapshots">Snapshoty</a></p>
       <p><a href="/changes">Změny</a></p>
       <p><a href="/ideas">Top kandidáti pro test trade</a></p>
@@ -60,24 +125,6 @@ const server = http.createServer(async (req, res) => {
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(html);
-    return;
-  }
-
-  if (url.pathname === "/save-settings") {
-    const item = await Settings.create({
-      walletAddress: "sem_prijde_wallet",
-      privateKey: "sem_prijde_private_key"
-    });
-
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify(item));
-    return;
-  }
-
-  if (url.pathname === "/settings") {
-    const items = await Settings.find().sort({ _id: -1 }).lean();
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify(items));
     return;
   }
 
@@ -122,67 +169,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === "/scan") {
-    const response = await fetch("https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=200");
-    const data = await response.json();
-
-    const candidates = data
-      .filter((item) =>
-        item.acceptingOrders === true &&
-        item.active === true &&
-        item.closed === false &&
-        item.bestBid !== null &&
-        item.bestAsk !== null &&
-        item.spread !== null
-      )
-      .map((item) => {
-        let prices = ["?", "?"];
-        try {
-          prices = JSON.parse(item.outcomePrices || "[\"?\",\"?\"]");
-        } catch (e) {}
-
-        const liquidity = Number(item.liquidityNum || item.liquidity || 0);
-        const volume = Number(item.volume24hr || item.volume || 0);
-        const spread = Number(item.spread || 999);
-        const score =
-          liquidity * 0.5 +
-          volume * 0.3 +
-          (spread > 0 ? (1 / spread) * 1000 : 0) * 0.2;
-
-        return {
-          question: item.question,
-          category: item.category || "",
-          priceYes: prices[0],
-          priceNo: prices[1],
-          bestBid: item.bestBid,
-          bestAsk: item.bestAsk,
-          spread: item.spread,
-          volume24hr: item.volume24hr || 0,
-          liquidity: item.liquidityNum || item.liquidity || 0,
-          rewardsMinSize: item.rewardsMinSize || 0,
-          rewardsMaxSpread: item.rewardsMaxSpread || 0,
-          score
-        };
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 20);
-
-    await MarketSnapshot.insertMany(
-      candidates.map((item) => ({
-        question: item.question,
-        category: item.category,
-        priceYes: item.priceYes,
-        priceNo: item.priceNo,
-        bestBid: String(item.bestBid),
-        bestAsk: String(item.bestAsk),
-        spread: String(item.spread),
-        volume24hr: String(item.volume24hr),
-        liquidity: String(item.liquidity)
-      }))
-    );
+    const candidates = await runScan();
 
     const html = `
       <h1>Scan trhu</h1>
       <p><a href="/">← Zpět</a></p>
+      <p>Scan byl právě spuštěn ručně.</p>
       <ol>
         ${candidates.map((item) => `
           <li style="margin-bottom:18px;">
@@ -203,7 +195,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === "/snapshots") {
-    const items = await MarketSnapshot.find().sort({ _id: -1 }).limit(50).lean();
+    const items = await MarketSnapshot.find().sort({ _id: -1 }).limit(100).lean();
 
     const html = `
       <h1>Snapshoty</h1>
@@ -214,7 +206,6 @@ const server = http.createServer(async (req, res) => {
             <strong>${item.question}</strong><br>
             category: ${item.category}<br>
             YES: ${item.priceYes} | NO: ${item.priceNo}<br>
-            bestBid: ${item.bestBid} | bestAsk: ${item.bestAsk}<br>
             spread: ${item.spread}<br>
             volume24hr: ${item.volume24hr}<br>
             liquidity: ${item.liquidity}<br>
@@ -327,7 +318,8 @@ const server = http.createServer(async (req, res) => {
         spread < 0.03 &&
         liquidity > 1000 &&
         latestYes > 0.1 &&
-        latestYes < 0.9;
+        latestYes < 0.9 &&
+        move > 0.01;
 
       const score =
         move * 100 +
@@ -355,7 +347,7 @@ const server = http.createServer(async (req, res) => {
     const html = `
       <h1>Top kandidáti pro test trade</h1>
       <p><a href="/">← Zpět</a></p>
-      <p>Toto nejsou jisté edge příležitosti. Toto jsou tradovatelné kandidáty s pohybem, likviditou a rozumným spreadem.</p>
+      <p>Automatický scan běží po startu a pak každých 5 minut.</p>
       <ol>
         ${ideas.slice(0, 20).map((item) => `
           <li style="margin-bottom:18px;">
@@ -382,6 +374,20 @@ const server = http.createServer(async (req, res) => {
 });
 
 const port = process.env.PORT || 3000;
-server.listen(port, () => {
+server.listen(port, async () => {
   console.log(`server running on ${port}`);
+
+  try {
+    await runScan();
+  } catch (err) {
+    console.error("initial auto scan failed", err);
+  }
+
+  setInterval(async () => {
+    try {
+      await runScan();
+    } catch (err) {
+      console.error("scheduled auto scan failed", err);
+    }
+  }, 5 * 60 * 1000);
 });
