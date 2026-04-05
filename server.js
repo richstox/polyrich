@@ -41,7 +41,7 @@ const server = http.createServer(async (req, res) => {
     const response = await fetch("https://gamma-api.polymarket.com/markets?closed=false");
     const data = await response.json();
 
-    const simple = data.slice(0, 5).map((item) => ({
+    const simple = data.slice(0, 20).map((item) => ({
       question: item.question,
       priceYes: JSON.parse(item.outcomePrices)[0],
       priceNo: JSON.parse(item.outcomePrices)[1],
