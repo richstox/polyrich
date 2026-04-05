@@ -26,6 +26,7 @@ const marketSnapshotSchema = new mongoose.Schema({
   }
 });
 
+const Settings = mongoose.model("Settings", settingsSchema);
 const MarketSnapshot = mongoose.model("MarketSnapshot", marketSnapshotSchema);
 
 const categories = [
@@ -163,6 +164,20 @@ const server = http.createServer(async (req, res) => {
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, 20);
+
+    await MarketSnapshot.insertMany(
+      candidates.map((item) => ({
+        question: item.question,
+        category: item.category,
+        priceYes: item.priceYes,
+        priceNo: item.priceNo,
+        bestBid: String(item.bestBid),
+        bestAsk: String(item.bestAsk),
+        spread: String(item.spread),
+        volume24hr: String(item.volume24hr),
+        liquidity: String(item.liquidity)
+      }))
+    );
 
     const html = `
       <h1>Top kandidáti pro první trade</h1>
