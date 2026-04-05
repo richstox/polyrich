@@ -5,11 +5,12 @@ mongoose.connect(process.env.MONGO_URL)
   .then(() => console.log("mongo connected"))
   .catch((err) => console.error("mongo error", err));
 
-const noteSchema = new mongoose.Schema({
-  text: String
+const settingsSchema = new mongoose.Schema({
+  walletAddress: String,
+  privateKey: String
 });
 
-const Note = mongoose.model("Note", noteSchema);
+const Settings = mongoose.model("Settings", settingsSchema);
 
 const server = http.createServer(async (req, res) => {
   if (req.url === "/") {
@@ -18,26 +19,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.url === "/mongo") {
+  if (req.url === "/save-settings") {
+    const item = await Settings.create({
+      walletAddress: "sem_prijde_wallet",
+      privateKey: "sem_prijde_private_key"
+    });
+
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({
-      ok: true,
-      mongoReady: mongoose.connection.readyState
-    }));
+    res.end(JSON.stringify(item));
     return;
   }
 
-  if (req.url === "/save") {
-    const note = await Note.create({ text: "ahoj z mongo" });
+  if (req.url === "/settings") {
+    const items = await Settings.find().sort({ _id: -1 }).lean();
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify(note));
-    return;
-  }
-
-  if (req.url === "/notes") {
-    const notes = await Note.find().sort({ _id: -1 }).lean();
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify(notes));
+    res.end(JSON.stringify(items));
     return;
   }
 
