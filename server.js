@@ -52,15 +52,10 @@ const server = http.createServer(async (req, res) => {
           </a>
         `).join("")}
       </div>
-      <p style="margin-top:20px;">
-        <a href="/scan">Najít top markety pro první trade</a>
-      </p>
-      <p style="margin-top:10px;">
-        <a href="/snapshots">Zobrazit uložené snapshoty</a>
-      </p>
-      <p style="margin-top:10px;">
-        <a href="/changes">Zobrazit změny mezi snapshoty</a>
-      </p>
+      <p style="margin-top:20px;"><a href="/scan">Scan trhu</a></p>
+      <p><a href="/snapshots">Snapshoty</a></p>
+      <p><a href="/changes">Změny</a></p>
+      <p><a href="/ideas">Top kandidáti pro test trade</a></p>
     `;
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -186,10 +181,8 @@ const server = http.createServer(async (req, res) => {
     );
 
     const html = `
-      <h1>Top kandidáti pro první trade</h1>
+      <h1>Scan trhu</h1>
       <p><a href="/">← Zpět</a></p>
-      <p><a href="/snapshots">Zobrazit uložené snapshoty</a></p>
-      <p><a href="/changes">Zobrazit změny mezi snapshoty</a></p>
       <ol>
         ${candidates.map((item) => `
           <li style="margin-bottom:18px;">
@@ -198,8 +191,7 @@ const server = http.createServer(async (req, res) => {
             YES: ${item.priceYes} | NO: ${item.priceNo}<br>
             bestBid: ${item.bestBid} | bestAsk: ${item.bestAsk} | spread: ${item.spread}<br>
             volume24hr: ${item.volume24hr}<br>
-            liquidity: ${item.liquidity}<br>
-            rewardsMinSize: ${item.rewardsMinSize} | rewardsMaxSpread: ${item.rewardsMaxSpread}
+            liquidity: ${item.liquidity}
           </li>
         `).join("")}
       </ol>
@@ -214,7 +206,7 @@ const server = http.createServer(async (req, res) => {
     const items = await MarketSnapshot.find().sort({ _id: -1 }).limit(50).lean();
 
     const html = `
-      <h1>Uložené snapshoty</h1>
+      <h1>Snapshoty</h1>
       <p><a href="/">← Zpět</a></p>
       <ul>
         ${items.map((item) => `
@@ -283,7 +275,7 @@ const server = http.createServer(async (req, res) => {
     changes.sort((a, b) => Math.abs(b.yesDiff) - Math.abs(a.yesDiff));
 
     const html = `
-      <h1>Změny mezi snapshoty</h1>
+      <h1>Změny</h1>
       <p><a href="/">← Zpět</a></p>
       <ul>
         ${changes.slice(0, 30).map((item) => `
@@ -292,11 +284,92 @@ const server = http.createServer(async (req, res) => {
             category: ${item.category}<br>
             YES změna: ${item.previousYes} → ${item.latestYes} (${item.yesDiff >= 0 ? "+" : ""}${item.yesDiff.toFixed(3)})<br>
             spread změna: ${item.previousSpread} → ${item.latestSpread} (${item.spreadDiff >= 0 ? "+" : ""}${item.spreadDiff.toFixed(3)})<br>
-            liquidity změna: ${item.previousLiquidity} → ${item.latestLiquidity} (${item.liquidityDiff >= 0 ? "+" : ""}${item.liquidityDiff.toFixed(2)})<br>
-            poslední snapshot: ${new Date(item.latestCreatedAt).toLocaleString("cs-CZ")}
+            liquidity změna: ${item.previousLiquidity} → ${item.latestLiquidity} (${item.liquidityDiff >= 0 ? "+" : ""}${item.liquidityDiff.toFixed(2)})
           </li>
         `).join("")}
       </ul>
+    `;
+
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(html);
+    return;
+  }
+
+  if (url.pathname === "/ideas") {
+    const items = await MarketSnapshot.find().sort({ createdAt: -1 }).lean();
+
+    const latestByQuestion = new Map();
+    const previousByQuestion = new Map();
+
+    for (const item of items) {
+      if (!latestByQuestion.has(item.question)) {
+        latestByQuestion.set(item.question, item);
+      } else if (!previousByQuestion.has(item.question)) {
+        previousByQuestion.set(item.question, item);
+      }
+    }
+
+    const ideas = [];
+
+    for (const [question, latest] of latestByQuestion.entries()) {
+      const previous = previousByQuestion.get(question);
+      if (!previous) continue;
+
+      const latestYes = Number(latest.priceYes || 0);
+      const previousYes = Number(previous.priceYes || 0);
+      const spread = Number(latest.spread || 999);
+      const liquidity = Number(latest.liquidity || 0);
+      const volume24hr = Number(latest.volume24hr || 0);
+      const move = Math.abs(latestYes - previousYes);
+
+      const tradable =
+        spread > 0 &&
+        spread < 0.03 &&
+        liquidity > 1000 &&
+        latestYes > 0.1 &&
+        latestYes < 0.9;
+
+      const score =
+        move * 100 +
+        (liquidity / 1000) * 2 +
+        (volume24hr / 1000) -
+        spread * 100;
+
+      if (tradable) {
+        ideas.push({
+          question,
+          category: latest.category || "",
+          latestYes,
+          previousYes,
+          move,
+          spread,
+          liquidity,
+          volume24hr,
+          score
+        });
+      }
+    }
+
+    ideas.sort((a, b) => b.score - a.score);
+
+    const html = `
+      <h1>Top kandidáti pro test trade</h1>
+      <p><a href="/">← Zpět</a></p>
+      <p>Toto nejsou jisté edge příležitosti. Toto jsou tradovatelné kandidáty s pohybem, likviditou a rozumným spreadem.</p>
+      <ol>
+        ${ideas.slice(0, 20).map((item) => `
+          <li style="margin-bottom:18px;">
+            <strong>${item.question}</strong><br>
+            category: ${item.category}<br>
+            YES: ${item.previousYes} → ${item.latestYes}<br>
+            move: ${item.move.toFixed(3)}<br>
+            spread: ${item.spread}<br>
+            liquidity: ${item.liquidity}<br>
+            volume24hr: ${item.volume24hr}<br>
+            score: ${item.score.toFixed(2)}
+          </li>
+        `).join("")}
+      </ol>
     `;
 
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
