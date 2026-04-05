@@ -117,6 +117,12 @@ function marketKey(item) {
   return item.marketSlug || item.question;
 }
 
+function formatVolume(volume) {
+  if (volume >= 1000000) return `${(volume / 1000000).toFixed(2)}M`;
+  if (volume >= 1000) return `${(volume / 1000).toFixed(1)}k`;
+  return volume.toFixed(2);
+}
+
 async function runScan() {
   console.log("running auto scan...");
 
@@ -143,13 +149,17 @@ async function runScan() {
       const tightSpreadBonus =
         item.spread > 0 && item.spread <= 0.03 ? 200 : 0;
 
+      const liveVolumeBonus =
+        item.volume24hr >= 100 ? 400 : 0;
+
       const score =
         item.liquidity * 0.002 +
         item.volume24hr * 2 +
         (item.spread > 0 ? 1 / item.spread : 0) * 5 +
         nearEndBonus +
         balancedPriceBonus +
-        tightSpreadBonus;
+        tightSpreadBonus +
+        liveVolumeBonus;
 
       return {
         ...item,
@@ -157,7 +167,7 @@ async function runScan() {
       };
     })
     .sort((a, b) => b.score - a.score)
-    .slice(0, 150);
+    .slice(0, 200);
 
   const previousScanId = scanStatus.lastScanId || null;
 
@@ -216,11 +226,11 @@ async function buildIdeas() {
 
   const enriched = latestItems.map((item) => {
     const latestYes = asNumber(item.priceYes, 0);
-    const latestNo = asNumber(item.priceNo, 0);
     const spread = asNumber(item.spread, 999);
     const liquidity = asNumber(item.liquidity, 0);
     const volume24hr = asNumber(item.volume24hr, 0);
-    const hoursLeft = typeof item.hoursLeft === "number" ? item.hoursLeft : asNumber(item.hoursLeft, null);
+    const hoursLeft =
+      typeof item.hoursLeft === "number" ? item.hoursLeft : asNumber(item.hoursLeft, null);
 
     const prev = previousMap.get(marketKey(item));
     const previousYes = prev ? asNumber(prev.priceYes, latestYes) : latestYes;
@@ -233,6 +243,7 @@ async function buildIdeas() {
     const decentSpread = spread > 0 && spread <= 0.08;
     const balancedPrice = latestYes >= 0.20 && latestYes <= 0.80;
     const liquid = liquidity >= 1000;
+    const liveVolume = volume24hr >= 100;
     const someMove = moveAbs >= 0.003;
 
     const intradayCandidate =
@@ -241,26 +252,30 @@ async function buildIdeas() {
       hoursLeft <= 72 &&
       balancedPrice &&
       decentSpread &&
-      liquid;
+      liquid &&
+      liveVolume;
 
     let tag = "watch";
-    if (intradayCandidate && tightSpread && someMove && nearEnd) {
-      tag = "best intraday";
-    } else if (intradayCandidate && someMove) {
+    if (intradayCandidate && tightSpread && someMove && nearEnd && liveVolume) {
+      tag = "live intraday";
+    } else if (intradayCandidate && liveVolume && someMove) {
       tag = "moving";
-    } else if (intradayCandidate && nearEnd) {
+    } else if (intradayCandidate && liveVolume && nearEnd) {
       tag = "near expiry";
-    } else if (intradayCandidate && tightSpread) {
+    } else if (intradayCandidate && liveVolume && tightSpread) {
       tag = "tight spread";
+    } else if (!liveVolume) {
+      tag = "low activity";
     }
 
     const intradayScore =
       moveAbs * 8000 +
       Math.min(liquidity / 2000, 200) +
-      Math.min(volume24hr * 3, 200) +
+      Math.min(volume24hr * 0.5, 250) +
       (tightSpread ? 40 : 0) +
       (nearEnd ? 30 : 0) +
-      (balancedPrice ? 20 : 0) -
+      (balancedPrice ? 20 : 0) +
+      (liveVolume ? 80 : 0) -
       spread * 200;
 
     return {
@@ -269,7 +284,6 @@ async function buildIdeas() {
       marketSlug: item.marketSlug || "",
       eventSlug: item.eventSlug || "",
       latestYes,
-      latestNo,
       previousYes,
       moveAbs,
       moveSigned,
@@ -286,7 +300,7 @@ async function buildIdeas() {
   });
 
   const movers = enriched
-    .filter((item) => item.moveAbs > 0)
+    .filter((item) => item.moveAbs > 0 && item.volume24hr >= 100)
     .sort((a, b) => b.moveAbs - a.moveAbs)
     .slice(0, 15);
 
@@ -307,14 +321,14 @@ async function buildIdeas() {
 function renderIdea(item) {
   const movePrefix = item.moveSigned > 0 ? "+" : "";
   return `
-    <li style="margin-bottom:18px;">
+    <li style="margin-bottom:18px;padding:12px;border:1px solid #ddd;border-radius:8px;">
       <strong>${item.question}</strong><br>
       tag: ${item.tag}<br>
       YES: ${item.previousYes.toFixed(3)} → ${item.latestYes.toFixed(3)}<br>
       move: ${movePrefix}${item.moveSigned.toFixed(3)} (${movePrefix}${item.moveBps.toFixed(0)} bps)<br>
       spread: ${item.spread}<br>
-      liquidity: ${item.liquidity}<br>
-      volume24hr: ${item.volume24hr}<br>
+      liquidity: ${Math.round(item.liquidity).toLocaleString("en-US")}<br>
+      <strong>24h Volume: ${formatVolume(item.volume24hr)}</strong><br>
       endDate: ${item.endDate || "-"}<br>
       time left: ${formatHoursLeft(item.hoursLeft)}<br>
       score: ${item.intradayScore.toFixed(2)}
@@ -358,8 +372,8 @@ const server = http.createServer(async (req, res) => {
             <strong>${item.question}</strong><br>
             YES: ${item.priceYes.toFixed(3)} | NO: ${item.priceNo.toFixed(3)}<br>
             spread: ${item.spread}<br>
-            liquidity: ${item.liquidity}<br>
-            volume24hr: ${item.volume24hr}<br>
+            liquidity: ${Math.round(item.liquidity).toLocaleString("en-US")}<br>
+            <strong>24h Volume: ${formatVolume(item.volume24hr)}</strong><br>
             endDate: ${item.endDate || "-"}<br>
             time left: ${formatHoursLeft(item.hoursLeft)}
           </li>
@@ -386,8 +400,8 @@ const server = http.createServer(async (req, res) => {
             slug: ${item.marketSlug || "-"}<br>
             YES: ${item.priceYes}<br>
             spread: ${item.spread}<br>
-            liquidity: ${item.liquidity}<br>
-            volume24hr: ${item.volume24hr}<br>
+            liquidity: ${Math.round(asNumber(item.liquidity, 0)).toLocaleString("en-US")}<br>
+            <strong>24h Volume: ${formatVolume(asNumber(item.volume24hr, 0))}</strong><br>
             endDate: ${item.endDate || "-"}<br>
             time left: ${formatHoursLeft(item.hoursLeft)}<br>
             createdAt: ${new Date(item.createdAt).toLocaleString("cs-CZ")}
@@ -416,19 +430,20 @@ const server = http.createServer(async (req, res) => {
           <p><strong>Předchozí scanId:</strong> ${scanStatus.previousScanId || "-"}</p>
           <p><strong>Stažených marketů:</strong> ${scanStatus.lastTotalFetched}</p>
           <p><strong>Uložených kandidátů:</strong> ${scanStatus.lastSavedCount}</p>
-          <p><strong>Intraday kandidátů:</strong> ${scanStatus.lastInterestingCount}</p>
-          <p><strong>Moverů mezi 2 scany:</strong> ${scanStatus.lastMoverCount}</p>
+          <p><strong>Živých intraday kandidátů:</strong> ${scanStatus.lastInterestingCount}</p>
+          <p><strong>Živých moverů mezi 2 scany:</strong> ${scanStatus.lastMoverCount}</p>
+          <p><strong>Min 24h Volume filtr:</strong> 100</p>
           <p><strong>Chyba:</strong> ${scanStatus.lastError || "žádná"}</p>
         </div>
 
-        <h2>Největší movers mezi 2 scany</h2>
-        <p>Tady opravdu vidíš změnu YES mezi posledním a předchozím scanem.</p>
+        <h2>Největší živí movers mezi 2 scany</h2>
+        <p>Jen markety s 24h Volume >= 100.</p>
         <ol>
           ${movers.map(renderIdea).join("")}
         </ol>
 
-        <h2>Nejlepší intraday kandidáti</h2>
-        <p>Seřazeno podle kombinace pohybu, spreadu, likvidity a času do konce.</p>
+        <h2>Nejlepší živé intraday kandidáty</h2>
+        <p>Jen markety, které mají dost aktivity, rozumný spread, likviditu a blízký konec.</p>
         <ol>
           ${ideas.map(renderIdea).join("")}
         </ol>
