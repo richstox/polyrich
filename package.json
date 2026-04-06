@@ -1,9 +1,10 @@
 {
   "name": "polyrich",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node test/sanity.test.js"
   },
   "dependencies": {
     "mongoose": "^8.19.1"
