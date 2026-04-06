@@ -252,15 +252,22 @@ const server = http.createServer(async (req, res) => {
   // ── /scan ──────────────────────────────────────────────────────────────
   if (url.pathname === "/scan") {
     let candidates = [];
+    let scanError = null;
     try {
       candidates = await runScan();
     } catch (err) {
+      scanError = err.message;
       scanStatus.lastError = err.message;
     }
+
+    const failBanner = scanError
+      ? `<p style="color:red;font-weight:bold;padding:10px;border:2px solid red;border-radius:6px;">SCAN FAILED: ${scanError}</p>`
+      : "";
 
     const html = `
       <h1>Scan trhu</h1>
       <p><a href="/">← Zpět</a></p>
+      ${failBanner}
       ${scanRunning ? '<p style="color:orange;">⚠️ Scan právě probíhá na pozadí.</p>' : ""}
       <p>Scan byl právě spuštěn ručně.</p>
       <p><a href="/ideas">Otevřít scanner dashboard</a></p>
