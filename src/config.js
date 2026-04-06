@@ -11,6 +11,10 @@ module.exports = {
   FINAL_CANDIDATES_SIZE: parseInt(process.env.FINAL_CANDIDATES_SIZE || "20", 10),
   MOVERS_SIZE: parseInt(process.env.MOVERS_SIZE || "15", 10),
   SAVED_PER_SCAN: parseInt(process.env.SAVED_PER_SCAN || "200", 10),
+  SAVED_PER_SCAN_MIN: parseInt(process.env.SAVED_PER_SCAN_MIN || "2000", 10),
+  SAVED_PER_SCAN_PCT: parseFloat(process.env.SAVED_PER_SCAN_PCT || "0.05"),
+  SAVED_PER_SCAN_CAP: parseInt(process.env.SAVED_PER_SCAN_CAP || "5000", 10),
+  SAVED_DYNAMIC_THRESHOLD: parseInt(process.env.SAVED_DYNAMIC_THRESHOLD || "5000", 10),
   NOVELTY_LOOKBACK_SCANS: parseInt(process.env.NOVELTY_LOOKBACK_SCANS || "5", 10),
   SCAN_INTERVAL_MS: parseInt(process.env.SCAN_INTERVAL_MS || String(5 * 60 * 1000), 10),
 

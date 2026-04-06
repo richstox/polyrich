@@ -631,6 +631,30 @@ function renderFilterBar(categories, subcategories, tagSlugs, active) {
   `;
 }
 
+/** Render a single time-bucket section (INTRADAY / THIS_WEEK / WATCH). */
+function renderBucketSection(bucketName, items, totalCount, gateSummary, collapsed) {
+  const icons = { INTRADAY: "⏱️", THIS_WEEK: "📅", WATCH: "👀" };
+  const labels = { INTRADAY: "Intraday (≤48 h)", THIS_WEEK: "This Week (≤168 h)", WATCH: "Watch (>168 h)" };
+  const icon = icons[bucketName] || "📊";
+  const label = labels[bucketName] || bucketName;
+  const openAttr = collapsed ? "" : " open";
+
+  const itemsHtml = items.length === 0
+    ? '<p style="color:#6b7280;font-size:0.85rem;padding:8px 0;">No markets passed the gates this scan.</p>'
+    : `<ol class="candidates">${items.map((item) => {
+        try { return renderCandidate(item); }
+        catch (e) { return `<li class="candidate-card">render error: ${escHtml((item && item.marketSlug) || "unknown")} — ${escHtml(e.message)}</li>`; }
+      }).join("")}</ol>`;
+
+  return `
+    <details class="section-toggle"${openAttr}>
+      <summary>${icon} ${escHtml(label)} <span class="badge-count">${totalCount}</span></summary>
+      <p style="color:#6b7280;font-size:0.82rem;margin:0 0 8px;">Gates: ${escHtml(gateSummary)} · Showing top ${items.length} of ${totalCount}</p>
+      ${itemsHtml}
+    </details>
+  `;
+}
+
 module.exports = {
   renderBreakdown,
   computeWhyPick,
@@ -642,5 +666,6 @@ module.exports = {
   renderHealthUi,
   renderMetricsUi,
   renderFilterBar,
+  renderBucketSection,
   pageShell,
 };
