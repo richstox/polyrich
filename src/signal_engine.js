@@ -61,7 +61,7 @@ const SNAPSHOT_PROJECTION = {
   createdAt: 1,
 };
 
-async function buildIdeas(scanStatus) {
+async function buildIdeas(scanStatus, opts = {}) {
   if (!scanStatus.lastScanId) {
     return {
       tradeCandidates: [],
@@ -70,6 +70,14 @@ async function buildIdeas(scanStatus) {
       watchlistCount: 0,
       signalsCount: 0,
       mispricingCount: 0,
+      relaxedMode: false,
+      thresholds: {
+        globalMedianMove: 0,
+        momentumThreshold: MOMENTUM_FLOOR,
+        breakoutMoveThreshold: BREAKOUT_MOVE_FLOOR,
+        breakoutVolThreshold: BREAKOUT_VOL_FLOOR,
+      },
+      closestToThreshold: [],
       funnel: {
         fetched: scanStatus.lastTotalFetched || 0,
         saved: scanStatus.lastSavedCount || 0,
@@ -126,18 +134,28 @@ async function buildIdeas(scanStatus) {
   const allAbsMoves = baseEnriched.map((x) => x.absMove).filter((v) => v > 0);
   const globalMedianMove = median(allAbsMoves);
 
-  // Re-evaluate momentum / breakout with adaptive thresholds
-  for (const item of baseEnriched) {
-    item.momentum =
-      item.absMove >= Math.max(MOMENTUM_FLOOR, 2.0 * globalMedianMove) &&
-      item.volume24hr >= 50 &&
-      item.liquidity >= 500 &&
-      item.spreadPct <= 0.25;
+  // --- Adaptive threshold multipliers (may be relaxed below) ---
+  let momentumMult = 2.0;
+  let breakoutMoveMult = 2.5;
+  let breakoutVolMult = 2.0;
+  let relaxedMode = false;
 
-    item.breakout =
-      item.absMove > Math.max(BREAKOUT_MOVE_FLOOR, 2.5 * globalMedianMove) ||
-      item.volatility > Math.max(BREAKOUT_VOL_FLOOR, 2.0 * globalMedianMove);
-  }
+  // First pass: compute signals with normal thresholds
+  const applyThresholds = () => {
+    for (const item of baseEnriched) {
+      item.momentum =
+        item.absMove >= Math.max(MOMENTUM_FLOOR, momentumMult * globalMedianMove) &&
+        item.volume24hr >= 50 &&
+        item.liquidity >= 500 &&
+        item.spreadPct <= 0.25;
+
+      item.breakout =
+        item.absMove > Math.max(BREAKOUT_MOVE_FLOOR, breakoutMoveMult * globalMedianMove) ||
+        item.volatility > Math.max(BREAKOUT_VOL_FLOOR, breakoutVolMult * globalMedianMove);
+    }
+  };
+
+  applyThresholds();
 
   const filteredCount = baseEnriched.filter((x) => x._filtered).length;
   if (filteredCount > 0) {
@@ -191,134 +209,184 @@ async function buildIdeas(scanStatus) {
   const inconsistencyThreshold = quantile(eventInconsistencyScores, 80);
   const peerZThreshold = quantile(peerZScores, 80);
 
-  const enriched = baseEnriched.map((item) => {
-    try {
-      return finalizeItem(item, inconsistencyThreshold, peerZThreshold);
-    } catch (err) {
-      console.error(JSON.stringify({
-        stage: "finalize",
-        marketSlug: item.marketSlug,
-        err: err.message,
-        ts: new Date().toISOString(),
-      }));
-      return null;
-    }
-  }).filter(Boolean);
-
-  const tradableUniverse = enriched.filter(
-    (item) => (item.hoursLeft === null || item.hoursLeft > 0) && !item._filtered
-  );
-
-  const filteredOutByGuardrails = enriched.filter((x) => x._filtered).length;
-  const eligibleForMispricing = enriched.filter(
-    (x) => !x._filtered && x.signalType === "mispricing"
-  ).length;
-
-  const watchlist = [...tradableUniverse]
-    .sort((a, b) => {
-      const aScore = a.activityTerm + a.orderbookTerm - a.costPenalty;
-      const bScore = b.activityTerm + b.orderbookTerm - b.costPenalty;
-      return bScore - aScore;
-    })
-    .slice(0, WATCHLIST_SIZE);
-
-  const signals = watchlist
-    .filter((item) => item.isSignal)
-    .sort((a, b) => b.signalScore2 - a.signalScore2)
-    .slice(0, SIGNALS_SIZE);
-
-  const byType = {
-    mispricing: signals.filter((x) => x.signalType === "mispricing"),
-    momentumBreakout: signals.filter(
-      (x) => x.signalType === "momentum" || x.signalType === "breakout"
-    ),
-    reversal: signals.filter((x) => x.signalType === "reversal"),
-  };
-
-  const selected = [];
-  const selectedSlugSet = new Set();
-  const categoryCounts = new Map();
-  const eventCounts = new Map();
-  const categoryCap = Math.max(1, Math.floor(FINAL_CANDIDATES_SIZE * 0.25));
-
-  function canAdd(item) {
-    if (selectedSlugSet.has(item.marketSlug)) return false;
-    if ((categoryCounts.get(item.categoryGroup) || 0) >= categoryCap) return false;
-    if ((eventCounts.get(item.eventGroup) || 0) >= 2) return false;
-    return true;
-  }
-
-  function addItem(item) {
-    selected.push(item);
-    selectedSlugSet.add(item.marketSlug);
-    categoryCounts.set(item.categoryGroup, (categoryCounts.get(item.categoryGroup) || 0) + 1);
-    eventCounts.set(item.eventGroup, (eventCounts.get(item.eventGroup) || 0) + 1);
-  }
-
-  function takeTypeQuota(list, quota) {
-    let added = 0;
-    for (const item of list) {
-      if (selected.length >= FINAL_CANDIDATES_SIZE) break;
-      if (added >= quota) break;
-      if (!canAdd(item)) continue;
-      addItem(item);
-      added++;
-    }
-  }
-
-  takeTypeQuota(byType.mispricing, 8);
-  takeTypeQuota(byType.momentumBreakout, 8);
-  takeTypeQuota(byType.reversal, 4);
-
-  // Backfill from remaining signals if we haven't hit FINAL_CANDIDATES_SIZE
-  if (selected.length < FINAL_CANDIDATES_SIZE) {
-    for (const item of signals) {
-      if (selected.length >= FINAL_CANDIDATES_SIZE) break;
-      if (!canAdd(item)) continue;
-      addItem(item);
-    }
-  }
-
-  // Hard ceiling: mispricing must not exceed 50% of finalCandidates
-  // unless total signals < FINAL_CANDIDATES_SIZE (i.e. we can't fill otherwise).
-  if (signals.length >= FINAL_CANDIDATES_SIZE) {
-    const mispricingCeil = Math.floor(selected.length * 0.5);
-    const mispricingInSelected = selected.filter((x) => x.signalType === "mispricing");
-    if (mispricingInSelected.length > mispricingCeil) {
-      // Remove excess mispricing from the end (lowest priority) and backfill
-      const excess = mispricingInSelected.length - mispricingCeil;
-      let removed = 0;
-      for (let i = selected.length - 1; i >= 0 && removed < excess; i--) {
-        if (selected[i].signalType === "mispricing") {
-          selectedSlugSet.delete(selected[i].marketSlug);
-          selected.splice(i, 1);
-          removed++;
-        }
+  // --- Helper: finalize + select candidates (called once, or again after relaxation) ---
+  function buildCandidatesFromEnriched() {
+    const enriched = baseEnriched.map((item) => {
+      try {
+        return finalizeItem(item, inconsistencyThreshold, peerZThreshold);
+      } catch (err) {
+        console.error(JSON.stringify({
+          stage: "finalize",
+          marketSlug: item.marketSlug,
+          err: err.message,
+          ts: new Date().toISOString(),
+        }));
+        return null;
       }
-      // Backfill with non-mispricing signals
+    }).filter(Boolean);
+
+    const tradableUniverse = enriched.filter(
+      (item) => (item.hoursLeft === null || item.hoursLeft > 0) && !item._filtered
+    );
+
+    const filteredOutByGuardrails = enriched.filter((x) => x._filtered).length;
+    const eligibleForMispricing = enriched.filter(
+      (x) => !x._filtered && x.signalType === "mispricing"
+    ).length;
+
+    const watchlist = [...tradableUniverse]
+      .sort((a, b) => {
+        const aScore = a.activityTerm + a.orderbookTerm - a.costPenalty;
+        const bScore = b.activityTerm + b.orderbookTerm - b.costPenalty;
+        return bScore - aScore;
+      })
+      .slice(0, WATCHLIST_SIZE);
+
+    const signals = watchlist
+      .filter((item) => item.isSignal)
+      .sort((a, b) => b.signalScore2 - a.signalScore2)
+      .slice(0, SIGNALS_SIZE);
+
+    const byType = {
+      mispricing: signals.filter((x) => x.signalType === "mispricing"),
+      momentumBreakout: signals.filter(
+        (x) => x.signalType === "momentum" || x.signalType === "breakout"
+      ),
+      reversal: signals.filter((x) => x.signalType === "reversal"),
+    };
+
+    const selected = [];
+    const selectedSlugSet = new Set();
+    const categoryCounts = new Map();
+    const eventCounts = new Map();
+    const categoryCap = Math.max(1, Math.floor(FINAL_CANDIDATES_SIZE * 0.25));
+
+    function canAdd(item) {
+      if (selectedSlugSet.has(item.marketSlug)) return false;
+      if ((categoryCounts.get(item.categoryGroup) || 0) >= categoryCap) return false;
+      if ((eventCounts.get(item.eventGroup) || 0) >= 2) return false;
+      return true;
+    }
+
+    function addItem(item) {
+      selected.push(item);
+      selectedSlugSet.add(item.marketSlug);
+      categoryCounts.set(item.categoryGroup, (categoryCounts.get(item.categoryGroup) || 0) + 1);
+      eventCounts.set(item.eventGroup, (eventCounts.get(item.eventGroup) || 0) + 1);
+    }
+
+    function takeTypeQuota(list, quota) {
+      let added = 0;
+      for (const item of list) {
+        if (selected.length >= FINAL_CANDIDATES_SIZE) break;
+        if (added >= quota) break;
+        if (!canAdd(item)) continue;
+        addItem(item);
+        added++;
+      }
+    }
+
+    takeTypeQuota(byType.mispricing, 8);
+    takeTypeQuota(byType.momentumBreakout, 8);
+    takeTypeQuota(byType.reversal, 4);
+
+    // Backfill from remaining signals if we haven't hit FINAL_CANDIDATES_SIZE
+    if (selected.length < FINAL_CANDIDATES_SIZE) {
       for (const item of signals) {
         if (selected.length >= FINAL_CANDIDATES_SIZE) break;
-        if (item.signalType === "mispricing") continue;
         if (!canAdd(item)) continue;
         addItem(item);
       }
     }
+
+    // Hard ceiling: mispricing must not exceed 50% of finalCandidates
+    // unless total signals < FINAL_CANDIDATES_SIZE (i.e. we can't fill otherwise).
+    if (signals.length >= FINAL_CANDIDATES_SIZE) {
+      const mispricingCeil = Math.floor(selected.length * 0.5);
+      const mispricingInSelected = selected.filter((x) => x.signalType === "mispricing");
+      if (mispricingInSelected.length > mispricingCeil) {
+        // Remove excess mispricing from the end (lowest priority) and backfill
+        const excess = mispricingInSelected.length - mispricingCeil;
+        let removed = 0;
+        for (let i = selected.length - 1; i >= 0 && removed < excess; i--) {
+          if (selected[i].signalType === "mispricing") {
+            selectedSlugSet.delete(selected[i].marketSlug);
+            selected.splice(i, 1);
+            removed++;
+          }
+        }
+        // Backfill with non-mispricing signals
+        for (const item of signals) {
+          if (selected.length >= FINAL_CANDIDATES_SIZE) break;
+          if (item.signalType === "mispricing") continue;
+          if (!canAdd(item)) continue;
+          addItem(item);
+        }
+      }
+    }
+
+    const movers = watchlist
+      .filter(
+        (item) =>
+          (item.signalType === "momentum" || item.signalType === "breakout") &&
+          item.latestYes >= 0.05 &&
+          item.latestYes <= 0.95
+      )
+      .sort((a, b) => b.absMove - a.absMove)
+      .slice(0, MOVERS_SIZE);
+
+    const mispricingList = watchlist
+      .filter((item) => item.signalType === "mispricing")
+      .sort((a, b) => b.mispricingTerm - a.mispricingTerm)
+      .slice(0, 15);
+
+    return { enriched, selected, signals, movers, mispricingList, watchlist, filteredOutByGuardrails, eligibleForMispricing };
   }
 
-  const movers = watchlist
-    .filter(
-      (item) =>
-        (item.signalType === "momentum" || item.signalType === "breakout") &&
-        item.latestYes >= 0.05 &&
-        item.latestYes <= 0.95
-    )
-    .sort((a, b) => b.absMove - a.absMove)
-    .slice(0, MOVERS_SIZE);
+  // --- First pass (normal thresholds) ---
+  let result = buildCandidatesFromEnriched();
 
-  const mispricingList = watchlist
-    .filter((item) => item.signalType === "mispricing")
-    .sort((a, b) => b.mispricingTerm - a.mispricingTerm)
-    .slice(0, 15);
+  // --- Auto-adaptive fallback: relax thresholds when too few signals ---
+  // Also triggers via opts.forceRelaxed for debugging.
+  if ((result.signals.length < 10 || opts.forceRelaxed) && !relaxedMode) {
+    const signalsBefore = result.signals.length;
+    relaxedMode = true;
+    momentumMult = 1.5;
+    breakoutMoveMult = 2.0;
+    breakoutVolMult = 1.7;
+    applyThresholds();
+    result = buildCandidatesFromEnriched();
+    console.log(JSON.stringify({
+      msg: "auto-relaxed thresholds",
+      signalsBefore,
+      signalsAfter: result.signals.length,
+      momentumMult,
+      breakoutMoveMult,
+      breakoutVolMult,
+      forced: !!opts.forceRelaxed,
+      ts: new Date().toISOString(),
+    }));
+  }
+
+  const { selected, signals, movers, mispricingList, watchlist, filteredOutByGuardrails, eligibleForMispricing } = result;
+
+  // --- Compute "closest to threshold" markets for the "Why no movers?" card ---
+  const momentumThreshold = Math.max(MOMENTUM_FLOOR, momentumMult * globalMedianMove);
+  const breakoutMoveThreshold = Math.max(BREAKOUT_MOVE_FLOOR, breakoutMoveMult * globalMedianMove);
+  const breakoutVolThreshold = Math.max(BREAKOUT_VOL_FLOOR, breakoutVolMult * globalMedianMove);
+
+  const closestToThreshold = [...baseEnriched]
+    .filter((x) => !x._filtered && (x.hoursLeft === null || x.hoursLeft > 0))
+    .sort((a, b) => b.absMove - a.absMove)
+    .slice(0, 3)
+    .map((x) => ({
+      question: x.question,
+      marketSlug: x.marketSlug,
+      absMove: x.absMove,
+      volatility: x.volatility,
+      momentumThreshold,
+      breakoutMoveThreshold,
+    }));
 
   return {
     tradeCandidates: selected,
@@ -329,6 +397,14 @@ async function buildIdeas(scanStatus) {
     mispricingCount: mispricingList.length,
     filteredOutByGuardrails,
     eligibleForMispricing,
+    relaxedMode,
+    thresholds: {
+      globalMedianMove,
+      momentumThreshold,
+      breakoutMoveThreshold,
+      breakoutVolThreshold,
+    },
+    closestToThreshold,
     funnel: {
       fetched: scanStatus.lastTotalFetched || 0,
       saved: scanStatus.lastSavedCount || 0,

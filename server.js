@@ -16,7 +16,15 @@ const {
   persistShownCandidates,
 } = require("./src/persistence");
 const { buildIdeas } = require("./src/signal_engine");
-const { renderCandidate, pageShell } = require("./src/html_renderer");
+const {
+  renderCandidate,
+  renderTopPick,
+  renderTodayActions,
+  renderWhyNoMovers,
+  renderHealthUi,
+  renderMetricsUi,
+  pageShell,
+} = require("./src/html_renderer");
 
 // ---------------------------------------------------------------------------
 // Node version check — warn-only, never crash
@@ -208,11 +216,11 @@ const server = http.createServer(async (req, res) => {
       <h1>Polyrich</h1>
       <p style="color:#6b7280;margin-bottom:20px;">Scanner prediction markets. Vyberte sekci:</p>
       <div class="nav-grid">
+        <a class="nav-card" href="/ideas"><span class="icon">📊</span> Dashboard</a>
         <a class="nav-card" href="/scan"><span class="icon">🔄</span> Spustit scan</a>
         <a class="nav-card" href="/snapshots"><span class="icon">📸</span> Snapshoty</a>
-        <a class="nav-card" href="/ideas"><span class="icon">📊</span> Dashboard</a>
-        <a class="nav-card" href="/health"><span class="icon">💚</span> Health</a>
-        <a class="nav-card" href="/metrics"><span class="icon">📈</span> Metrics</a>
+        <a class="nav-card" href="/health-ui"><span class="icon">💚</span> Health</a>
+        <a class="nav-card" href="/metrics-ui"><span class="icon">📈</span> Metrics</a>
       </div>
     `;
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -368,11 +376,13 @@ const server = http.createServer(async (req, res) => {
   // ── /ideas ─────────────────────────────────────────────────────────────
   if (url.pathname === "/ideas") {
     try {
+      const forceRelaxed = url.searchParams.get("forceRelaxed") === "1";
       const {
         tradeCandidates, movers, mispricing, funnel,
         watchlistCount, signalsCount, mispricingCount,
         filteredOutByGuardrails, eligibleForMispricing,
-      } = await buildIdeas(scanStatus);
+        relaxedMode, thresholds, closestToThreshold,
+      } = await buildIdeas(scanStatus, { forceRelaxed });
 
       if (scanStatus.lastScanId && tradeCandidates.length > 0) {
         await persistShownCandidates(scanStatus.lastScanId, tradeCandidates).catch(() => {});
@@ -386,34 +396,30 @@ const server = http.createServer(async (req, res) => {
       scanStatus.lastFilteredOutByGuardrails = filteredOutByGuardrails || 0;
       scanStatus.lastEligibleForMispricing = eligibleForMispricing || 0;
 
+      const funnelWithMispricing = { ...funnel, mispricing: mispricingCount || 0 };
+
+      const topPicks = tradeCandidates.slice(0, 10);
+
       const body = `
         <h1>Scanner dashboard</h1>
 
-        <div class="card">
-          <div class="grid-2">
-            <p><strong>Poslední scan:</strong> ${scanStatus.lastScanAt ? scanStatus.lastScanAt.toLocaleString("cs-CZ") : "zatím neproběhl"}</p>
-            <p><strong>Další scan:</strong> ${scanStatus.nextScanAt ? scanStatus.nextScanAt.toLocaleString("cs-CZ") : "nenaplánován"}</p>
-            <p><strong>Aktuální scanId:</strong> ${scanStatus.lastScanId || "-"}</p>
-            <p><strong>Předchozí scanId:</strong> ${scanStatus.previousScanId || "-"}</p>
-          </div>
-          ${scanStatus.lastError ? `<p style="color:#b91c1c;margin-top:8px;"><strong>Chyba:</strong> ${scanStatus.lastError}</p>` : ""}
-        </div>
-
-        <div class="card">
-          <h2 style="margin-top:0;">Funnel</h2>
-          <div class="grid-2">
-            <p><span style="color:#6b7280;">fetched:</span> <strong>${funnel.fetched}</strong></p>
-            <p><span style="color:#6b7280;">saved:</span> <strong>${funnel.saved}</strong></p>
-            <p><span style="color:#6b7280;">watchlist:</span> <strong>${funnel.watchlist}</strong></p>
-            <p><span style="color:#6b7280;">signals:</span> <strong>${funnel.signals}</strong></p>
-            <p><span style="color:#6b7280;">final candidates:</span> <strong>${funnel.finalCandidates}</strong></p>
-            <p><span style="color:#6b7280;">movers:</span> <strong>${funnel.movers}</strong></p>
-            <p><span style="color:#6b7280;">mispricing:</span> <strong>${mispricingCount || 0}</strong></p>
-          </div>
-        </div>
+        ${renderTodayActions(scanStatus, funnelWithMispricing, signalsCount, relaxedMode)}
 
         <details class="section-toggle" open>
-          <summary>Trade candidates <span class="badge-count">${tradeCandidates.length}</span></summary>
+          <summary>Top Picks (micro-trade ready) <span class="badge-count">${topPicks.length}</span></summary>
+          <p style="color:#6b7280;font-size:0.85rem;margin:0 0 8px;">Up to 10 highest-scored candidates with actionable fields.</p>
+          <ol class="candidates">
+            ${topPicks.map((item) => {
+              try { return renderTopPick(item); }
+              catch (_) { return `<li class="candidate-card">render error: ${item.marketSlug}</li>`; }
+            }).join("")}
+          </ol>
+        </details>
+
+        ${movers.length === 0 && thresholds ? renderWhyNoMovers(thresholds, closestToThreshold) : ""}
+
+        <details class="section-toggle">
+          <summary>All trade candidates <span class="badge-count">${tradeCandidates.length}</span></summary>
           <p style="color:#6b7280;font-size:0.85rem;margin:0 0 8px;">Top 20 s diverzifikací, novinka, mispricing, pohyb a kvalita orderbooku.</p>
           <ol class="candidates">
             ${tradeCandidates.map((item) => {
@@ -423,7 +429,7 @@ const server = http.createServer(async (req, res) => {
           </ol>
         </details>
 
-        <details class="section-toggle" open>
+        <details class="section-toggle">
           <summary>Mispricing <span class="badge-count">${mispricing.length}</span></summary>
           <p style="color:#6b7280;font-size:0.85rem;margin:0 0 8px;">Trhy flagnuté z event nekonzistence / peer-relative offside chování.</p>
           <ol class="candidates">
@@ -434,7 +440,7 @@ const server = http.createServer(async (req, res) => {
           </ol>
         </details>
 
-        <details class="section-toggle" open>
+        <details class="section-toggle">
           <summary>Movers <span class="badge-count">${movers.length}</span></summary>
           <p style="color:#6b7280;font-size:0.85rem;margin:0 0 8px;">Momentum / breakout s viditelným nedávným pohybem.</p>
           <ol class="candidates">
@@ -455,6 +461,66 @@ const server = http.createServer(async (req, res) => {
       res.end(`ideas error: ${err.message}`);
       return;
     }
+  }
+
+  // ── /health-ui ──────────────────────────────────────────────────────────
+  if (url.pathname === "/health-ui") {
+    const mongoOk = mongoose.connection.readyState === 1;
+    const healthData = {
+      ok: mongoOk,
+      mongoConnected: mongoOk,
+      lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
+      scanRunning,
+      ts: new Date().toISOString(),
+    };
+    const body = renderHealthUi(healthData);
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(pageShell("Health", "/health-ui", body));
+    return;
+  }
+
+  // ── /metrics-ui ─────────────────────────────────────────────────────────
+  if (url.pathname === "/metrics-ui") {
+    let dbSnapshotCount = null;
+    let dbScanCount = null;
+    let recentScans = [];
+    try {
+      [dbSnapshotCount, dbScanCount, recentScans] = await Promise.all([
+        MarketSnapshot.estimatedDocumentCount(),
+        Scan.estimatedDocumentCount(),
+        Scan.find().sort({ startedAt: -1 }).limit(3).lean(),
+      ]);
+    } catch (_) {}
+
+    const last3Scans = (recentScans || []).map((s) => ({
+      scanId: s.scanId,
+      durationMs: s.durationMs ?? null,
+    }));
+
+    const metrics = {
+      lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
+      lastScanId: scanStatus.lastScanId,
+      lastTotalFetched: scanStatus.lastTotalFetched,
+      lastSavedCount: scanStatus.lastSavedCount,
+      lastDurationMs: scanStatus.lastDurationMs,
+      lastWatchlistCount: scanStatus.lastWatchlistCount,
+      lastSignalsCount: scanStatus.lastSignalsCount,
+      lastInterestingCount: scanStatus.lastInterestingCount,
+      lastMoverCount: scanStatus.lastMoverCount,
+      lastMispricingCount: scanStatus.lastMispricingCount,
+      filteredOutByGuardrails: scanStatus.lastFilteredOutByGuardrails,
+      eligibleForMispricing: scanStatus.lastEligibleForMispricing,
+      lastError: scanStatus.lastError,
+      scanRunning,
+      dbSnapshotCount,
+      dbScanCount,
+      last3Scans,
+      ts: new Date().toISOString(),
+    };
+    const body = renderMetricsUi(metrics);
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(pageShell("Metrics", "/metrics-ui", body));
+    return;
   }
 
   res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
