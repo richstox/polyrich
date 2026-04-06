@@ -21,6 +21,8 @@ module.exports = {
   // signal quality
   FEE_SLIPPAGE_BUFFER: parseFloat(process.env.FEE_SLIPPAGE_BUFFER || "0.02"),
   MAX_SPREAD_HARD: parseFloat(process.env.MAX_SPREAD_HARD || "0.5"),
+  // Static spreadPct ceiling: markets above this are never flagged as mispricing
+  MISPRICING_MAX_SPREAD_PCT_STATIC: parseFloat(process.env.MISPRICING_MAX_SPREAD_PCT_STATIC || "0.30"),
   // Minimum price delta (abs) per step to qualify as a reversal leg
   REVERSAL_MIN_DELTA: parseFloat(process.env.REVERSAL_MIN_DELTA || "0.003"),
   // Minimum historical volatility to qualify as a reversal

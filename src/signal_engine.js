@@ -22,6 +22,7 @@ const {
   NOVELTY_LOOKBACK_SCANS,
   FEE_SLIPPAGE_BUFFER,
   MAX_SPREAD_HARD,
+  MISPRICING_MAX_SPREAD_PCT_STATIC,
   TIME_PENALTY_EXPIRED,
   REVERSAL_MIN_DELTA,
   REVERSAL_MIN_VOLATILITY,
@@ -407,9 +408,12 @@ function enrichItem(item, historyMap, recentlyShownSet) {
 }
 
 function finalizeItem(item, inconsistencyThreshold, peerZThreshold) {
-  // Mispricing is only flagged for non-filtered items to avoid noise
+  // Mispricing is only flagged for non-filtered items to avoid noise.
+  // Also reject when the static spreadPct exceeds the ceiling — wide spreads
+  // mechanically inflate peer-Z / inconsistency scores and create false positives.
   const mispricing =
     !item._filtered &&
+    item.spreadPct <= MISPRICING_MAX_SPREAD_PCT_STATIC &&
     (item.eventInconsistencyScore >= inconsistencyThreshold ||
       item.peerZScore >= peerZThreshold);
 
