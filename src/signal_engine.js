@@ -448,7 +448,8 @@ async function buildIdeas(scanStatus, opts = {}) {
     if (!passesGate && bucket !== "WATCH") continue;
 
     // Compute finalRank = signalScore2 + bucket-local time bonus
-    const bucketMax = bucket === "INTRADAY" ? BUCKET_INTRADAY_MAX : bucket === "THIS_WEEK" ? BUCKET_THIS_WEEK_MAX : 0;
+    const bucketMaxMap = { INTRADAY: BUCKET_INTRADAY_MAX, THIS_WEEK: BUCKET_THIS_WEEK_MAX };
+    const bucketMax = bucketMaxMap[bucket] || 0;
     const tBonus = bucketTimeBonus(item.hoursLeft, bucketMax);
     const finalRank = item.signalScore2 + tBonus;
 

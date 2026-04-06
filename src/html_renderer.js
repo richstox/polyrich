@@ -643,7 +643,7 @@ function renderBucketSection(bucketName, items, totalCount, gateSummary, collaps
     ? '<p style="color:#6b7280;font-size:0.85rem;padding:8px 0;">No markets passed the gates this scan.</p>'
     : `<ol class="candidates">${items.map((item) => {
         try { return renderCandidate(item); }
-        catch (_) { return '<li class="candidate-card">render error</li>'; }
+        catch (e) { return `<li class="candidate-card">render error: ${escHtml((item && item.marketSlug) || "unknown")} — ${escHtml(e.message)}</li>`; }
       }).join("")}</ol>`;
 
   return `
