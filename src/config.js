@@ -33,4 +33,11 @@ module.exports = {
   // fetch
   FETCH_TIMEOUT_MS: parseInt(process.env.FETCH_TIMEOUT_MS || "15000", 10),
   FETCH_RETRY_COUNT: parseInt(process.env.FETCH_RETRY_COUNT || "2", 10),
+
+  // events pagination
+  EVENTS_PAGE_SIZE: parseInt(process.env.EVENTS_PAGE_SIZE || "100", 10),
+  EVENTS_MAX_PAGES: parseInt(process.env.EVENTS_MAX_PAGES || "50", 10),
+
+  // tags/sports cache TTL (seconds) — default 24 h
+  TAGS_CACHE_TTL_SECONDS: parseInt(process.env.TAGS_CACHE_TTL_SECONDS || String(24 * 60 * 60), 10),
 };

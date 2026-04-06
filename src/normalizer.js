@@ -84,11 +84,19 @@ function normalizeMarket(item) {
   const endDate = item.endDate || "";
   const hoursLeft = getHoursLeft(endDate);
 
+  // Event-level context (attached by fetcher when flattening events → markets)
+  const eventTags = Array.isArray(item.eventTags) ? item.eventTags : [];
+  const tagIds = eventTags.map((t) => t.id || t).filter(Boolean);
+  const tagSlugs = eventTags.map((t) => t.slug || t.label || String(t)).filter(Boolean);
+
   return {
     question: item.question || "",
     category: item.category || "",
+    subcategory: item.subcategory || "",
     marketSlug: item.slug || item.marketSlug || item.question || "",
     eventSlug: item.eventSlug || "",
+    tagIds,
+    tagSlugs,
     priceYes,
     priceNo,
     bestBid,
