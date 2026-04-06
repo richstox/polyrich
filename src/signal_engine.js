@@ -348,6 +348,7 @@ async function buildIdeas(scanStatus) {
 
   // --- Auto-adaptive fallback: relax thresholds when too few signals ---
   if (result.signals.length < 10 && !relaxedMode) {
+    const signalsBefore = result.signals.length;
     relaxedMode = true;
     momentumMult = 1.5;
     breakoutMoveMult = 2.0;
@@ -356,7 +357,8 @@ async function buildIdeas(scanStatus) {
     result = buildCandidatesFromEnriched();
     console.log(JSON.stringify({
       msg: "auto-relaxed thresholds",
-      signalsBefore: result.signals.length,
+      signalsBefore,
+      signalsAfter: result.signals.length,
       momentumMult,
       breakoutMoveMult,
       breakoutVolMult,
