@@ -29,6 +29,219 @@ function signalBadge(type) {
   return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;background:${bg};color:#fff;font-size:0.75rem;font-weight:600;letter-spacing:0.03em;">${type}</span>`;
 }
 
+function escHtml(str) {
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function polymarketUrl(slug) {
+  if (!slug) return null;
+  return `https://polymarket.com/event/${encodeURIComponent(slug)}`;
+}
+
+/** Compact "Top Pick" card for micro-trade action list */
+function renderTopPick(item) {
+  const link = polymarketUrl(item.marketSlug);
+  const questionHtml = link
+    ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;">${escHtml(item.question)}</a>`
+    : `<strong>${escHtml(item.question)}</strong>`;
+  const reasonTags = (item.reasonCodes || []).map((r) => {
+    const c = r === "novel" ? "#059669" : r === "near-expiry" ? "#d97706" : r === "filtered" ? "#ef4444" : "#6b7280";
+    return `<span style="display:inline-block;padding:1px 6px;border-radius:3px;background:${c}22;color:${c};font-size:0.7rem;border:1px solid ${c}44;margin-right:3px;">${escHtml(r)}</span>`;
+  }).join("");
+
+  return `
+    <li class="candidate-card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+        ${questionHtml}
+      </div>
+      <div style="margin-bottom:6px;">${signalBadge(item.signalType)} ${reasonTags}</div>
+      <div class="candidate-grid">
+        <div><span class="label">YES</span><span class="val">${item.latestYes.toFixed(3)}</span></div>
+        <div><span class="label">spreadPct</span><span class="val">${(item.spreadPct * 100).toFixed(1)}%</span></div>
+        <div><span class="label">24h Vol</span><span class="val bold">${formatVolume(item.volume24hr)}</span></div>
+        <div><span class="label">liquidity</span><span class="val">${Math.round(item.liquidity).toLocaleString("en-US")}</span></div>
+        <div><span class="label">hoursLeft</span><span class="val">${formatHoursLeft(item.hoursLeft)}</span></div>
+      </div>
+      <details style="margin-top:6px;">
+        <summary style="cursor:pointer;font-size:0.75rem;color:#6b7280;">Details</summary>
+        <div class="candidate-grid" style="margin-top:4px;font-size:0.78rem;">
+          <div><span class="label">YES prev</span><span class="val">${item.previousYes.toFixed(3)}</span></div>
+          <div><span class="label">absMove</span><span class="val">${item.absMove.toFixed(4)}</span></div>
+          <div><span class="label">delta1</span><span class="val">${item.delta1 > 0 ? "+" : ""}${item.delta1.toFixed(4)}</span></div>
+          <div><span class="label">volatility</span><span class="val">${item.volatility.toFixed(4)}</span></div>
+          <div><span class="label">spread</span><span class="val">${item.spread.toFixed(4)}</span></div>
+          <div><span class="label">bestBid</span><span class="val">${item.bestBidNum.toFixed(3)}</span></div>
+          <div><span class="label">bestAsk</span><span class="val">${item.bestAskNum.toFixed(3)}</span></div>
+        </div>
+        <pre class="breakdown">${renderBreakdown(item)}</pre>
+      </details>
+    </li>
+  `;
+}
+
+/** Today's Actions card for the /ideas dashboard */
+function renderTodayActions(scanStatus, funnel, signalsCount, relaxedMode) {
+  const statusIcon = scanStatus.lastError ? "⚠️" : "✅";
+  const statusText = scanStatus.lastError
+    ? `Scanner degraded: ${escHtml(scanStatus.lastError)}`
+    : "scanning OK";
+
+  const lastScan = scanStatus.lastScanAt
+    ? scanStatus.lastScanAt.toLocaleString("cs-CZ")
+    : "not yet";
+  const nextScan = scanStatus.nextScanAt
+    ? scanStatus.nextScanAt.toLocaleString("cs-CZ")
+    : "not scheduled";
+
+  let recommendation;
+  if (scanStatus.lastError) {
+    recommendation = `Scanner degraded: ${escHtml(scanStatus.lastError)}`;
+  } else if (funnel.finalCandidates >= 10) {
+    recommendation = `Ready: ${funnel.finalCandidates} candidates. Start micro-trades.`;
+  } else if (signalsCount < 10) {
+    recommendation = "Too few signals \u2014 relaxing thresholds automatically.";
+  } else {
+    recommendation = `${funnel.finalCandidates} candidates available. Review top picks.`;
+  }
+
+  const modeLabel = relaxedMode
+    ? '<span style="color:#d97706;font-weight:600;">relaxed</span>'
+    : '<span style="color:#059669;font-weight:600;">normal</span>';
+
+  return `
+    <div class="card" style="border-left:4px solid ${scanStatus.lastError ? "#dc2626" : "#059669"};">
+      <h2 style="margin-top:0;font-size:1.1rem;">Today's Actions</h2>
+      <p style="font-size:0.92rem;">${statusIcon} Status: <strong>${statusText}</strong></p>
+      <div class="grid-2" style="margin:8px 0;">
+        <p><span style="color:#6b7280;">Last scan:</span> <strong>${lastScan}</strong></p>
+        <p><span style="color:#6b7280;">Next scan:</span> <strong>${nextScan}</strong></p>
+        <p><span style="color:#6b7280;">fetched:</span> <strong>${funnel.fetched}</strong></p>
+        <p><span style="color:#6b7280;">saved:</span> <strong>${funnel.saved}</strong></p>
+        <p><span style="color:#6b7280;">watchlist:</span> <strong>${funnel.watchlist}</strong></p>
+        <p><span style="color:#6b7280;">signals:</span> <strong>${funnel.signals}</strong></p>
+        <p><span style="color:#6b7280;">final candidates:</span> <strong>${funnel.finalCandidates}</strong></p>
+        <p><span style="color:#6b7280;">movers:</span> <strong>${funnel.movers}</strong></p>
+        <p><span style="color:#6b7280;">mispricing:</span> <strong>${funnel.mispricing || 0}</strong></p>
+        <p><span style="color:#6b7280;">Mode:</span> ${modeLabel}</p>
+      </div>
+      <p style="font-size:0.95rem;font-weight:600;margin-top:10px;padding:8px 12px;border-radius:8px;background:#f0fdf4;color:#166534;">${recommendation}</p>
+    </div>
+  `;
+}
+
+/** "Why no movers?" explanation card */
+function renderWhyNoMovers(thresholds, closestToThreshold) {
+  const rows = (closestToThreshold || []).map((m) => `
+    <tr>
+      <td style="padding:4px 8px;font-size:0.82rem;">${escHtml(m.question)}</td>
+      <td style="padding:4px 8px;font-size:0.82rem;text-align:right;">${m.absMove.toFixed(4)}</td>
+      <td style="padding:4px 8px;font-size:0.82rem;text-align:right;">${m.volatility.toFixed(4)}</td>
+    </tr>
+  `).join("");
+
+  return `
+    <div class="card" style="border-left:4px solid #d97706;">
+      <h2 style="margin-top:0;font-size:1rem;color:#92400e;">Why no movers?</h2>
+      <p style="font-size:0.85rem;color:#6b7280;">No markets met the momentum/breakout thresholds this run.</p>
+      <div class="grid-2" style="margin:8px 0;">
+        <p><span class="label">globalMedianMove:</span> <strong>${thresholds.globalMedianMove.toFixed(6)}</strong></p>
+        <p><span class="label">momentumThreshold:</span> <strong>${thresholds.momentumThreshold.toFixed(6)}</strong></p>
+        <p><span class="label">breakoutMoveThreshold:</span> <strong>${thresholds.breakoutMoveThreshold.toFixed(6)}</strong></p>
+        <p><span class="label">breakoutVolThreshold:</span> <strong>${thresholds.breakoutVolThreshold.toFixed(6)}</strong></p>
+      </div>
+      <h3 style="font-size:0.9rem;margin:12px 0 6px;">Top 3 closest to threshold</h3>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="border-bottom:1px solid #e5e7eb;">
+            <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#6b7280;">Market</th>
+            <th style="padding:4px 8px;text-align:right;font-size:0.78rem;color:#6b7280;">absMove</th>
+            <th style="padding:4px 8px;text-align:right;font-size:0.78rem;color:#6b7280;">volatility</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+/** Render /health-ui page */
+function renderHealthUi(healthData) {
+  const statusColor = healthData.ok ? "#059669" : "#dc2626";
+  const statusIcon = healthData.ok ? "✅" : "❌";
+  return `
+    <h1>Health</h1>
+    <div class="card" style="border-left:4px solid ${statusColor};">
+      <h2 style="margin-top:0;">${statusIcon} System Health</h2>
+      <div class="grid-2">
+        <p><span style="color:#6b7280;">Status:</span> <strong style="color:${statusColor};">${healthData.ok ? "OK" : "DEGRADED"}</strong></p>
+        <p><span style="color:#6b7280;">MongoDB:</span> <strong>${healthData.mongoConnected ? "connected" : "disconnected"}</strong></p>
+        <p><span style="color:#6b7280;">Last scan:</span> <strong>${healthData.lastScanAt || "never"}</strong></p>
+        <p><span style="color:#6b7280;">Scan running:</span> <strong>${healthData.scanRunning ? "yes" : "no"}</strong></p>
+        <p><span style="color:#6b7280;">Timestamp:</span> <strong>${healthData.ts}</strong></p>
+      </div>
+    </div>
+    <p style="font-size:0.8rem;color:#6b7280;margin-top:12px;">Raw JSON: <a href="/health" style="color:#2563eb;">/health</a></p>
+  `;
+}
+
+/** Render /metrics-ui page */
+function renderMetricsUi(metrics) {
+  const scanRows = (metrics.last3Scans || []).map((s) => `
+    <tr>
+      <td style="padding:4px 8px;font-size:0.82rem;">${escHtml(s.scanId || "-")}</td>
+      <td style="padding:4px 8px;font-size:0.82rem;text-align:right;">${s.durationMs != null ? s.durationMs + " ms" : "-"}</td>
+    </tr>
+  `).join("");
+
+  return `
+    <h1>Metrics</h1>
+    <div class="card">
+      <h2 style="margin-top:0;">Scan Overview</h2>
+      <div class="grid-2">
+        <p><span style="color:#6b7280;">Last scan:</span> <strong>${metrics.lastScanAt || "never"}</strong></p>
+        <p><span style="color:#6b7280;">Scan ID:</span> <strong>${metrics.lastScanId || "-"}</strong></p>
+        <p><span style="color:#6b7280;">Duration:</span> <strong>${metrics.lastDurationMs != null ? metrics.lastDurationMs + " ms" : "-"}</strong></p>
+        <p><span style="color:#6b7280;">Running:</span> <strong>${metrics.scanRunning ? "yes" : "no"}</strong></p>
+      </div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0;">Funnel Counts</h2>
+      <div class="grid-2">
+        <p><span style="color:#6b7280;">fetched:</span> <strong>${metrics.lastTotalFetched}</strong></p>
+        <p><span style="color:#6b7280;">saved:</span> <strong>${metrics.lastSavedCount}</strong></p>
+        <p><span style="color:#6b7280;">watchlist:</span> <strong>${metrics.lastWatchlistCount}</strong></p>
+        <p><span style="color:#6b7280;">signals:</span> <strong>${metrics.lastSignalsCount}</strong></p>
+        <p><span style="color:#6b7280;">final candidates:</span> <strong>${metrics.lastInterestingCount}</strong></p>
+        <p><span style="color:#6b7280;">movers:</span> <strong>${metrics.lastMoverCount}</strong></p>
+        <p><span style="color:#6b7280;">mispricing:</span> <strong>${metrics.lastMispricingCount}</strong></p>
+        <p><span style="color:#6b7280;">filtered (guardrails):</span> <strong>${metrics.filteredOutByGuardrails}</strong></p>
+        <p><span style="color:#6b7280;">eligible mispricing:</span> <strong>${metrics.eligibleForMispricing}</strong></p>
+      </div>
+    </div>
+    ${metrics.lastError ? `<div class="card" style="border-left:4px solid #dc2626;"><p style="color:#b91c1c;"><strong>Last error:</strong> ${escHtml(metrics.lastError)}</p></div>` : ""}
+    <div class="card">
+      <h2 style="margin-top:0;">Database</h2>
+      <div class="grid-2">
+        <p><span style="color:#6b7280;">Snapshots:</span> <strong>${metrics.dbSnapshotCount ?? "-"}</strong></p>
+        <p><span style="color:#6b7280;">Scans:</span> <strong>${metrics.dbScanCount ?? "-"}</strong></p>
+      </div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0;">Last 3 Scans</h2>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="border-bottom:1px solid #e5e7eb;">
+            <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#6b7280;">Scan ID</th>
+            <th style="padding:4px 8px;text-align:right;font-size:0.78rem;color:#6b7280;">Duration</th>
+          </tr>
+        </thead>
+        <tbody>${scanRows}</tbody>
+      </table>
+    </div>
+    <p style="font-size:0.8rem;color:#6b7280;margin-top:12px;">Raw JSON: <a href="/metrics" style="color:#2563eb;">/metrics</a></p>
+  `;
+}
+
 function renderCandidate(item) {
   const movePrefix = item.delta1 > 0 ? "+" : "";
   const reasonTags = (item.reasonCodes || []).map((r) => {
@@ -184,8 +397,8 @@ function renderNav(active) {
     { href: "/ideas", label: "Dashboard" },
     { href: "/snapshots", label: "Snapshoty" },
     { href: "/scan", label: "Scan" },
-    { href: "/health", label: "Health" },
-    { href: "/metrics", label: "Metrics" },
+    { href: "/health-ui", label: "Health" },
+    { href: "/metrics-ui", label: "Metrics" },
   ];
   const items = links.map((l) => {
     const style = l.href === active ? "color:#fff;font-weight:600;" : "";
@@ -213,4 +426,13 @@ function pageShell(title, activeNav, bodyHtml) {
 </html>`;
 }
 
-module.exports = { renderBreakdown, renderCandidate, pageShell };
+module.exports = {
+  renderBreakdown,
+  renderCandidate,
+  renderTopPick,
+  renderTodayActions,
+  renderWhyNoMovers,
+  renderHealthUi,
+  renderMetricsUi,
+  pageShell,
+};
