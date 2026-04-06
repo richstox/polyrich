@@ -29,33 +29,121 @@ async function fetchWithRetry(url) {
   throw lastErr;
 }
 
+// ---------------------------------------------------------------------------
+// Events-based discovery (paginated)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch all active events from the Gamma API, paginating through offset.
+ * Returns { events, markets, stats }.
+ *   events  – raw event objects from the API
+ *   markets – flattened market objects with event context attached
+ *   stats   – { eventsFetched, marketsFlattened, pagesFetched }
+ */
 async function fetchPolymarkets() {
-  const baseUrl = "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=500";
-  const urls = [
-    `${baseUrl}&offset=0`,
-    `${baseUrl}&offset=500`,
-  ];
+  const limit = config.EVENTS_PAGE_SIZE;
+  const maxPages = config.EVENTS_MAX_PAGES;
+  const baseUrl = "https://gamma-api.polymarket.com/events";
 
-  const results = await Promise.allSettled(urls.map((url) => fetchWithRetry(url)));
+  const allEvents = [];
+  let pagesFetched = 0;
 
-  const data = [];
-  for (const result of results) {
-    if (result.status === "fulfilled") {
-      data.push(...result.value);
-    } else {
+  for (let page = 0; page < maxPages; page++) {
+    const offset = page * limit;
+    const url = `${baseUrl}?active=true&closed=false&limit=${limit}&offset=${offset}`;
+
+    let batch;
+    try {
+      batch = await fetchWithRetry(url);
+    } catch (err) {
       console.error(JSON.stringify({
-        stage: "fetch",
-        err: result.reason?.message || String(result.reason),
+        stage: "fetch-events",
+        page,
+        offset,
+        err: err.message || String(err),
         ts: new Date().toISOString(),
       }));
+      // If the first page fails, nothing to work with
+      if (page === 0) throw new Error("first events page failed: " + (err.message || "unknown error"));
+      break;
     }
+
+    if (!Array.isArray(batch)) {
+      console.error(JSON.stringify({
+        stage: "fetch-events",
+        msg: "unexpected non-array response",
+        page,
+        ts: new Date().toISOString(),
+      }));
+      break;
+    }
+
+    pagesFetched++;
+    allEvents.push(...batch);
+
+    // Stop paginating when we got fewer than limit (last page)
+    if (batch.length < limit) break;
   }
 
-  if (data.length === 0) {
-    throw new Error("all fetch pages failed");
+  if (allEvents.length === 0) {
+    throw new Error("all events fetch pages failed");
   }
 
-  return data;
+  // Flatten events → markets, attaching event context
+  const markets = [];
+  for (const event of allEvents) {
+    const eventSlug = event.slug || "";
+    const category = event.category || "";
+    const subcategory = event.subcategory || "";
+    const tags = Array.isArray(event.tags) ? event.tags : [];
+    const eventMarkets = Array.isArray(event.markets) ? event.markets : [];
+
+    for (const mkt of eventMarkets) {
+      // Attach event-level context onto each market object
+      mkt.eventSlug = eventSlug;
+      if (!mkt.category) mkt.category = category;
+      mkt.subcategory = subcategory;
+      mkt.eventTags = tags;
+    }
+    markets.push(...eventMarkets);
+  }
+
+  const stats = {
+    eventsFetched: allEvents.length,
+    marketsFlattened: markets.length,
+    pagesFetched,
+  };
+
+  console.log(JSON.stringify({
+    stage: "fetch-events-done",
+    ...stats,
+    universe: `Universe scanned this run: ${stats.eventsFetched} events → ${stats.marketsFlattened} markets (${stats.pagesFetched} pages)`,
+    ts: new Date().toISOString(),
+  }));
+
+  return { events: allEvents, markets, stats };
 }
 
-module.exports = { fetchPolymarkets };
+// ---------------------------------------------------------------------------
+// Tags & Sports reference data
+// ---------------------------------------------------------------------------
+
+async function fetchTags() {
+  try {
+    return await fetchWithRetry("https://gamma-api.polymarket.com/tags");
+  } catch (err) {
+    console.error(JSON.stringify({ stage: "fetch-tags", err: err.message, ts: new Date().toISOString() }));
+    return [];
+  }
+}
+
+async function fetchSports() {
+  try {
+    return await fetchWithRetry("https://gamma-api.polymarket.com/sports");
+  } catch (err) {
+    console.error(JSON.stringify({ stage: "fetch-sports", err: err.message, ts: new Date().toISOString() }));
+    return [];
+  }
+}
+
+module.exports = { fetchPolymarkets, fetchTags, fetchSports };

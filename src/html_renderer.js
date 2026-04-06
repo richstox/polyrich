@@ -84,14 +84,25 @@ function escHtml(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function polymarketUrl(slug) {
-  if (!slug) return null;
-  return `https://polymarket.com/event/${encodeURIComponent(slug)}`;
+function polymarketUrl(item) {
+  if (typeof item === "string") {
+    // Legacy: called with a slug string
+    if (!item) return null;
+    return `https://polymarket.com/event/${encodeURIComponent(item)}`;
+  }
+  // Called with a market item object
+  if (item.eventSlug) {
+    return `https://polymarket.com/event/${encodeURIComponent(item.eventSlug)}`;
+  }
+  if (item.question) {
+    return `https://polymarket.com/search?q=${encodeURIComponent(item.question)}`;
+  }
+  return null;
 }
 
 /** Compact "Top Pick" card for micro-trade action list */
 function renderTopPick(item) {
-  const link = polymarketUrl(item.marketSlug);
+  const link = polymarketUrl(item);
   const questionHtml = link
     ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;">${escHtml(item.question)}</a>`
     : `<strong>${escHtml(item.question)}</strong>`;
@@ -178,10 +189,15 @@ function renderTodayActions(scanStatus, funnel, signalsCount, relaxedMode) {
     <div class="card" style="border-left:4px solid ${scanStatus.lastError ? "#dc2626" : "#059669"};">
       <h2 style="margin-top:0;font-size:1.1rem;">Today's Actions</h2>
       <p style="font-size:0.92rem;">${statusIcon} Status: <strong>${statusText}</strong></p>
+      <div style="margin:8px 0;padding:8px 12px;border-radius:8px;background:#eff6ff;font-size:0.88rem;color:#1e40af;">
+        🌐 Universe scanned this run: <strong>${scanStatus.lastEventsFetched || 0}</strong> events →
+        <strong>${scanStatus.lastMarketsFlattened || 0}</strong> markets
+        (<strong>${scanStatus.lastPagesFetched || 0}</strong> pages)
+      </div>
       <div class="grid-2" style="margin:8px 0;">
         <p><span style="color:#6b7280;">Last scan:</span> <strong>${lastScan}</strong></p>
         <p><span style="color:#6b7280;">Next scan:</span> <strong>${nextScan}</strong></p>
-        <p><span style="color:#6b7280;">fetched:</span> <strong>${funnel.fetched}</strong></p>
+        <p><span style="color:#6b7280;">fetched (markets):</span> <strong>${funnel.fetched}</strong></p>
         <p><span style="color:#6b7280;">saved:</span> <strong>${funnel.saved}</strong></p>
         <p><span style="color:#6b7280;">watchlist:</span> <strong>${funnel.watchlist}</strong></p>
         <p><span style="color:#6b7280;">signals:</span> <strong>${funnel.signals}</strong></p>
@@ -315,7 +331,7 @@ function renderCandidate(item) {
     return `<span style="display:inline-block;padding:1px 6px;border-radius:3px;background:${c}22;color:${c};font-size:0.7rem;border:1px solid ${c}44;margin-right:3px;">${r}</span>`;
   }).join("");
 
-  const link = polymarketUrl(item.marketSlug);
+  const link = polymarketUrl(item);
   const questionHtml = link
     ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;flex:1;font-size:0.95rem;line-height:1.3;">${escHtml(item.question)}</a>`
     : `<strong style="flex:1;font-size:0.95rem;line-height:1.3;">${escHtml(item.question)}</strong>`;
@@ -329,7 +345,7 @@ function renderCandidate(item) {
         ${questionHtml}
         <span style="margin-left:12px;font-size:1.1rem;font-weight:700;color:#111;white-space:nowrap;">${item.signalScore2.toFixed(1)}</span>
       </div>
-      <div style="margin-bottom:6px;">${signalBadge(item.signalType)} ${reasonTags}</div>
+      <div style="margin-bottom:6px;">${signalBadge(item.signalType)} ${reasonTags}${item.category ? ` <span class="cat-badge">${escHtml(item.category)}</span>` : ""}${item.subcategory ? ` <span class="cat-badge sub">${escHtml(item.subcategory)}</span>` : ""}</div>
       <div class="candidate-grid">
         <div><span class="label">YES now</span><span class="val">${item.latestYes.toFixed(3)}</span></div>
         <div><span class="label">spreadPct</span><span class="val">${(item.spreadPct * 100).toFixed(1)}%</span></div>
@@ -362,8 +378,11 @@ function renderCandidate(item) {
         </div>
         <pre class="breakdown">${renderBreakdown(item)}</pre>
         <div class="candidate-grid" style="margin-top:4px;font-size:0.72rem;">
-          <div><span class="label">category</span><span class="val">${item.category || "-"}</span></div>
-          <div><span class="label">eventGroup</span><span class="val">${item.eventGroup || "-"}</span></div>
+          <div><span class="label">category</span><span class="val">${escHtml(item.category || "-")}</span></div>
+          <div><span class="label">subcategory</span><span class="val">${escHtml(item.subcategory || "-")}</span></div>
+          <div><span class="label">eventSlug</span><span class="val">${escHtml(item.eventSlug || "-")}</span></div>
+          <div><span class="label">tags</span><span class="val">${(item.tagSlugs || []).map((t) => escHtml(t)).join(", ") || "-"}</span></div>
+          <div><span class="label">eventGroup</span><span class="val">${escHtml(item.eventGroup || "-")}</span></div>
           <div><span class="label">groupSize</span><span class="val">${item.groupSize || 0}</span></div>
           <div><span class="label">sumYes</span><span class="val">${typeof item.sumYesInGroup === "number" ? item.sumYesInGroup.toFixed(3) : "-"}</span></div>
           <div><span class="label">inconsistency</span><span class="val">${typeof item.inconsistency === "number" ? item.inconsistency.toFixed(3) : "-"}</span></div>
@@ -499,6 +518,20 @@ function sharedStyles() {
     transition: background .15s;
   }
   .cta-secondary:hover { background: #eff6ff; }
+  .cat-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    background: #dbeafe; color: #1e40af; font-size: 0.7rem;
+    border: 1px solid #93c5fd; margin-left: 3px;
+  }
+  .cat-badge.sub { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+  .filter-bar {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;
+    align-items: center; font-size: 0.85rem;
+  }
+  .filter-bar select, .filter-bar input {
+    padding: 5px 10px; border-radius: 6px; border: 1px solid #d1d5db;
+    font-size: 0.85rem; background: #fff;
+  }
 </style>`;
 }
 
@@ -558,6 +591,46 @@ function pageShell(title, activeNav, bodyHtml) {
 </html>`;
 }
 
+/**
+ * Render a filter bar for category/tag/subcategory filtering.
+ * categories and tags are arrays of strings (distinct values).
+ * active = { cat, sub, tag } from current query params.
+ */
+function renderFilterBar(categories, subcategories, tagSlugs, active) {
+  active = active || {};
+  function opts(values, selected) {
+    return values.map((v) => {
+      const sel = v === selected ? " selected" : "";
+      return `<option value="${escHtml(v)}"${sel}>${escHtml(v)}</option>`;
+    }).join("");
+  }
+
+  return `
+    <form class="filter-bar" method="get" action="/ideas">
+      <label>Category
+        <select name="cat">
+          <option value="">All</option>
+          ${opts(categories, active.cat)}
+        </select>
+      </label>
+      <label>Subcategory
+        <select name="sub">
+          <option value="">All</option>
+          ${opts(subcategories, active.sub)}
+        </select>
+      </label>
+      <label>Tag
+        <select name="tag">
+          <option value="">All</option>
+          ${opts(tagSlugs, active.tag)}
+        </select>
+      </label>
+      <button type="submit" class="cta-primary" style="padding:5px 14px;font-size:0.85rem;">Filter</button>
+      <a href="/ideas" style="color:#6b7280;font-size:0.82rem;text-decoration:none;">Reset</a>
+    </form>
+  `;
+}
+
 module.exports = {
   renderBreakdown,
   computeWhyPick,
@@ -568,5 +641,6 @@ module.exports = {
   renderWhyNoMovers,
   renderHealthUi,
   renderMetricsUi,
+  renderFilterBar,
   pageShell,
 };

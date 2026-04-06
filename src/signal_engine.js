@@ -41,8 +41,11 @@ function marketKey(item) {
 const SNAPSHOT_PROJECTION = {
   question: 1,
   category: 1,
+  subcategory: 1,
   marketSlug: 1,
   eventSlug: 1,
+  tagIds: 1,
+  tagSlugs: 1,
   priceYesNum: 1,
   priceYes: 1,
   bestBidNum: 1,
@@ -498,8 +501,11 @@ function enrichItem(item, historyMap, recentlyShownSet) {
   return {
     question: item.question,
     category: item.category || "",
+    subcategory: item.subcategory || "",
     marketSlug: item.marketSlug || "",
     eventSlug: item.eventSlug || "",
+    tagIds: item.tagIds || [],
+    tagSlugs: item.tagSlugs || [],
     eventGroup: safeGroupEvent(item),
     categoryGroup: safeGroupCategory(item),
     latestYes,

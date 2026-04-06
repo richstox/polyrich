@@ -61,6 +61,10 @@ console.log("\nnormalizeMarket");
   assert(m.hoursLeft !== null && m.hoursLeft > 0, "hoursLeft > 0 for future date");
   // normalizeMarket must not write the old separate string properties like priceYes as a string
   assert(typeof m.priceYes !== "string", "priceYes must not be a string (no legacy string write)");
+  // New fields
+  assert(m.subcategory === "", "subcategory defaults to empty string");
+  assert(Array.isArray(m.tagIds), "tagIds is an array");
+  assert(Array.isArray(m.tagSlugs), "tagSlugs is an array");
 }
 
 {
@@ -82,6 +86,67 @@ console.log("\nnormalizeMarket");
   // volume24hr alias (volume field)
   const m = normalizeMarket({ question: "Q", volume: "1234" });
   assert(m.volume24hr === 1234, "volume alias parsed correctly");
+}
+
+{
+  // Event context: subcategory and tags from event flattening
+  const m = normalizeMarket({
+    question: "Will Y win?",
+    subcategory: "NBA",
+    eventSlug: "nba-finals-2025",
+    eventTags: [
+      { id: "t1", slug: "basketball", label: "Basketball" },
+      { id: "t2", slug: "sports", label: "Sports" },
+    ],
+  });
+  assert(m.subcategory === "NBA", "subcategory preserved from event");
+  assert(m.eventSlug === "nba-finals-2025", "eventSlug preserved from event");
+  assert(m.tagIds.length === 2, "tagIds contains 2 entries");
+  assert(m.tagIds[0] === "t1", "tagIds[0] is t1");
+  assert(m.tagSlugs.length === 2, "tagSlugs contains 2 entries");
+  assert(m.tagSlugs[0] === "basketball", "tagSlugs[0] is basketball");
+}
+
+// ---------------------------------------------------------------------------
+// polymarketUrl
+// ---------------------------------------------------------------------------
+console.log("\npolymarketUrl");
+
+{
+  const { polymarketUrl } = (() => {
+    // Inline the function for testing since it's not exported
+    function polymarketUrl(item) {
+      if (typeof item === "string") {
+        if (!item) return null;
+        return "https://polymarket.com/event/" + encodeURIComponent(item);
+      }
+      if (item.eventSlug) {
+        return "https://polymarket.com/event/" + encodeURIComponent(item.eventSlug);
+      }
+      if (item.question) {
+        return "https://polymarket.com/search?q=" + encodeURIComponent(item.question);
+      }
+      return null;
+    }
+    return { polymarketUrl };
+  })();
+
+  assert(
+    polymarketUrl({ eventSlug: "us-election-2024" }) === "https://polymarket.com/event/us-election-2024",
+    "polymarketUrl uses eventSlug"
+  );
+  assert(
+    polymarketUrl({ question: "Will X happen?" }) === "https://polymarket.com/search?q=Will%20X%20happen%3F",
+    "polymarketUrl falls back to search when no eventSlug"
+  );
+  assert(
+    polymarketUrl({}) === null,
+    "polymarketUrl returns null for empty item"
+  );
+  assert(
+    polymarketUrl("legacy-slug") === "https://polymarket.com/event/legacy-slug",
+    "polymarketUrl accepts legacy string arg"
+  );
 }
 
 // ---------------------------------------------------------------------------

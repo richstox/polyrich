@@ -12,8 +12,11 @@ const SHOWN_TTL_SECONDS = config.SHOWN_CANDIDATE_TTL_DAYS * 24 * 60 * 60;
 const marketSnapshotSchema = new mongoose.Schema({
   question: String,
   category: String,
+  subcategory: String,
   marketSlug: String,
   eventSlug: String,
+  tagIds: [String],
+  tagSlugs: [String],
 
   // legacy string fields — kept in schema for backward-compat reads; NOT written by new code
   priceYes: String,
@@ -75,11 +78,26 @@ const scanSchema = new mongoose.Schema({
 scanSchema.index({ startedAt: -1 });
 
 // ---------------------------------------------------------------------------
+// TagCache schema — stores tags & sports lists with a TTL for daily refresh
+// ---------------------------------------------------------------------------
+const tagCacheSchema = new mongoose.Schema({
+  key: { type: String, unique: true },  // "tags" or "sports"
+  data: mongoose.Schema.Types.Mixed,
+  updatedAt: { type: Date, default: Date.now },
+});
+
+tagCacheSchema.index(
+  { updatedAt: 1 },
+  { expireAfterSeconds: config.TAGS_CACHE_TTL_SECONDS }
+);
+
+// ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
 const MarketSnapshot = mongoose.model("MarketSnapshot", marketSnapshotSchema);
 const ShownCandidate = mongoose.model("ShownCandidate", shownCandidateSchema);
 const Scan = mongoose.model("Scan", scanSchema);
+const TagCache = mongoose.model("TagCache", tagCacheSchema);
 
 // ---------------------------------------------------------------------------
 // DB operations
@@ -101,8 +119,11 @@ async function upsertSnapshots(candidates, scanId) {
         $setOnInsert: {
           question: item.question,
           category: item.category,
+          subcategory: item.subcategory || "",
           marketSlug: item.marketSlug,
           eventSlug: item.eventSlug,
+          tagIds: item.tagIds || [],
+          tagSlugs: item.tagSlugs || [],
           // normalizeMarket() returns numeric fields as priceYes/spread/etc.
           // They are stored under the *Num aliases in the DB schema to distinguish
           // them from the legacy string fields kept for backward-compat reads.
@@ -159,13 +180,35 @@ async function persistShownCandidates(scanId, candidates) {
   await ShownCandidate.bulkWrite(ops, { ordered: false });
 }
 
+/**
+ * Read a cached tag/sports list. Returns null if missing/expired.
+ */
+async function getCachedTagData(key) {
+  const doc = await TagCache.findOne({ key }).lean();
+  return doc ? doc.data : null;
+}
+
+/**
+ * Write a tag/sports list to cache (upsert).
+ */
+async function setCachedTagData(key, data) {
+  await TagCache.updateOne(
+    { key },
+    { $set: { key, data, updatedAt: new Date() } },
+    { upsert: true }
+  );
+}
+
 module.exports = {
   MarketSnapshot,
   ShownCandidate,
   Scan,
+  TagCache,
   upsertSnapshots,
   insertScanRecord,
   updateScanRecord,
   getLastScan,
   persistShownCandidates,
+  getCachedTagData,
+  setCachedTagData,
 };

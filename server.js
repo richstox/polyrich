@@ -4,7 +4,7 @@ const http = require("http");
 const mongoose = require("mongoose");
 
 const config = require("./src/config");
-const { fetchPolymarkets } = require("./src/fetcher");
+const { fetchPolymarkets, fetchTags, fetchSports } = require("./src/fetcher");
 const { normalizeMarket, formatHoursLeft, formatVolume, asNumber } = require("./src/normalizer");
 const {
   MarketSnapshot,
@@ -14,6 +14,8 @@ const {
   updateScanRecord,
   getLastScan,
   persistShownCandidates,
+  getCachedTagData,
+  setCachedTagData,
 } = require("./src/persistence");
 const { buildIdeas } = require("./src/signal_engine");
 const {
@@ -23,6 +25,7 @@ const {
   renderWhyNoMovers,
   renderHealthUi,
   renderMetricsUi,
+  renderFilterBar,
   pageShell,
 } = require("./src/html_renderer");
 
@@ -62,6 +65,9 @@ let scanStatus = {
   lastScanId: null,
   lastSavedCount: 0,
   lastTotalFetched: 0,
+  lastEventsFetched: 0,
+  lastMarketsFlattened: 0,
+  lastPagesFetched: 0,
   lastWatchlistCount: 0,
   lastSignalsCount: 0,
   lastInterestingCount: 0,
@@ -100,9 +106,12 @@ async function runScan() {
 
   let data = [];
   let candidates = [];
+  let fetchStats = { eventsFetched: 0, marketsFlattened: 0, pagesFetched: 0 };
 
   try {
-    data = await fetchPolymarkets();
+    const result = await fetchPolymarkets();
+    data = result.markets;
+    fetchStats = result.stats;
 
     candidates = data
       .filter((item) =>
@@ -134,8 +143,14 @@ async function runScan() {
     scanStatus.nextScanAt = next;
     scanStatus.lastSavedCount = candidates.length;
     scanStatus.lastTotalFetched = data.length;
+    scanStatus.lastEventsFetched = fetchStats.eventsFetched;
+    scanStatus.lastMarketsFlattened = fetchStats.marketsFlattened;
+    scanStatus.lastPagesFetched = fetchStats.pagesFetched;
     scanStatus.lastError = null;
     scanStatus.lastDurationMs = durationMs;
+
+    // Refresh tags/sports cache in the background (non-blocking)
+    refreshTagsCache().catch(() => {});
 
     await updateScanRecord(scanId, {
       finishedAt: now,
@@ -151,6 +166,9 @@ async function runScan() {
       saved: candidates.length,
       upserted,
       durationMs,
+      eventsFetched: fetchStats.eventsFetched,
+      marketsFlattened: fetchStats.marketsFlattened,
+      pagesFetched: fetchStats.pagesFetched,
     }));
 
     return candidates;
@@ -201,6 +219,29 @@ async function scanLoop() {
       // already logged in runScan
     }
     await new Promise((r) => setTimeout(r, config.SCAN_INTERVAL_MS));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tags / Sports cache — refreshed once per scan (TTL in Mongo).
+// Sports data is pre-fetched for future sports-specific filtering.
+// ---------------------------------------------------------------------------
+async function refreshTagsCache() {
+  try {
+    const [tags, sports] = await Promise.all([fetchTags(), fetchSports()]);
+    if (tags.length > 0) await setCachedTagData("tags", tags);
+    if (sports.length > 0) await setCachedTagData("sports", sports);
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: "refreshTagsCache error", err: err.message }));
+  }
+}
+
+/** Load cached tags list (returns array of tag objects or []). */
+async function loadCachedTags() {
+  try {
+    return (await getCachedTagData("tags")) || [];
+  } catch (_) {
+    return [];
   }
 }
 
@@ -267,6 +308,9 @@ const server = http.createServer(async (req, res) => {
       lastTotalFetched: scanStatus.lastTotalFetched,
       lastSavedCount: scanStatus.lastSavedCount,
       lastDurationMs: scanStatus.lastDurationMs,
+      eventsFetched: scanStatus.lastEventsFetched,
+      marketsFlattened: scanStatus.lastMarketsFlattened,
+      pagesFetched: scanStatus.lastPagesFetched,
       lastWatchlistCount: scanStatus.lastWatchlistCount,
       lastSignalsCount: scanStatus.lastSignalsCount,
       lastInterestingCount: scanStatus.lastInterestingCount,
@@ -377,26 +421,51 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/ideas") {
     try {
       const forceRelaxed = url.searchParams.get("forceRelaxed") === "1";
+      const filterCatRaw = url.searchParams.get("cat") || "";
+      const filterSubRaw = url.searchParams.get("sub") || "";
+      const filterTagRaw = url.searchParams.get("tag") || "";
+      const filterCat = filterCatRaw.toLowerCase();
+      const filterSub = filterSubRaw.toLowerCase();
+      const filterTag = filterTagRaw.toLowerCase();
+
       const {
-        tradeCandidates, movers, mispricing, funnel,
+        tradeCandidates: rawCandidates, movers: rawMovers, mispricing: rawMispricing, funnel,
         watchlistCount, signalsCount, mispricingCount,
         filteredOutByGuardrails, eligibleForMispricing,
         relaxedMode, thresholds, closestToThreshold,
       } = await buildIdeas(scanStatus, { forceRelaxed });
 
-      if (scanStatus.lastScanId && tradeCandidates.length > 0) {
-        await persistShownCandidates(scanStatus.lastScanId, tradeCandidates).catch(() => {});
+      // Apply query-param filters
+      function matchesFilter(item) {
+        if (filterCat && (item.category || "").toLowerCase() !== filterCat) return false;
+        if (filterSub && (item.subcategory || "").toLowerCase() !== filterSub) return false;
+        if (filterTag && !(item.tagSlugs || []).some((t) => t.toLowerCase() === filterTag)) return false;
+        return true;
+      }
+
+      const tradeCandidates = rawCandidates.filter(matchesFilter);
+      const movers = rawMovers.filter(matchesFilter);
+      const mispricing = rawMispricing.filter(matchesFilter);
+
+      if (scanStatus.lastScanId && rawCandidates.length > 0) {
+        await persistShownCandidates(scanStatus.lastScanId, rawCandidates).catch(() => {});
       }
 
       scanStatus.lastWatchlistCount = watchlistCount || 0;
       scanStatus.lastSignalsCount = signalsCount || 0;
-      scanStatus.lastInterestingCount = tradeCandidates.length;
-      scanStatus.lastMoverCount = movers.length;
+      scanStatus.lastInterestingCount = rawCandidates.length;
+      scanStatus.lastMoverCount = rawMovers.length;
       scanStatus.lastMispricingCount = mispricingCount || 0;
       scanStatus.lastFilteredOutByGuardrails = filteredOutByGuardrails || 0;
       scanStatus.lastEligibleForMispricing = eligibleForMispricing || 0;
 
       const funnelWithMispricing = { ...funnel, mispricing: mispricingCount || 0 };
+
+      // Collect distinct categories/subcategories/tags for the filter bar
+      const allItems = [...rawCandidates, ...rawMovers, ...rawMispricing];
+      const categories = [...new Set(allItems.map((x) => x.category).filter(Boolean))].sort();
+      const subcategories = [...new Set(allItems.map((x) => x.subcategory).filter(Boolean))].sort();
+      const tagSlugsAll = [...new Set(allItems.flatMap((x) => x.tagSlugs || []).filter(Boolean))].sort();
 
       const topPicks = tradeCandidates.slice(0, 10);
 
@@ -404,6 +473,8 @@ const server = http.createServer(async (req, res) => {
         <h1>Scanner dashboard</h1>
 
         ${renderTodayActions(scanStatus, funnelWithMispricing, signalsCount, relaxedMode)}
+
+        ${renderFilterBar(categories, subcategories, tagSlugsAll, { cat: filterCatRaw, sub: filterSubRaw, tag: filterTagRaw })}
 
         <details class="section-toggle" open>
           <summary>Top Picks (micro-trade ready) <span class="badge-count">${topPicks.length}</span></summary>
@@ -503,6 +574,9 @@ const server = http.createServer(async (req, res) => {
       lastTotalFetched: scanStatus.lastTotalFetched,
       lastSavedCount: scanStatus.lastSavedCount,
       lastDurationMs: scanStatus.lastDurationMs,
+      eventsFetched: scanStatus.lastEventsFetched,
+      marketsFlattened: scanStatus.lastMarketsFlattened,
+      pagesFetched: scanStatus.lastPagesFetched,
       lastWatchlistCount: scanStatus.lastWatchlistCount,
       lastSignalsCount: scanStatus.lastSignalsCount,
       lastInterestingCount: scanStatus.lastInterestingCount,
