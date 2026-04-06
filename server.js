@@ -16,7 +16,7 @@ const {
   persistShownCandidates,
 } = require("./src/persistence");
 const { buildIdeas } = require("./src/signal_engine");
-const { renderCandidate } = require("./src/html_renderer");
+const { renderCandidate, pageShell } = require("./src/html_renderer");
 
 // ---------------------------------------------------------------------------
 // Node version check — warn-only, never crash
@@ -204,16 +204,19 @@ const server = http.createServer(async (req, res) => {
 
   // ── / ──────────────────────────────────────────────────────────────────
   if (url.pathname === "/") {
-    const html = `
+    const body = `
       <h1>Polyrich</h1>
-      <p><a href="/scan">Spustit scan teď</a></p>
-      <p><a href="/snapshots">Snapshoty</a></p>
-      <p><a href="/ideas">Scanner dashboard</a></p>
-      <p><a href="/health">Health</a></p>
-      <p><a href="/metrics">Metrics</a></p>
+      <p style="color:#6b7280;margin-bottom:20px;">Scanner prediction markets. Vyberte sekci:</p>
+      <div class="nav-grid">
+        <a class="nav-card" href="/scan"><span class="icon">🔄</span> Spustit scan</a>
+        <a class="nav-card" href="/snapshots"><span class="icon">📸</span> Snapshoty</a>
+        <a class="nav-card" href="/ideas"><span class="icon">📊</span> Dashboard</a>
+        <a class="nav-card" href="/health"><span class="icon">💚</span> Health</a>
+        <a class="nav-card" href="/metrics"><span class="icon">📈</span> Metrics</a>
+      </div>
     `;
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(html);
+    res.end(pageShell("Domů", "/", body));
     return;
   }
 
@@ -287,36 +290,37 @@ const server = http.createServer(async (req, res) => {
     }
 
     const failBanner = scanError
-      ? `<p style="color:red;font-weight:bold;padding:10px;border:2px solid red;border-radius:6px;">SCAN FAILED: ${scanError}</p>`
+      ? `<div class="error-banner">SCAN FAILED: ${scanError}</div>`
       : "";
 
-    const html = `
+    const runningBanner = scanRunning
+      ? '<div class="info-banner">⚠️ Scan právě probíhá na pozadí.</div>'
+      : "";
+
+    const body = `
       <h1>Scan trhu</h1>
-      <p><a href="/">← Zpět</a></p>
       ${failBanner}
-      ${scanRunning ? '<p style="color:orange;">⚠️ Scan právě probíhá na pozadí.</p>' : ""}
-      <p>Scan byl právě spuštěn ručně.</p>
-      <p><a href="/ideas">Otevřít scanner dashboard</a></p>
-      <ol>
+      ${runningBanner}
+      <div class="card"><p>Scan byl právě spuštěn ručně.</p><p><a href="/ideas" style="color:#2563eb;font-weight:600;">Otevřít dashboard →</a></p></div>
+      <ol class="candidates">
         ${candidates.slice(0, 30).map((item) => `
-          <li style="margin-bottom:18px;">
-            <strong>${item.question}</strong><br>
-            YES: ${item.priceYes.toFixed(3)} | NO: ${item.priceNo.toFixed(3)}<br>
-            spread: ${item.spread.toFixed(4)}<br>
-            liquidity: ${Math.round(item.liquidity).toLocaleString("en-US")}<br>
-            24h Volume: <strong>${formatVolume(item.volume24hr)}</strong><br>
-            endDate: ${item.endDate || "-"}<br>
-            time left: ${formatHoursLeft(item.hoursLeft)}
+          <li class="snapshot-item">
+            <strong>${item.question}</strong>
+            <div class="snapshot-grid">
+              <div><span class="label">YES</span> <span class="val">${item.priceYes.toFixed(3)}</span></div>
+              <div><span class="label">NO</span> <span class="val">${item.priceNo.toFixed(3)}</span></div>
+              <div><span class="label">spread</span> <span class="val">${item.spread.toFixed(4)}</span></div>
+              <div><span class="label">liquidity</span> <span class="val">${Math.round(item.liquidity).toLocaleString("en-US")}</span></div>
+              <div><span class="label">24h Vol</span> <span class="val" style="font-weight:700;">${formatVolume(item.volume24hr)}</span></div>
+              <div><span class="label">endDate</span> <span class="val">${item.endDate || "-"}</span></div>
+              <div><span class="label">time left</span> <span class="val">${formatHoursLeft(item.hoursLeft)}</span></div>
+            </div>
           </li>
         `).join("")}
-        <!--
-          Note: these items come directly from normalizeMarket() (pre-DB) and already
-          carry numeric fields as priceYes/spread/liquidity — not the *Num DB aliases.
-        -->
       </ol>
     `;
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(html);
+    res.end(pageShell("Scan", "/scan", body));
     return;
   }
 
@@ -334,28 +338,30 @@ const server = http.createServer(async (req, res) => {
       }
     ).sort({ _id: -1 }).limit(100).lean();
 
-    const html = `
+    const body = `
       <h1>Snapshoty</h1>
-      <p><a href="/">← Zpět</a></p>
-      <ul>
+      <p style="color:#6b7280;font-size:0.88rem;margin-bottom:16px;">Posledních ${items.length} záznamů</p>
+      <div>
         ${items.map((item) => `
-          <li style="margin-bottom:16px;">
-            <strong>${item.question}</strong><br>
-            scanId: ${item.scanId || "-"}<br>
-            slug: ${item.marketSlug || "-"}<br>
-            YES: ${numField(item, "priceYesNum", "priceYes")}<br>
-            spread: ${numField(item, "spreadNum", "spread")}<br>
-            liquidity: ${Math.round(numField(item, "liquidityNum", "liquidity")).toLocaleString("en-US")}<br>
-            24h Volume: <strong>${formatVolume(numField(item, "volume24hrNum", "volume24hr"))}</strong><br>
-            endDate: ${item.endDate || "-"}<br>
-            time left: ${formatHoursLeft(item.hoursLeft)}<br>
-            createdAt: ${new Date(item.createdAt).toLocaleString("cs-CZ")}
-          </li>
+          <div class="snapshot-item">
+            <strong style="font-size:0.92rem;">${item.question}</strong>
+            <div class="snapshot-grid">
+              <div><span class="label">scanId</span> <span class="val">${item.scanId || "-"}</span></div>
+              <div><span class="label">slug</span> <span class="val">${item.marketSlug || "-"}</span></div>
+              <div><span class="label">YES</span> <span class="val">${numField(item, "priceYesNum", "priceYes")}</span></div>
+              <div><span class="label">spread</span> <span class="val">${numField(item, "spreadNum", "spread")}</span></div>
+              <div><span class="label">liquidity</span> <span class="val">${Math.round(numField(item, "liquidityNum", "liquidity")).toLocaleString("en-US")}</span></div>
+              <div><span class="label">24h Vol</span> <span class="val" style="font-weight:700;">${formatVolume(numField(item, "volume24hrNum", "volume24hr"))}</span></div>
+              <div><span class="label">endDate</span> <span class="val">${item.endDate || "-"}</span></div>
+              <div><span class="label">time left</span> <span class="val">${formatHoursLeft(item.hoursLeft)}</span></div>
+              <div><span class="label">createdAt</span> <span class="val">${new Date(item.createdAt).toLocaleString("cs-CZ")}</span></div>
+            </div>
+          </div>
         `).join("")}
-      </ul>
+      </div>
     `;
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(html);
+    res.end(pageShell("Snapshoty", "/snapshots", body));
     return;
   }
 
@@ -380,59 +386,68 @@ const server = http.createServer(async (req, res) => {
       scanStatus.lastFilteredOutByGuardrails = filteredOutByGuardrails || 0;
       scanStatus.lastEligibleForMispricing = eligibleForMispricing || 0;
 
-      const html = `
+      const body = `
         <h1>Scanner dashboard</h1>
-        <p><a href="/">← Zpět</a></p>
 
-        <div style="padding:12px;border:1px solid #ccc;border-radius:8px;margin-bottom:20px;">
-          <p><strong>Poslední scan:</strong> ${scanStatus.lastScanAt ? scanStatus.lastScanAt.toLocaleString("cs-CZ") : "zatím neproběhl"}</p>
-          <p><strong>Další scan:</strong> ${scanStatus.nextScanAt ? scanStatus.nextScanAt.toLocaleString("cs-CZ") : "nenaplánován"}</p>
-          <p><strong>Aktuální scanId:</strong> ${scanStatus.lastScanId || "-"}</p>
-          <p><strong>Předchozí scanId:</strong> ${scanStatus.previousScanId || "-"}</p>
-          <p><strong>Chyba:</strong> ${scanStatus.lastError || "žádná"}</p>
+        <div class="card">
+          <div class="grid-2">
+            <p><strong>Poslední scan:</strong> ${scanStatus.lastScanAt ? scanStatus.lastScanAt.toLocaleString("cs-CZ") : "zatím neproběhl"}</p>
+            <p><strong>Další scan:</strong> ${scanStatus.nextScanAt ? scanStatus.nextScanAt.toLocaleString("cs-CZ") : "nenaplánován"}</p>
+            <p><strong>Aktuální scanId:</strong> ${scanStatus.lastScanId || "-"}</p>
+            <p><strong>Předchozí scanId:</strong> ${scanStatus.previousScanId || "-"}</p>
+          </div>
+          ${scanStatus.lastError ? `<p style="color:#b91c1c;margin-top:8px;"><strong>Chyba:</strong> ${scanStatus.lastError}</p>` : ""}
         </div>
 
-        <div style="padding:12px;border:1px solid #ccc;border-radius:8px;margin-bottom:20px;">
-          <h2>Funnel</h2>
-          <p>fetched: ${funnel.fetched}</p>
-          <p>saved: ${funnel.saved}</p>
-          <p>watchlist: ${funnel.watchlist}</p>
-          <p>signals: ${funnel.signals}</p>
-          <p>final candidates: ${funnel.finalCandidates}</p>
-          <p>movers: ${funnel.movers}</p>
-          <p>mispricing: ${mispricingCount || 0}</p>
+        <div class="card">
+          <h2 style="margin-top:0;">Funnel</h2>
+          <div class="grid-2">
+            <p><span style="color:#6b7280;">fetched:</span> <strong>${funnel.fetched}</strong></p>
+            <p><span style="color:#6b7280;">saved:</span> <strong>${funnel.saved}</strong></p>
+            <p><span style="color:#6b7280;">watchlist:</span> <strong>${funnel.watchlist}</strong></p>
+            <p><span style="color:#6b7280;">signals:</span> <strong>${funnel.signals}</strong></p>
+            <p><span style="color:#6b7280;">final candidates:</span> <strong>${funnel.finalCandidates}</strong></p>
+            <p><span style="color:#6b7280;">movers:</span> <strong>${funnel.movers}</strong></p>
+            <p><span style="color:#6b7280;">mispricing:</span> <strong>${mispricingCount || 0}</strong></p>
+          </div>
         </div>
 
-        <h2>Trade candidates</h2>
-        <p>Top 20 with diversification, novelty, mispricing, movement and orderbook quality.</p>
-        <ol>
-          ${tradeCandidates.map((item) => {
-            try { return renderCandidate(item); }
-            catch (_) { return `<li>render error: ${item.marketSlug}</li>`; }
-          }).join("")}
-        </ol>
+        <details class="section-toggle" open>
+          <summary>Trade candidates <span class="badge-count">${tradeCandidates.length}</span></summary>
+          <p style="color:#6b7280;font-size:0.85rem;margin:0 0 8px;">Top 20 s diverzifikací, novinka, mispricing, pohyb a kvalita orderbooku.</p>
+          <ol class="candidates">
+            ${tradeCandidates.map((item) => {
+              try { return renderCandidate(item); }
+              catch (_) { return `<li class="candidate-card">render error: ${item.marketSlug}</li>`; }
+            }).join("")}
+          </ol>
+        </details>
 
-        <h2>Mispricing</h2>
-        <p>Markets flagged from event inconsistency / peer-relative offside behavior.</p>
-        <ol>
-          ${mispricing.map((item) => {
-            try { return renderCandidate(item); }
-            catch (_) { return `<li>render error: ${item.marketSlug}</li>`; }
-          }).join("")}
-        </ol>
+        <details class="section-toggle" open>
+          <summary>Mispricing <span class="badge-count">${mispricing.length}</span></summary>
+          <p style="color:#6b7280;font-size:0.85rem;margin:0 0 8px;">Trhy flagnuté z event nekonzistence / peer-relative offside chování.</p>
+          <ol class="candidates">
+            ${mispricing.map((item) => {
+              try { return renderCandidate(item); }
+              catch (_) { return `<li class="candidate-card">render error: ${item.marketSlug}</li>`; }
+            }).join("")}
+          </ol>
+        </details>
 
-        <h2>Movers</h2>
-        <p>Momentum / breakout names with visible recent movement.</p>
-        <ol>
-          ${movers.map((item) => {
-            try { return renderCandidate(item); }
-            catch (_) { return `<li>render error: ${item.marketSlug}</li>`; }
-          }).join("")}
-        </ol>
+        <details class="section-toggle" open>
+          <summary>Movers <span class="badge-count">${movers.length}</span></summary>
+          <p style="color:#6b7280;font-size:0.85rem;margin:0 0 8px;">Momentum / breakout s viditelným nedávným pohybem.</p>
+          <ol class="candidates">
+            ${movers.map((item) => {
+              try { return renderCandidate(item); }
+              catch (_) { return `<li class="candidate-card">render error: ${item.marketSlug}</li>`; }
+            }).join("")}
+          </ol>
+        </details>
       `;
 
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(html);
+      res.end(pageShell("Dashboard", "/ideas", body));
       return;
     } catch (err) {
       scanStatus.lastError = err.message;

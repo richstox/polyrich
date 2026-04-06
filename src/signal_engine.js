@@ -28,6 +28,11 @@ const {
   REVERSAL_MIN_VOLATILITY,
 } = config;
 
+// Adaptive threshold floors — used for momentum, breakout and mispricing movement gate
+const MOMENTUM_FLOOR = 0.0012;
+const BREAKOUT_MOVE_FLOOR = 0.0015;
+const BREAKOUT_VOL_FLOOR = 0.0015;
+
 function marketKey(item) {
   return item.marketSlug || item.question;
 }
@@ -116,6 +121,23 @@ async function buildIdeas(scanStatus) {
       return null;
     }
   }).filter(Boolean);
+
+  // Compute globalMedianMove across all enriched items for adaptive thresholds
+  const allAbsMoves = baseEnriched.map((x) => x.absMove).filter((v) => v > 0);
+  const globalMedianMove = median(allAbsMoves);
+
+  // Re-evaluate momentum / breakout with adaptive thresholds
+  for (const item of baseEnriched) {
+    item.momentum =
+      item.absMove >= Math.max(MOMENTUM_FLOOR, 2.0 * globalMedianMove) &&
+      item.volume24hr >= 50 &&
+      item.liquidity >= 500 &&
+      item.spreadPct <= 0.25;
+
+    item.breakout =
+      item.absMove > Math.max(BREAKOUT_MOVE_FLOOR, 2.5 * globalMedianMove) ||
+      item.volatility > Math.max(BREAKOUT_VOL_FLOOR, 2.0 * globalMedianMove);
+  }
 
   const filteredCount = baseEnriched.filter((x) => x._filtered).length;
   if (filteredCount > 0) {
@@ -287,8 +309,8 @@ async function buildIdeas(scanStatus) {
     .filter(
       (item) =>
         (item.signalType === "momentum" || item.signalType === "breakout") &&
-        item.latestYes >= 0.10 &&
-        item.latestYes <= 0.90
+        item.latestYes >= 0.05 &&
+        item.latestYes <= 0.95
     )
     .sort((a, b) => b.absMove - a.absMove)
     .slice(0, MOVERS_SIZE);
@@ -445,11 +467,13 @@ function finalizeItem(item, inconsistencyThreshold, peerZThreshold) {
   // Mispricing is only flagged for non-filtered items to avoid noise.
   // Also reject when the static spreadPct exceeds the ceiling — wide spreads
   // mechanically inflate peer-Z / inconsistency scores and create false positives.
-  const mispricing =
+  // Movement gate: mispricing requires minimum movement to avoid zero-movement noise.
+  const rawMispricing =
     !item._filtered &&
     item.spreadPct <= MISPRICING_MAX_SPREAD_PCT_STATIC &&
     (item.eventInconsistencyScore >= inconsistencyThreshold ||
       item.peerZScore >= peerZThreshold);
+  const mispricing = rawMispricing && (item.absMove >= MOMENTUM_FLOOR || item.volatility >= BREAKOUT_VOL_FLOOR);
 
   const mispricingTerm = (item.eventInconsistencyScore || 0) * 1.0 + (item.peerZScore || 0) * 20;
   const orderbookTerm =
