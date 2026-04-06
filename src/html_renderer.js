@@ -36,7 +36,7 @@ function computeWhyPick(item) {
   bullets.push(`Costs: spread ${(item.spreadPct * 100).toFixed(1)}% (${spreadLabel})`);
 
   if (item.mispricing) {
-    bullets.push("Mispricing signal: yes \u2014 event-level inconsistency detected");
+    bullets.push("Mispricing signal: yes — event-level inconsistency detected");
   }
 
   if (item.hoursLeft !== null && item.hoursLeft > 0) {
@@ -56,7 +56,7 @@ function computeTradeability(item) {
     item._filtered ||
     (item.hoursLeft !== null && item.hoursLeft <= 0)
   ) {
-    return { icon: "\u274C", label: "Excluded", cls: "tradeability-excluded" };
+    return { icon: "❌", label: "Excluded", cls: "tradeability-excluded" };
   }
   if (
     item.spreadPct > 0.25 ||
@@ -64,9 +64,9 @@ function computeTradeability(item) {
     item.volume24hr < 50 ||
     (item.hoursLeft !== null && item.hoursLeft < 2)
   ) {
-    return { icon: "\u26A0\uFE0F", label: "Watch", cls: "tradeability-watch" };
+    return { icon: "⚠️", label: "Watch", cls: "tradeability-watch" };
   }
-  return { icon: "\u2705", label: "Tradeable today", cls: "tradeability-ok" };
+  return { icon: "✅", label: "Tradeable today", cls: "tradeability-ok" };
 }
 
 function signalBadge(type) {
@@ -535,15 +535,22 @@ function pageShell(title, activeNav, bodyHtml) {
     ${bodyHtml}
   </div>
   <script>
-  document.addEventListener("click",function(e){
-    var btn=e.target.closest("[data-copy-url]");
-    if(!btn)return;
-    var url=btn.getAttribute("data-copy-url");
-    if(navigator.clipboard){
-      navigator.clipboard.writeText(url).then(function(){
-        var orig=btn.textContent;btn.textContent="Copied!";
-        setTimeout(function(){btn.textContent=orig;},1500);
+  document.addEventListener("click", function(e) {
+    var btn = e.target.closest("[data-copy-url]");
+    if (!btn) return;
+    var url = btn.getAttribute("data-copy-url");
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(function() {
+        var orig = btn.textContent;
+        btn.textContent = "Copied!";
+        setTimeout(function() { btn.textContent = orig; }, 1500);
+      }, function() {
+        btn.textContent = "Copy failed";
+        setTimeout(function() { btn.textContent = "Copy link"; }, 1500);
       });
+    } else {
+      btn.textContent = "Copy not supported";
+      setTimeout(function() { btn.textContent = "Copy link"; }, 1500);
     }
   });
   </script>
