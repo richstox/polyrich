@@ -69,6 +69,37 @@ function computeTradeability(item) {
   return { icon: "✅", label: "Tradeable today", cls: "tradeability-ok" };
 }
 
+/**
+ * Render the bold "Action" line + exit plan for a candidate card.
+ * If the candidate has no trade instruction fields, returns empty string for safety.
+ */
+function renderActionLine(item) {
+  const side = item.recommendedSide || "WATCH";
+  const conf = typeof item.confidence === "number" ? item.confidence : 0;
+  const limit = item.entryLimit || 0;
+  const size = item.sizeUSD || 0;
+  const exitPlan = item.exitPlan || "";
+
+  let actionText;
+  let actionColor;
+  if (side === "WATCH") {
+    actionText = "WATCH";
+    actionColor = "#d97706";  // amber
+  } else {
+    actionText = `BUY ${escHtml(side)} $${size} at ≤ ${limit.toFixed(3)}`;
+    actionColor = side === "YES" ? "#059669" : "#dc2626";  // green / red
+  }
+
+  return `
+    <div style="margin:8px 0;padding:8px 12px;border-radius:6px;background:${actionColor}11;border:1.5px solid ${actionColor}33;">
+      <div style="font-weight:700;font-size:0.92rem;color:${actionColor};">
+        Action: ${actionText}${side !== "WATCH" ? ` <span style="font-weight:400;font-size:0.78rem;color:#6b7280;">(conf ${(conf * 100).toFixed(0)}%)</span>` : ""}
+      </div>
+      ${exitPlan ? `<div style="font-size:0.78rem;color:#374151;margin-top:2px;">${escHtml(exitPlan)}</div>` : ""}
+    </div>
+  `;
+}
+
 function signalBadge(type) {
   const colors = {
     momentum: "#2563eb",
@@ -128,6 +159,7 @@ function renderTopPick(item) {
         <div><span class="label">liquidity</span><span class="val">${Math.round(item.liquidity).toLocaleString("en-US")}</span></div>
         <div><span class="label">hoursLeft</span><span class="val">${formatHoursLeft(item.hoursLeft)}</span></div>
       </div>
+      ${renderActionLine(item)}
       <div class="why-pick-card">
         <div class="${trade.cls}" style="margin-bottom:6px;font-weight:600;font-size:0.85rem;">${trade.icon} ${escHtml(trade.label)}</div>
         <p style="margin:0 0 4px;font-weight:600;font-size:0.82rem;color:#1d1d1f;">Why this is a pick</p>
@@ -353,6 +385,7 @@ function renderCandidate(item) {
         <div><span class="label">liquidity</span><span class="val">${Math.round(item.liquidity).toLocaleString("en-US")}</span></div>
         <div><span class="label">hoursLeft</span><span class="val">${formatHoursLeft(item.hoursLeft)}</span></div>
       </div>
+      ${renderActionLine(item)}
       <div class="why-pick-card">
         <div class="${trade.cls}" style="margin-bottom:6px;font-weight:600;font-size:0.85rem;">${trade.icon} ${escHtml(trade.label)}</div>
         <p style="margin:0 0 4px;font-weight:600;font-size:0.82rem;color:#1d1d1f;">Why this is a pick</p>

@@ -608,7 +608,103 @@ function finalizeItem(item, inconsistencyThreshold, peerZThreshold) {
     signalType,
     isSignal,
     reasonCodes,
+    ...computeTradeInstruction(item, signalType, mispricing),
   };
 }
 
-module.exports = { buildIdeas, marketKey };
+/**
+ * Compute explicit trade instruction for a candidate.
+ * Returns { recommendedSide, confidence, entryLimit, sizeUSD, exitPlan }.
+ */
+function computeTradeInstruction(item, signalType, mispricing) {
+  const spread = item.spread || 0;
+  const bestBid = item.bestBidNum || 0;
+  const bestAsk = item.bestAskNum || 0;
+  const delta1 = item.delta1 || 0;
+  const absMove = item.absMove || 0;
+  const volatility = item.volatility || 0;
+  const spreadPct = item.spreadPct || 0;
+  const liquidity = item.liquidity || 0;
+  const volume24hr = item.volume24hr || 0;
+  const hoursLeft = item.hoursLeft;
+
+  // --- 1. Direction & confidence ---
+  let recommendedSide = "WATCH";
+  let confidence = 0;
+
+  if (signalType === "momentum" || signalType === "breakout" || signalType === "reversal") {
+    // Momentum / breakout / reversal: direction from delta1
+    if (delta1 > 0) {
+      recommendedSide = "YES";
+    } else if (delta1 < 0) {
+      recommendedSide = "NO";
+    }
+    // Confidence based on |delta1| and volatility
+    const moveStrength = Math.min(absMove / 0.02, 1);            // caps at 2% move
+    const volStrength = Math.min(volatility / 0.01, 1);           // caps at 1% vol
+    confidence = Math.min(moveStrength * 0.6 + volStrength * 0.4, 1);
+  } else if (mispricing) {
+    // Mispricing: use peerZ sign if available, else WATCH
+    const peerZ = item.peerZ || 0;
+    if (peerZ > 0.5) {
+      // Market is priced above peers → expect reversion down → buy NO
+      recommendedSide = "NO";
+      confidence = Math.min(Math.abs(peerZ) / 3, 1) * 0.7;
+    } else if (peerZ < -0.5) {
+      // Market priced below peers → expect reversion up → buy YES
+      recommendedSide = "YES";
+      confidence = Math.min(Math.abs(peerZ) / 3, 1) * 0.7;
+    } else {
+      // Direction unclear — default to WATCH
+      recommendedSide = "WATCH";
+      confidence = 0.2;
+    }
+  }
+
+  // If delta1 === 0 exactly and not mispricing, remain WATCH
+  if (recommendedSide === "WATCH") {
+    confidence = Math.max(confidence, 0.1);
+  }
+
+  // --- 2. Entry limit (avoid paying full spread) ---
+  let entryLimit = 0;
+  if (recommendedSide === "YES" && bestBid > 0 && bestAsk > 0) {
+    entryLimit = bestBid + 0.25 * spread;
+  } else if (recommendedSide === "NO" && bestBid > 0 && bestAsk > 0) {
+    entryLimit = (1 - bestAsk) + 0.25 * spread;
+  }
+  entryLimit = Math.round(entryLimit * 1000) / 1000;  // round to 0.001
+
+  // --- 3. Size ($5 base, up to $25) ---
+  let sizeUSD = 5;
+  // Increase with liquidity + volume
+  const liqBoost = Math.min(Math.log10(Math.max(liquidity, 1)) / 5, 1);    // 0..1
+  const volBoost = Math.min(Math.log10(Math.max(volume24hr, 1)) / 5, 1);   // 0..1
+  sizeUSD += (liqBoost + volBoost) * 10;   // up to +$20
+  sizeUSD = Math.min(sizeUSD, 25);
+  // Reduce if spreadPct > 10% or confidence < 0.6
+  if (spreadPct > 0.10 || confidence < 0.6) {
+    sizeUSD = Math.max(sizeUSD * 0.5, 5);
+  }
+  sizeUSD = Math.round(sizeUSD);
+
+  // WATCH → size is 0 (no trade)
+  if (recommendedSide === "WATCH") {
+    sizeUSD = 0;
+    entryLimit = 0;
+  }
+
+  // --- 4. Exit plan ---
+  const isIntraday = hoursLeft !== null && hoursLeft > 0 && hoursLeft <= 24;
+  const timeStop = isIntraday ? "6 h" : "24 h";
+  const exitPlan = recommendedSide === "WATCH"
+    ? "No trade — monitor only"
+    : `TP +2% or spread tightens · SL −2% · time stop ${timeStop}`;
+
+  // Round confidence
+  confidence = Math.round(confidence * 100) / 100;
+
+  return { recommendedSide, confidence, entryLimit, sizeUSD, exitPlan };
+}
+
+module.exports = { buildIdeas, marketKey, computeTradeInstruction };

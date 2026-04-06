@@ -268,6 +268,144 @@ console.log("\nasNumber");
 }
 
 // ---------------------------------------------------------------------------
+// computeTradeInstruction (inlined — same logic as signal_engine.js)
+// ---------------------------------------------------------------------------
+console.log("\ncomputeTradeInstruction");
+
+{
+  // Inline the function to avoid requiring signal_engine.js (which pulls mongoose)
+  function computeTradeInstruction(item, signalType, mispricing) {
+    const spread = item.spread || 0;
+    const bestBid = item.bestBidNum || 0;
+    const bestAsk = item.bestAskNum || 0;
+    const delta1 = item.delta1 || 0;
+    const absMove = item.absMove || 0;
+    const volatility = item.volatility || 0;
+    const spreadPct = item.spreadPct || 0;
+    const liquidity = item.liquidity || 0;
+    const volume24hr = item.volume24hr || 0;
+    const hoursLeft = item.hoursLeft;
+    let recommendedSide = "WATCH";
+    let confidence = 0;
+    if (signalType === "momentum" || signalType === "breakout" || signalType === "reversal") {
+      if (delta1 > 0) recommendedSide = "YES";
+      else if (delta1 < 0) recommendedSide = "NO";
+      const moveStrength = Math.min(absMove / 0.02, 1);
+      const volStrength = Math.min(volatility / 0.01, 1);
+      confidence = Math.min(moveStrength * 0.6 + volStrength * 0.4, 1);
+    } else if (mispricing) {
+      const peerZ = item.peerZ || 0;
+      if (peerZ > 0.5) { recommendedSide = "NO"; confidence = Math.min(Math.abs(peerZ) / 3, 1) * 0.7; }
+      else if (peerZ < -0.5) { recommendedSide = "YES"; confidence = Math.min(Math.abs(peerZ) / 3, 1) * 0.7; }
+      else { recommendedSide = "WATCH"; confidence = 0.2; }
+    }
+    if (recommendedSide === "WATCH") confidence = Math.max(confidence, 0.1);
+    let entryLimit = 0;
+    if (recommendedSide === "YES" && bestBid > 0 && bestAsk > 0) entryLimit = bestBid + 0.25 * spread;
+    else if (recommendedSide === "NO" && bestBid > 0 && bestAsk > 0) entryLimit = (1 - bestAsk) + 0.25 * spread;
+    entryLimit = Math.round(entryLimit * 1000) / 1000;
+    let sizeUSD = 5;
+    const liqBoost = Math.min(Math.log10(Math.max(liquidity, 1)) / 5, 1);
+    const volBoost = Math.min(Math.log10(Math.max(volume24hr, 1)) / 5, 1);
+    sizeUSD += (liqBoost + volBoost) * 10;
+    sizeUSD = Math.min(sizeUSD, 25);
+    if (spreadPct > 0.10 || confidence < 0.6) sizeUSD = Math.max(sizeUSD * 0.5, 5);
+    sizeUSD = Math.round(sizeUSD);
+    if (recommendedSide === "WATCH") { sizeUSD = 0; entryLimit = 0; }
+    const isIntraday = hoursLeft !== null && hoursLeft > 0 && hoursLeft <= 24;
+    const timeStop = isIntraday ? "6 h" : "24 h";
+    const exitPlan = recommendedSide === "WATCH"
+      ? "No trade — monitor only"
+      : `TP +2% or spread tightens · SL −2% · time stop ${timeStop}`;
+    confidence = Math.round(confidence * 100) / 100;
+    return { recommendedSide, confidence, entryLimit, sizeUSD, exitPlan };
+  }
+
+  // Momentum BUY YES: positive delta1
+  {
+    const item = {
+      delta1: 0.01, absMove: 0.01, volatility: 0.005,
+      bestBidNum: 0.50, bestAskNum: 0.54, spread: 0.04,
+      spreadPct: 0.08, liquidity: 10000, volume24hr: 5000,
+      hoursLeft: 48, peerZ: 0,
+    };
+    const r = computeTradeInstruction(item, "momentum", false);
+    assert(r.recommendedSide === "YES", "momentum +delta1 => BUY YES");
+    assert(r.confidence > 0, "momentum confidence > 0");
+    assert(r.entryLimit > 0, "momentum entryLimit > 0");
+    assert(r.sizeUSD >= 5 && r.sizeUSD <= 25, "momentum size in range");
+    assert(r.exitPlan.includes("TP"), "momentum exitPlan has TP");
+    assert(r.exitPlan.includes("24 h"), "multi-day => 24h time stop");
+  }
+
+  // Momentum BUY NO: negative delta1
+  {
+    const item = {
+      delta1: -0.01, absMove: 0.01, volatility: 0.005,
+      bestBidNum: 0.50, bestAskNum: 0.54, spread: 0.04,
+      spreadPct: 0.08, liquidity: 10000, volume24hr: 5000,
+      hoursLeft: 12, peerZ: 0,
+    };
+    const r = computeTradeInstruction(item, "momentum", false);
+    assert(r.recommendedSide === "NO", "momentum -delta1 => BUY NO");
+    assert(r.exitPlan.includes("6 h"), "intraday => 6h time stop");
+  }
+
+  // Mispricing with clear peerZ direction (negative => YES)
+  {
+    const item = {
+      delta1: 0.001, absMove: 0.001, volatility: 0.001,
+      bestBidNum: 0.30, bestAskNum: 0.34, spread: 0.04,
+      spreadPct: 0.12, liquidity: 5000, volume24hr: 2000,
+      hoursLeft: 100, peerZ: -1.5,
+    };
+    const r = computeTradeInstruction(item, "mispricing", true);
+    assert(r.recommendedSide === "YES", "mispricing peerZ<-0.5 => BUY YES");
+    assert(r.confidence > 0, "mispricing with direction has confidence");
+  }
+
+  // Mispricing with unclear direction => WATCH
+  {
+    const item = {
+      delta1: 0, absMove: 0, volatility: 0,
+      bestBidNum: 0.50, bestAskNum: 0.52, spread: 0.02,
+      spreadPct: 0.04, liquidity: 8000, volume24hr: 3000,
+      hoursLeft: 200, peerZ: 0.1,
+    };
+    const r = computeTradeInstruction(item, "mispricing", true);
+    assert(r.recommendedSide === "WATCH", "mispricing unclear => WATCH");
+    assert(r.sizeUSD === 0, "WATCH => size 0");
+    assert(r.entryLimit === 0, "WATCH => entryLimit 0");
+    assert(r.exitPlan.includes("monitor"), "WATCH => monitor only");
+  }
+
+  // Size reduction for wide spread
+  {
+    const item = {
+      delta1: 0.015, absMove: 0.015, volatility: 0.008,
+      bestBidNum: 0.40, bestAskNum: 0.50, spread: 0.10,
+      spreadPct: 0.25, liquidity: 100000, volume24hr: 50000,
+      hoursLeft: 48, peerZ: 0,
+    };
+    const r = computeTradeInstruction(item, "momentum", false);
+    assert(r.sizeUSD <= 13, "wide spread reduces size");
+  }
+
+  // entryLimit rounding to 0.001
+  {
+    const item = {
+      delta1: 0.01, absMove: 0.01, volatility: 0.005,
+      bestBidNum: 0.1611, bestAskNum: 0.1671, spread: 0.006,
+      spreadPct: 0.04, liquidity: 10000, volume24hr: 5000,
+      hoursLeft: 48, peerZ: 0,
+    };
+    const r = computeTradeInstruction(item, "momentum", false);
+    const decimals = r.entryLimit.toString().split(".")[1] || "";
+    assert(decimals.length <= 3, "entryLimit rounded to max 3 decimals");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);
