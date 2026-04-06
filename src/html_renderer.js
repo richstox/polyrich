@@ -18,6 +18,57 @@ function renderBreakdown(item) {
   ].join("\n");
 }
 
+/** Compute human-readable "Why this is a pick" bullets from signal terms. */
+function computeWhyPick(item) {
+  const bullets = [];
+  const ABS_MOVE_THRESHOLD = 0.003;
+
+  if (item.absMove >= ABS_MOVE_THRESHOLD) {
+    const dir = item.delta1 > 0 ? "up" : "down";
+    bullets.push(`Price moved recently: ${dir} ${(item.absMove * 100).toFixed(2)}%`);
+  }
+
+  if (item.volume24hr >= 1000 || item.liquidity >= 5000) {
+    bullets.push(`High activity: 24h vol ${formatVolume(item.volume24hr)}, liquidity ${Math.round(item.liquidity).toLocaleString("en-US")}`);
+  }
+
+  const spreadLabel = item.spreadPct <= 0.10 ? "good" : item.spreadPct <= 0.25 ? "OK" : "wide";
+  bullets.push(`Costs: spread ${(item.spreadPct * 100).toFixed(1)}% (${spreadLabel})`);
+
+  if (item.mispricing) {
+    bullets.push("Mispricing signal: yes — event-level inconsistency detected");
+  }
+
+  if (item.hoursLeft !== null && item.hoursLeft > 0) {
+    if (item.hoursLeft < 48) {
+      bullets.push("Time horizon: near-expiry (< 2 days)");
+    } else if (item.hoursLeft > 720) {
+      bullets.push("Time horizon: long-dated (> 30 days)");
+    }
+  }
+
+  return bullets.slice(0, 5);
+}
+
+/** Compute a simple tradeability label based on key metrics. */
+function computeTradeability(item) {
+  if (
+    item._filtered ||
+    (item.hoursLeft !== null && item.hoursLeft <= 0)
+  ) {
+    return { icon: "❌", label: "Excluded", cls: "tradeability-excluded" };
+  }
+  if (
+    item.spreadPct > 0.25 ||
+    item.liquidity < 500 ||
+    item.volume24hr < 50 ||
+    (item.hoursLeft !== null && item.hoursLeft < 2)
+  ) {
+    return { icon: "⚠️", label: "Watch", cls: "tradeability-watch" };
+  }
+  return { icon: "✅", label: "Tradeable today", cls: "tradeability-ok" };
+}
+
 function signalBadge(type) {
   const colors = {
     momentum: "#2563eb",
@@ -49,6 +100,10 @@ function renderTopPick(item) {
     return `<span style="display:inline-block;padding:1px 6px;border-radius:3px;background:${c}22;color:${c};font-size:0.7rem;border:1px solid ${c}44;margin-right:3px;">${escHtml(r)}</span>`;
   }).join("");
 
+  const whyBullets = computeWhyPick(item);
+  const trade = computeTradeability(item);
+  const safeLink = link ? escHtml(link) : "";
+
   return `
     <li class="candidate-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
@@ -62,8 +117,19 @@ function renderTopPick(item) {
         <div><span class="label">liquidity</span><span class="val">${Math.round(item.liquidity).toLocaleString("en-US")}</span></div>
         <div><span class="label">hoursLeft</span><span class="val">${formatHoursLeft(item.hoursLeft)}</span></div>
       </div>
+      <div class="why-pick-card">
+        <div class="${trade.cls}" style="margin-bottom:6px;font-weight:600;font-size:0.85rem;">${trade.icon} ${escHtml(trade.label)}</div>
+        <p style="margin:0 0 4px;font-weight:600;font-size:0.82rem;color:#1d1d1f;">Why this is a pick</p>
+        <ul style="margin:0;padding-left:18px;font-size:0.82rem;color:#374151;">
+          ${whyBullets.map((b) => `<li>${escHtml(b)}</li>`).join("")}
+        </ul>
+      </div>
+      ${link ? `<div class="cta-row">
+        <a href="${safeLink}" target="_blank" rel="noopener" class="cta-primary">Open on Polymarket</a>
+        <button class="cta-secondary" data-copy-url="${safeLink}">Copy link</button>
+      </div>` : ""}
       <details style="margin-top:6px;">
-        <summary style="cursor:pointer;font-size:0.75rem;color:#6b7280;">Details</summary>
+        <summary style="cursor:pointer;font-size:0.75rem;color:#6b7280;">Debug</summary>
         <div class="candidate-grid" style="margin-top:4px;font-size:0.78rem;">
           <div><span class="label">YES prev</span><span class="val">${item.previousYes.toFixed(3)}</span></div>
           <div><span class="label">absMove</span><span class="val">${item.absMove.toFixed(4)}</span></div>
@@ -249,29 +315,51 @@ function renderCandidate(item) {
     return `<span style="display:inline-block;padding:1px 6px;border-radius:3px;background:${c}22;color:${c};font-size:0.7rem;border:1px solid ${c}44;margin-right:3px;">${r}</span>`;
   }).join("");
 
+  const link = polymarketUrl(item.marketSlug);
+  const questionHtml = link
+    ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;flex:1;font-size:0.95rem;line-height:1.3;">${escHtml(item.question)}</a>`
+    : `<strong style="flex:1;font-size:0.95rem;line-height:1.3;">${escHtml(item.question)}</strong>`;
+  const whyBullets = computeWhyPick(item);
+  const trade = computeTradeability(item);
+  const safeLink = link ? escHtml(link) : "";
+
   return `
     <li class="candidate-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
-        <strong style="flex:1;font-size:0.95rem;line-height:1.3;">${item.question}</strong>
+        ${questionHtml}
         <span style="margin-left:12px;font-size:1.1rem;font-weight:700;color:#111;white-space:nowrap;">${item.signalScore2.toFixed(1)}</span>
       </div>
       <div style="margin-bottom:6px;">${signalBadge(item.signalType)} ${reasonTags}</div>
       <div class="candidate-grid">
         <div><span class="label">YES now</span><span class="val">${item.latestYes.toFixed(3)}</span></div>
-        <div><span class="label">YES prev</span><span class="val">${item.previousYes.toFixed(3)}</span></div>
-        <div><span class="label">absMove</span><span class="val">${item.absMove.toFixed(4)}</span></div>
-        <div><span class="label">delta1</span><span class="val">${movePrefix}${item.delta1.toFixed(4)}</span></div>
-        <div><span class="label">volatility</span><span class="val">${item.volatility.toFixed(4)}</span></div>
-        <div><span class="label">spread</span><span class="val">${item.spread.toFixed(4)}</span></div>
-        <div><span class="label">spreadPct</span><span class="val">${item.spreadPct.toFixed(4)}</span></div>
+        <div><span class="label">spreadPct</span><span class="val">${(item.spreadPct * 100).toFixed(1)}%</span></div>
         <div><span class="label">24h Vol</span><span class="val bold">${formatVolume(item.volume24hr)}</span></div>
         <div><span class="label">liquidity</span><span class="val">${Math.round(item.liquidity).toLocaleString("en-US")}</span></div>
         <div><span class="label">hoursLeft</span><span class="val">${formatHoursLeft(item.hoursLeft)}</span></div>
-        <div><span class="label">bestBid</span><span class="val">${item.bestBidNum.toFixed(3)}</span></div>
-        <div><span class="label">bestAsk</span><span class="val">${item.bestAskNum.toFixed(3)}</span></div>
       </div>
+      <div class="why-pick-card">
+        <div class="${trade.cls}" style="margin-bottom:6px;font-weight:600;font-size:0.85rem;">${trade.icon} ${escHtml(trade.label)}</div>
+        <p style="margin:0 0 4px;font-weight:600;font-size:0.82rem;color:#1d1d1f;">Why this is a pick</p>
+        <ul style="margin:0;padding-left:18px;font-size:0.82rem;color:#374151;">
+          ${whyBullets.map((b) => `<li>${escHtml(b)}</li>`).join("")}
+        </ul>
+      </div>
+      ${link ? `<div class="cta-row">
+        <a href="${safeLink}" target="_blank" rel="noopener" class="cta-primary">Open on Polymarket</a>
+        <button class="cta-secondary" data-copy-url="${safeLink}">Copy link</button>
+      </div>` : ""}
       <details style="margin-top:6px;">
-        <summary style="cursor:pointer;font-size:0.75rem;color:#6b7280;">Zobrazit breakdown</summary>
+        <summary style="cursor:pointer;font-size:0.75rem;color:#6b7280;">Debug</summary>
+        <div class="candidate-grid" style="margin-top:4px;font-size:0.78rem;">
+          <div><span class="label">YES prev</span><span class="val">${item.previousYes.toFixed(3)}</span></div>
+          <div><span class="label">absMove</span><span class="val">${item.absMove.toFixed(4)}</span></div>
+          <div><span class="label">delta1</span><span class="val">${movePrefix}${item.delta1.toFixed(4)}</span></div>
+          <div><span class="label">volatility</span><span class="val">${item.volatility.toFixed(4)}</span></div>
+          <div><span class="label">spread</span><span class="val">${item.spread.toFixed(4)}</span></div>
+          <div><span class="label">spreadPct</span><span class="val">${item.spreadPct.toFixed(4)}</span></div>
+          <div><span class="label">bestBid</span><span class="val">${item.bestBidNum.toFixed(3)}</span></div>
+          <div><span class="label">bestAsk</span><span class="val">${item.bestAskNum.toFixed(3)}</span></div>
+        </div>
         <pre class="breakdown">${renderBreakdown(item)}</pre>
         <div class="candidate-grid" style="margin-top:4px;font-size:0.72rem;">
           <div><span class="label">category</span><span class="val">${item.category || "-"}</span></div>
@@ -387,6 +475,30 @@ function sharedStyles() {
     background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px;
     padding: 10px 16px; color: #92400e; font-size: 0.88rem; margin-bottom: 16px;
   }
+  .why-pick-card {
+    background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;
+    padding: 10px 14px; margin-top: 8px;
+  }
+  .tradeability-ok { color: #166534; }
+  .tradeability-watch { color: #92400e; }
+  .tradeability-excluded { color: #b91c1c; }
+  .cta-row {
+    display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;
+  }
+  .cta-primary {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 7px 16px; border-radius: 8px; font-size: 0.85rem; font-weight: 600;
+    background: #2563eb; color: #fff; text-decoration: none; border: none; cursor: pointer;
+    transition: background .15s;
+  }
+  .cta-primary:hover { background: #1d4ed8; }
+  .cta-secondary {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 7px 16px; border-radius: 8px; font-size: 0.85rem; font-weight: 600;
+    background: #fff; color: #2563eb; border: 1px solid #2563eb; cursor: pointer;
+    transition: background .15s;
+  }
+  .cta-secondary:hover { background: #eff6ff; }
 </style>`;
 }
 
@@ -422,12 +534,34 @@ function pageShell(title, activeNav, bodyHtml) {
   <div class="container">
     ${bodyHtml}
   </div>
+  <script>
+  document.addEventListener("click", function(e) {
+    var btn = e.target.closest("[data-copy-url]");
+    if (!btn) return;
+    var url = btn.getAttribute("data-copy-url");
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(function() {
+        var orig = btn.textContent;
+        btn.textContent = "Copied!";
+        setTimeout(function() { btn.textContent = orig; }, 1500);
+      }, function() {
+        btn.textContent = "Copy failed";
+        setTimeout(function() { btn.textContent = "Copy link"; }, 1500);
+      });
+    } else {
+      btn.textContent = "Copy not supported";
+      setTimeout(function() { btn.textContent = "Copy link"; }, 1500);
+    }
+  });
+  </script>
 </body>
 </html>`;
 }
 
 module.exports = {
   renderBreakdown,
+  computeWhyPick,
+  computeTradeability,
   renderCandidate,
   renderTopPick,
   renderTodayActions,
