@@ -103,6 +103,9 @@ async function upsertSnapshots(candidates, scanId) {
           category: item.category,
           marketSlug: item.marketSlug,
           eventSlug: item.eventSlug,
+          // normalizeMarket() returns numeric fields as priceYes/spread/etc.
+          // They are stored under the *Num aliases in the DB schema to distinguish
+          // them from the legacy string fields kept for backward-compat reads.
           priceYesNum: item.priceYes,
           priceNoNum: item.priceNo,
           bestBidNum: item.bestBid,

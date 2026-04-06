@@ -15,7 +15,7 @@ function getHoursLeft(endDate) {
 }
 
 function formatHoursLeft(hoursLeft) {
-  if (hoursLeft === null || hoursLeft === undefined || Number.isNaN(hoursLeft)) return "-";
+  if (!Number.isFinite(hoursLeft)) return "-";
   if (hoursLeft <= 0) return "ended";
   if (hoursLeft < 1) return `${Math.round(hoursLeft * 60)} min`;
   if (hoursLeft < 24) return `${hoursLeft.toFixed(1)} h`;
@@ -125,7 +125,7 @@ function safeGroupCategory(item) {
 }
 
 function computeSoftTimeBonus(hoursLeft) {
-  if (hoursLeft === null || hoursLeft === undefined || Number.isNaN(hoursLeft) || hoursLeft <= 0) return -TIME_PENALTY_EXPIRED;
+  if (!Number.isFinite(hoursLeft) || hoursLeft <= 0) return -TIME_PENALTY_EXPIRED;
   if (hoursLeft <= 24 * 30) return 60;
   if (hoursLeft <= 24 * 90) return 25;
   return 0;

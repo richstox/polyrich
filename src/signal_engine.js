@@ -321,9 +321,10 @@ function enrichItem(item, historyMap, recentlyShownSet) {
     spread > MAX_SPREAD_HARD ||
     (hoursLeft !== null && hoursLeft > 0 && hoursLeft < 0.5);
 
-  // spreadPct includes configurable fee + slippage buffer to avoid misleading mispricing flags
+  // spreadPct includes configurable fee + slippage buffer to avoid misleading mispricing flags.
+  // Divides by the cheaper side's price (min) to get the worst-case relative spread.
   const effectiveSpread = spread + FEE_SLIPPAGE_BUFFER;
-  const spreadPct = effectiveSpread / Math.max(latestYes, 1 - latestYes, 0.01);
+  const spreadPct = effectiveSpread / Math.max(Math.min(latestYes, 1 - latestYes), 0.01);
 
   const liquidityScore = Math.log(liquidity + 1);
   const volumeScore = Math.log(volume24hr + 1);

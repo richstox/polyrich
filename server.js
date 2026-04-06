@@ -18,6 +18,11 @@ const {
 const { buildIdeas } = require("./src/signal_engine");
 const { renderCandidate } = require("./src/html_renderer");
 
+/** Read a numeric DB field, falling back to the legacy string alias. */
+function numField(item, numKey, strKey) {
+  return typeof item[numKey] === "number" ? item[numKey] : asNumber(item[strKey], 0);
+}
+
 // ---------------------------------------------------------------------------
 // DB connection
 // ---------------------------------------------------------------------------
@@ -305,10 +310,10 @@ const server = http.createServer(async (req, res) => {
             <strong>${item.question}</strong><br>
             scanId: ${item.scanId || "-"}<br>
             slug: ${item.marketSlug || "-"}<br>
-            YES: ${typeof item.priceYesNum === "number" ? item.priceYesNum : item.priceYes}<br>
-            spread: ${typeof item.spreadNum === "number" ? item.spreadNum : item.spread}<br>
-            liquidity: ${Math.round(typeof item.liquidityNum === "number" ? item.liquidityNum : asNumber(item.liquidity, 0)).toLocaleString("en-US")}<br>
-            <strong>24h Volume: ${formatVolume(typeof item.volume24hrNum === "number" ? item.volume24hrNum : asNumber(item.volume24hr, 0))}</strong><br>
+            YES: ${numField(item, "priceYesNum", "priceYes")}<br>
+            spread: ${numField(item, "spreadNum", "spread")}<br>
+            liquidity: ${Math.round(numField(item, "liquidityNum", "liquidity")).toLocaleString("en-US")}<br>
+            24h Volume: <strong>${formatVolume(numField(item, "volume24hrNum", "volume24hr"))}</strong><br>
             endDate: ${item.endDate || "-"}<br>
             time left: ${formatHoursLeft(item.hoursLeft)}<br>
             createdAt: ${new Date(item.createdAt).toLocaleString("cs-CZ")}

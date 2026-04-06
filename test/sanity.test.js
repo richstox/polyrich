@@ -20,8 +20,8 @@ function assert(condition, name) {
   }
 }
 
-function assertClose(a, b, name, tol = 1e-9) {
-  assert(Math.abs(a - b) <= tol, `${name} (expected ${b}, got ${a})`);
+function assertClose(actual, expected, name, tol = 1e-9) {
+  assert(Math.abs(actual - expected) <= tol, `${name} (expected ${expected}, got ${actual})`);
 }
 
 // ---------------------------------------------------------------------------
