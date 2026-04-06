@@ -26,6 +26,7 @@ const {
   renderHealthUi,
   renderMetricsUi,
   renderFilterBar,
+  renderBucketSection,
   pageShell,
 } = require("./src/html_renderer");
 
@@ -127,8 +128,15 @@ async function runScan() {
         const aScore = Math.log(a.volume24hr + 1) * 100 + Math.log(a.liquidity + 1) * 50 - a.spread * 1000;
         const bScore = Math.log(b.volume24hr + 1) * 100 + Math.log(b.liquidity + 1) * 50 - b.spread * 1000;
         return bScore - aScore;
-      })
-      .slice(0, config.SAVED_PER_SCAN);
+      });
+
+    // Dynamic saving: save more snapshots when fetched count is large
+    let saveLimit = config.SAVED_PER_SCAN;
+    if (candidates.length > config.SAVED_DYNAMIC_THRESHOLD) {
+      const pctBased = Math.ceil(candidates.length * config.SAVED_PER_SCAN_PCT);
+      saveLimit = Math.min(Math.max(config.SAVED_PER_SCAN_MIN, pctBased), config.SAVED_PER_SCAN_CAP);
+    }
+    candidates = candidates.slice(0, saveLimit);
 
     const previousScanId = scanStatus.lastScanId || null;
     const upserted = await upsertSnapshots(candidates, scanId);
@@ -433,6 +441,7 @@ const server = http.createServer(async (req, res) => {
         watchlistCount, signalsCount, mispricingCount,
         filteredOutByGuardrails, eligibleForMispricing,
         relaxedMode, thresholds, closestToThreshold,
+        buckets,
       } = await buildIdeas(scanStatus, { forceRelaxed });
 
       // Apply query-param filters
@@ -467,6 +476,13 @@ const server = http.createServer(async (req, res) => {
       const subcategories = [...new Set(allItems.map((x) => x.subcategory).filter(Boolean))].sort();
       const tagSlugsAll = [...new Set(allItems.flatMap((x) => x.tagSlugs || []).filter(Boolean))].sort();
 
+      // Apply filter to buckets too
+      const filteredBuckets = {
+        INTRADAY: (buckets ? buckets.INTRADAY : []).filter(matchesFilter),
+        THIS_WEEK: (buckets ? buckets.THIS_WEEK : []).filter(matchesFilter),
+        WATCH: (buckets ? buckets.WATCH : []).filter(matchesFilter),
+      };
+
       const topPicks = tradeCandidates.slice(0, 10);
 
       const body = `
@@ -475,6 +491,10 @@ const server = http.createServer(async (req, res) => {
         ${renderTodayActions(scanStatus, funnelWithMispricing, signalsCount, relaxedMode)}
 
         ${renderFilterBar(categories, subcategories, tagSlugsAll, { cat: filterCatRaw, sub: filterSubRaw, tag: filterTagRaw })}
+
+        ${buckets ? renderBucketSection("INTRADAY", filteredBuckets.INTRADAY, buckets.counts.INTRADAY, buckets.gates.INTRADAY, false) : ""}
+        ${buckets ? renderBucketSection("THIS_WEEK", filteredBuckets.THIS_WEEK, buckets.counts.THIS_WEEK, buckets.gates.THIS_WEEK, false) : ""}
+        ${buckets ? renderBucketSection("WATCH", filteredBuckets.WATCH.slice(0, 10), buckets.counts.WATCH, buckets.gates.WATCH, true) : ""}
 
         <details class="section-toggle" open>
           <summary>Top Picks (micro-trade ready) <span class="badge-count">${topPicks.length}</span></summary>

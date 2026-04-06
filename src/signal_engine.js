@@ -28,6 +28,44 @@ const {
   REVERSAL_MIN_VOLATILITY,
 } = config;
 
+// ---------------------------------------------------------------------------
+// Time-bucket constants
+// ---------------------------------------------------------------------------
+const BUCKET_INTRADAY_MAX = 48;   // hours
+const BUCKET_THIS_WEEK_MAX = 168; // hours
+
+function classifyBucket(hoursLeft) {
+  if (hoursLeft === null || !Number.isFinite(hoursLeft)) return "WATCH";
+  if (hoursLeft <= 0) return null; // expired
+  if (hoursLeft <= BUCKET_INTRADAY_MAX) return "INTRADAY";
+  if (hoursLeft <= BUCKET_THIS_WEEK_MAX) return "THIS_WEEK";
+  return "WATCH";
+}
+
+/** Bucket-specific hard gates.  Returns true when the item PASSES the gate. */
+function passesBucketGate(item, bucket, adaptiveMoveGate, adaptiveVolGate) {
+  if (bucket === "INTRADAY") {
+    if (item.spreadPct > 0.10) return false;
+    if (item.liquidity < 5000) return false;
+    if (item.volume24hr < 1000) return false;
+    return (item.absMove >= adaptiveMoveGate || item.volatility >= adaptiveVolGate || item.mispricing === true);
+  }
+  if (bucket === "THIS_WEEK") {
+    if (item.spreadPct > 0.12) return false;
+    if (item.liquidity < 25000) return false;
+    if (item.volume24hr < 5000) return false;
+    return (item.absMove >= adaptiveMoveGate || item.volatility >= adaptiveVolGate || item.mispricing === true);
+  }
+  // WATCH — no hard gates
+  return true;
+}
+
+function bucketTimeBonus(hoursLeft, bucketMaxHours) {
+  if (!Number.isFinite(hoursLeft) || hoursLeft <= 0 || bucketMaxHours <= 0) return 0;
+  const raw = (bucketMaxHours - hoursLeft) / bucketMaxHours;
+  return Math.max(0, Math.min(raw, 1)) * 100;
+}
+
 // Adaptive threshold floors — used for momentum, breakout and mispricing movement gate
 const MOMENTUM_FLOOR = 0.0012;
 const BREAKOUT_MOVE_FLOOR = 0.0015;
@@ -391,6 +429,56 @@ async function buildIdeas(scanStatus, opts = {}) {
       breakoutMoveThreshold,
     }));
 
+  // --- Time buckets: classify, gate, rank --------------------------------
+  const adaptiveMoveGate = momentumThreshold;
+  const adaptiveVolGate = breakoutVolThreshold;
+
+  // Work on ALL finalized items from the enriched pool (not just selected)
+  const allFinalized = result.enriched || [];
+
+  const bucketMap = { INTRADAY: [], THIS_WEEK: [], WATCH: [] };
+
+  for (const item of allFinalized) {
+    if (item._filtered) continue;
+    if (item.hoursLeft !== null && item.hoursLeft <= 0) continue;
+    const bucket = classifyBucket(item.hoursLeft);
+    if (!bucket) continue;
+
+    const passesGate = passesBucketGate(item, bucket, adaptiveMoveGate, adaptiveVolGate);
+    if (!passesGate && bucket !== "WATCH") continue;
+
+    // Compute finalRank = signalScore2 + bucket-local time bonus
+    const bucketMax = bucket === "INTRADAY" ? BUCKET_INTRADAY_MAX : bucket === "THIS_WEEK" ? BUCKET_THIS_WEEK_MAX : 0;
+    const tBonus = bucketTimeBonus(item.hoursLeft, bucketMax);
+    const finalRank = item.signalScore2 + tBonus;
+
+    bucketMap[bucket].push({ ...item, bucketTimeBonus: tBonus, finalRank });
+  }
+
+  // Sort each bucket by finalRank descending, cap to 10 for display
+  for (const key of Object.keys(bucketMap)) {
+    bucketMap[key].sort((a, b) => b.finalRank - a.finalRank);
+  }
+  const intradayBucket = bucketMap.INTRADAY.slice(0, 10);
+  const thisWeekBucket = bucketMap.THIS_WEEK.slice(0, 10);
+  const watchBucket = bucketMap.WATCH; // collapsed, show all (but UI will collapse)
+
+  const buckets = {
+    INTRADAY: intradayBucket,
+    THIS_WEEK: thisWeekBucket,
+    WATCH: watchBucket,
+    counts: {
+      INTRADAY: bucketMap.INTRADAY.length,
+      THIS_WEEK: bucketMap.THIS_WEEK.length,
+      WATCH: bucketMap.WATCH.length,
+    },
+    gates: {
+      INTRADAY: "spreadPct≤10% · liq≥5k · vol24h≥1k · (move|vol|mispricing)",
+      THIS_WEEK: "spreadPct≤12% · liq≥25k · vol24h≥5k · (move|vol|mispricing)",
+      WATCH: "no hard gates",
+    },
+  };
+
   return {
     tradeCandidates: selected,
     movers,
@@ -408,6 +496,7 @@ async function buildIdeas(scanStatus, opts = {}) {
       breakoutVolThreshold,
     },
     closestToThreshold,
+    buckets,
     funnel: {
       fetched: scanStatus.lastTotalFetched || 0,
       saved: scanStatus.lastSavedCount || 0,
@@ -611,4 +700,4 @@ function finalizeItem(item, inconsistencyThreshold, peerZThreshold) {
   };
 }
 
-module.exports = { buildIdeas, marketKey };
+module.exports = { buildIdeas, marketKey, classifyBucket, passesBucketGate, bucketTimeBonus };

@@ -268,6 +268,75 @@ console.log("\nasNumber");
 }
 
 // ---------------------------------------------------------------------------
+// Time bucket helpers (from signal_engine — inlined to avoid mongoose dep)
+// ---------------------------------------------------------------------------
+console.log("\ntime buckets");
+
+{
+  // classifyBucket logic inline
+  const BUCKET_INTRADAY_MAX = 48;
+  const BUCKET_THIS_WEEK_MAX = 168;
+  function classifyBucket(hoursLeft) {
+    if (hoursLeft === null || !Number.isFinite(hoursLeft)) return "WATCH";
+    if (hoursLeft <= 0) return null;
+    if (hoursLeft <= BUCKET_INTRADAY_MAX) return "INTRADAY";
+    if (hoursLeft <= BUCKET_THIS_WEEK_MAX) return "THIS_WEEK";
+    return "WATCH";
+  }
+  function bucketTimeBonus(hoursLeft, bucketMaxHours) {
+    if (!Number.isFinite(hoursLeft) || hoursLeft <= 0 || bucketMaxHours <= 0) return 0;
+    const raw = (bucketMaxHours - hoursLeft) / bucketMaxHours;
+    return Math.max(0, Math.min(raw, 1)) * 100;
+  }
+
+  assert(classifyBucket(12) === "INTRADAY", "12h → INTRADAY");
+  assert(classifyBucket(48) === "INTRADAY", "48h → INTRADAY (boundary)");
+  assert(classifyBucket(49) === "THIS_WEEK", "49h → THIS_WEEK");
+  assert(classifyBucket(168) === "THIS_WEEK", "168h → THIS_WEEK (boundary)");
+  assert(classifyBucket(169) === "WATCH", "169h → WATCH");
+  assert(classifyBucket(null) === "WATCH", "null hoursLeft → WATCH");
+  assert(classifyBucket(0) === null, "0h → null (expired)");
+  assert(classifyBucket(-5) === null, "-5h → null (expired)");
+
+  // bucketTimeBonus: earlier in bucket → higher bonus
+  assertClose(bucketTimeBonus(0.001, 48), 100, "near-zero hours gives ~100 bonus", 1);
+  assertClose(bucketTimeBonus(48, 48), 0, "at bucket max gives 0 bonus");
+  assertClose(bucketTimeBonus(24, 48), 50, "halfway gives 50 bonus");
+  assertClose(bucketTimeBonus(null, 48), 0, "null hoursLeft gives 0 bonus");
+  assertClose(bucketTimeBonus(-1, 48), 0, "negative hoursLeft gives 0 bonus");
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic saving config
+// ---------------------------------------------------------------------------
+console.log("\ndynamic saving config");
+
+{
+  const cfg = require("../src/config");
+  assert(cfg.SAVED_PER_SCAN_MIN === 2000, "SAVED_PER_SCAN_MIN default is 2000");
+  assert(cfg.SAVED_PER_SCAN_CAP === 5000, "SAVED_PER_SCAN_CAP default is 5000");
+  assert(cfg.SAVED_PER_SCAN_PCT === 0.05, "SAVED_PER_SCAN_PCT default is 0.05");
+  assert(cfg.SAVED_DYNAMIC_THRESHOLD === 5000, "SAVED_DYNAMIC_THRESHOLD default is 5000");
+
+  // Simulate dynamic save calculation
+  function computeSaveLimit(candidateCount) {
+    let saveLimit = cfg.SAVED_PER_SCAN;
+    if (candidateCount > cfg.SAVED_DYNAMIC_THRESHOLD) {
+      const pctBased = Math.ceil(candidateCount * cfg.SAVED_PER_SCAN_PCT);
+      saveLimit = Math.min(Math.max(cfg.SAVED_PER_SCAN_MIN, pctBased), cfg.SAVED_PER_SCAN_CAP);
+    }
+    return saveLimit;
+  }
+
+  assert(computeSaveLimit(200) === 200, "small count → legacy SAVED_PER_SCAN");
+  assert(computeSaveLimit(5000) === 200, "at threshold → legacy SAVED_PER_SCAN");
+  assert(computeSaveLimit(43000) >= 2000, "43k fetched → at least 2000 saved");
+  assert(computeSaveLimit(43000) <= 5000, "43k fetched → at most 5000 saved");
+  assertClose(computeSaveLimit(43000), 2150, "43k fetched → 5% = 2150", 1);
+  assert(computeSaveLimit(200000) === 5000, "200k fetched → capped at 5000");
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);
