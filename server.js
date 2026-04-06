@@ -223,7 +223,8 @@ async function scanLoop() {
 }
 
 // ---------------------------------------------------------------------------
-// Tags / Sports cache — refreshed once per scan (TTL in Mongo)
+// Tags / Sports cache — refreshed once per scan (TTL in Mongo).
+// Sports data is pre-fetched for future sports-specific filtering.
 // ---------------------------------------------------------------------------
 async function refreshTagsCache() {
   try {
@@ -420,9 +421,12 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/ideas") {
     try {
       const forceRelaxed = url.searchParams.get("forceRelaxed") === "1";
-      const filterCat = url.searchParams.get("cat") || "";
-      const filterSub = url.searchParams.get("sub") || "";
-      const filterTag = url.searchParams.get("tag") || "";
+      const filterCatRaw = url.searchParams.get("cat") || "";
+      const filterSubRaw = url.searchParams.get("sub") || "";
+      const filterTagRaw = url.searchParams.get("tag") || "";
+      const filterCat = filterCatRaw.toLowerCase();
+      const filterSub = filterSubRaw.toLowerCase();
+      const filterTag = filterTagRaw.toLowerCase();
 
       const {
         tradeCandidates: rawCandidates, movers: rawMovers, mispricing: rawMispricing, funnel,
@@ -433,9 +437,9 @@ const server = http.createServer(async (req, res) => {
 
       // Apply query-param filters
       function matchesFilter(item) {
-        if (filterCat && (item.category || "").toLowerCase() !== filterCat.toLowerCase()) return false;
-        if (filterSub && (item.subcategory || "").toLowerCase() !== filterSub.toLowerCase()) return false;
-        if (filterTag && !(item.tagSlugs || []).some((t) => t.toLowerCase() === filterTag.toLowerCase())) return false;
+        if (filterCat && (item.category || "").toLowerCase() !== filterCat) return false;
+        if (filterSub && (item.subcategory || "").toLowerCase() !== filterSub) return false;
+        if (filterTag && !(item.tagSlugs || []).some((t) => t.toLowerCase() === filterTag)) return false;
         return true;
       }
 
@@ -470,7 +474,7 @@ const server = http.createServer(async (req, res) => {
 
         ${renderTodayActions(scanStatus, funnelWithMispricing, signalsCount, relaxedMode)}
 
-        ${renderFilterBar(categories, subcategories, tagSlugsAll, { cat: filterCat, sub: filterSub, tag: filterTag })}
+        ${renderFilterBar(categories, subcategories, tagSlugsAll, { cat: filterCatRaw, sub: filterSubRaw, tag: filterTagRaw })}
 
         <details class="section-toggle" open>
           <summary>Top Picks (micro-trade ready) <span class="badge-count">${topPicks.length}</span></summary>

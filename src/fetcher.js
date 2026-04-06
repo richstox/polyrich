@@ -64,7 +64,7 @@ async function fetchPolymarkets() {
         ts: new Date().toISOString(),
       }));
       // If the first page fails, nothing to work with
-      if (page === 0) throw new Error("first events page failed: " + err.message);
+      if (page === 0) throw new Error("first events page failed: " + (err.message || "unknown error"));
       break;
     }
 
