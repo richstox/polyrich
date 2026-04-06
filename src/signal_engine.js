@@ -61,7 +61,7 @@ const SNAPSHOT_PROJECTION = {
   createdAt: 1,
 };
 
-async function buildIdeas(scanStatus) {
+async function buildIdeas(scanStatus, opts = {}) {
   if (!scanStatus.lastScanId) {
     return {
       tradeCandidates: [],
@@ -347,7 +347,8 @@ async function buildIdeas(scanStatus) {
   let result = buildCandidatesFromEnriched();
 
   // --- Auto-adaptive fallback: relax thresholds when too few signals ---
-  if (result.signals.length < 10 && !relaxedMode) {
+  // Also triggers via opts.forceRelaxed for debugging.
+  if ((result.signals.length < 10 || opts.forceRelaxed) && !relaxedMode) {
     const signalsBefore = result.signals.length;
     relaxedMode = true;
     momentumMult = 1.5;
@@ -362,6 +363,7 @@ async function buildIdeas(scanStatus) {
       momentumMult,
       breakoutMoveMult,
       breakoutVolMult,
+      forced: !!opts.forceRelaxed,
       ts: new Date().toISOString(),
     }));
   }

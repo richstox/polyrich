@@ -376,12 +376,13 @@ const server = http.createServer(async (req, res) => {
   // ── /ideas ─────────────────────────────────────────────────────────────
   if (url.pathname === "/ideas") {
     try {
+      const forceRelaxed = url.searchParams.get("forceRelaxed") === "1";
       const {
         tradeCandidates, movers, mispricing, funnel,
         watchlistCount, signalsCount, mispricingCount,
         filteredOutByGuardrails, eligibleForMispricing,
         relaxedMode, thresholds, closestToThreshold,
-      } = await buildIdeas(scanStatus);
+      } = await buildIdeas(scanStatus, { forceRelaxed });
 
       if (scanStatus.lastScanId && tradeCandidates.length > 0) {
         await persistShownCandidates(scanStatus.lastScanId, tradeCandidates).catch(() => {});
