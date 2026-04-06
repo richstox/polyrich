@@ -187,6 +187,11 @@ async function buildIdeas(scanStatus) {
     (item) => (item.hoursLeft === null || item.hoursLeft > 0) && !item._filtered
   );
 
+  const filteredOutByGuardrails = enriched.filter((x) => x._filtered).length;
+  const eligibleForMispricing = enriched.filter(
+    (x) => !x._filtered && x.signalType === "mispricing"
+  ).length;
+
   const watchlist = [...tradableUniverse]
     .sort((a, b) => {
       const aScore = a.activityTerm + a.orderbookTerm - a.costPenalty;
@@ -243,11 +248,38 @@ async function buildIdeas(scanStatus) {
   takeTypeQuota(byType.momentumBreakout, 8);
   takeTypeQuota(byType.reversal, 4);
 
+  // Backfill from remaining signals if we haven't hit FINAL_CANDIDATES_SIZE
   if (selected.length < FINAL_CANDIDATES_SIZE) {
     for (const item of signals) {
       if (selected.length >= FINAL_CANDIDATES_SIZE) break;
       if (!canAdd(item)) continue;
       addItem(item);
+    }
+  }
+
+  // Hard ceiling: mispricing must not exceed 50% of finalCandidates
+  // unless total signals < FINAL_CANDIDATES_SIZE (i.e. we can't fill otherwise).
+  if (signals.length >= FINAL_CANDIDATES_SIZE) {
+    const mispricingCeil = Math.floor(selected.length * 0.5);
+    const mispricingInSelected = selected.filter((x) => x.signalType === "mispricing");
+    if (mispricingInSelected.length > mispricingCeil) {
+      // Remove excess mispricing from the end (lowest priority) and backfill
+      const excess = mispricingInSelected.length - mispricingCeil;
+      let removed = 0;
+      for (let i = selected.length - 1; i >= 0 && removed < excess; i--) {
+        if (selected[i].signalType === "mispricing") {
+          selectedSlugSet.delete(selected[i].marketSlug);
+          selected.splice(i, 1);
+          removed++;
+        }
+      }
+      // Backfill with non-mispricing signals
+      for (const item of signals) {
+        if (selected.length >= FINAL_CANDIDATES_SIZE) break;
+        if (item.signalType === "mispricing") continue;
+        if (!canAdd(item)) continue;
+        addItem(item);
+      }
     }
   }
 
@@ -273,6 +305,8 @@ async function buildIdeas(scanStatus) {
     watchlistCount: watchlist.length,
     signalsCount: signals.length,
     mispricingCount: mispricingList.length,
+    filteredOutByGuardrails,
+    eligibleForMispricing,
     funnel: {
       fetched: scanStatus.lastTotalFetched || 0,
       saved: scanStatus.lastSavedCount || 0,

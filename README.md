@@ -46,8 +46,15 @@ test/
 | `SHOWN_CANDIDATE_TTL_DAYS`| `30`               | Auto-expire ShownCandidate documents after N days|
 | `FEE_SLIPPAGE_BUFFER`     | `0.02`             | Added to spread before costPenalty computation   |
 | `MAX_SPREAD_HARD`         | `0.5`              | Guardrail: markets with spread > this are filtered|
+| `MISPRICING_MAX_SPREAD_PCT_STATIC` | `0.30` | Static spreadPct ceiling for mispricing flags     |
 | `FETCH_TIMEOUT_MS`        | `15000`            | Timeout per Polymarket API request               |
 | `FETCH_RETRY_COUNT`       | `2`                | Retry attempts per API page before giving up     |
+
+## Node version
+
+Production is pinned to **Node 20.x** via `engines` in `package.json` and `.nvmrc`.  
+CI sandbox may run Node 24; the prestart check in `server.js` logs a warning if the
+running major version differs from 20 but does **not** crash.
 
 ## Local run
 

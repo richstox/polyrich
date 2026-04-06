@@ -18,6 +18,20 @@ const {
 const { buildIdeas } = require("./src/signal_engine");
 const { renderCandidate } = require("./src/html_renderer");
 
+// ---------------------------------------------------------------------------
+// Node version check — warn-only, never crash
+// ---------------------------------------------------------------------------
+{
+  const major = parseInt(process.version.replace("v", ""), 10);
+  console.log(JSON.stringify({ msg: "node version", version: process.version, ts: new Date().toISOString() }));
+  if (major !== 20) {
+    console.warn(JSON.stringify({
+      msg: "WARNING: expected Node 20.x (production pin), running " + process.version,
+      ts: new Date().toISOString(),
+    }));
+  }
+}
+
 /** Read a numeric DB field, falling back to the legacy string alias. */
 function numField(item, numKey, strKey) {
   return typeof item[numKey] === "number" ? item[numKey] : asNumber(item[strKey], 0);
@@ -45,6 +59,8 @@ let scanStatus = {
   lastInterestingCount: 0,
   lastMoverCount: 0,
   lastMispricingCount: 0,
+  lastFilteredOutByGuardrails: 0,
+  lastEligibleForMispricing: 0,
   lastError: null,
   lastDurationMs: null,
 };
@@ -220,12 +236,19 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/metrics") {
     let dbSnapshotCount = null;
     let dbScanCount = null;
+    let recentScans = [];
     try {
-      [dbSnapshotCount, dbScanCount] = await Promise.all([
+      [dbSnapshotCount, dbScanCount, recentScans] = await Promise.all([
         MarketSnapshot.estimatedDocumentCount(),
         Scan.estimatedDocumentCount(),
+        Scan.find().sort({ startedAt: -1 }).limit(3).lean(),
       ]);
     } catch (_) {}
+
+    const last3Scans = (recentScans || []).map((s) => ({
+      scanId: s.scanId,
+      durationMs: s.durationMs ?? null,
+    }));
 
     const metrics = {
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
@@ -238,10 +261,13 @@ const server = http.createServer(async (req, res) => {
       lastInterestingCount: scanStatus.lastInterestingCount,
       lastMoverCount: scanStatus.lastMoverCount,
       lastMispricingCount: scanStatus.lastMispricingCount,
+      filteredOutByGuardrails: scanStatus.lastFilteredOutByGuardrails,
+      eligibleForMispricing: scanStatus.lastEligibleForMispricing,
       lastError: scanStatus.lastError,
       scanRunning,
       dbSnapshotCount,
       dbScanCount,
+      last3Scans,
       ts: new Date().toISOString(),
     };
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -339,6 +365,7 @@ const server = http.createServer(async (req, res) => {
       const {
         tradeCandidates, movers, mispricing, funnel,
         watchlistCount, signalsCount, mispricingCount,
+        filteredOutByGuardrails, eligibleForMispricing,
       } = await buildIdeas(scanStatus);
 
       if (scanStatus.lastScanId && tradeCandidates.length > 0) {
@@ -350,6 +377,8 @@ const server = http.createServer(async (req, res) => {
       scanStatus.lastInterestingCount = tradeCandidates.length;
       scanStatus.lastMoverCount = movers.length;
       scanStatus.lastMispricingCount = mispricingCount || 0;
+      scanStatus.lastFilteredOutByGuardrails = filteredOutByGuardrails || 0;
+      scanStatus.lastEligibleForMispricing = eligibleForMispricing || 0;
 
       const html = `
         <h1>Scanner dashboard</h1>
