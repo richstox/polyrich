@@ -220,27 +220,23 @@ async function buildIdeas() {
     const liquid = liquidity >= 1000;
     const liveVolume = volume24hr >= 100;
     const tightSpread = spread > 0 && spread <= 0.03;
-    const decentSpread = spread > 0 && spread <= 0.08;
-    const someMove = moveAbs >= 0.003;
 
     const intradayCandidate =
       hoursLeft !== null &&
       hoursLeft > 0 &&
-      hoursLeft <= 72 &&
-      balancedPrice &&
-      decentSpread &&
-      liquid &&
-      liveVolume;
+      hoursLeft < 168 &&
+      latestYes >= 0.15 &&
+      latestYes <= 0.85 &&
+      spread > 0 &&
+      spread <= 0.05 &&
+      liquidity >= 1000 &&
+      volume24hr >= 500;
 
     let tag = "watch";
-    if (intradayCandidate && tightSpread && someMove && nearEnd) {
+    if (intradayCandidate && tightSpread && nearEnd) {
       tag = "live intraday";
-    } else if (intradayCandidate && someMove) {
-      tag = "moving";
-    } else if (intradayCandidate && nearEnd) {
-      tag = "near expiry";
-    } else if (intradayCandidate && tightSpread) {
-      tag = "tight spread";
+    } else if (intradayCandidate) {
+      tag = "active setup";
     } else if (!liveVolume) {
       tag = "low activity";
     }
@@ -251,8 +247,7 @@ async function buildIdeas() {
       Math.min(volume24hr * 0.5, 250) +
       (tightSpread ? 40 : 0) +
       (nearEnd ? 30 : 0) +
-      (balancedPrice ? 20 : 0) +
-      (liveVolume ? 80 : 0) -
+      (balancedPrice ? 20 : 0) -
       spread * 200;
 
     return {
@@ -277,7 +272,12 @@ async function buildIdeas() {
   });
 
   const movers = enriched
-    .filter((item) => item.moveAbs > 0 && item.volume24hr >= 100)
+    .filter((item) =>
+      item.moveAbs > 0 &&
+      item.volume24hr >= 100 &&
+      item.latestYes >= 0.10 &&
+      item.latestYes <= 0.90
+    )
     .sort((a, b) => b.moveAbs - a.moveAbs)
     .slice(0, 15);
 
@@ -409,18 +409,19 @@ const server = http.createServer(async (req, res) => {
           <p><strong>Uložených kandidátů:</strong> ${scanStatus.lastSavedCount}</p>
           <p><strong>Živých intraday kandidátů:</strong> ${scanStatus.lastInterestingCount}</p>
           <p><strong>Živých moverů mezi 2 scany:</strong> ${scanStatus.lastMoverCount}</p>
-          <p><strong>Min 24h Volume filtr:</strong> 100</p>
+          <p><strong>Min 24h Volume filtr pro movers:</strong> 100</p>
+          <p><strong>Min 24h Volume filtr pro intraday:</strong> 500</p>
           <p><strong>Chyba:</strong> ${scanStatus.lastError || "žádná"}</p>
         </div>
 
-        <h2>Největší živí movers mezi 2 scany</h2>
-        <p>Jen markety s 24h Volume >= 100.</p>
+        <h2>Movers</h2>
+        <p>Jen markety s 24h Volume >= 100 a cenou YES mezi 0.10 a 0.90.</p>
         <ol>
           ${movers.map(renderIdea).join("")}
         </ol>
 
-        <h2>Nejlepší živé intraday kandidáty</h2>
-        <p>Jen markety, které mají dost aktivity, rozumný spread, likviditu a blízký konec.</p>
+        <h2>Intraday kandidáti</h2>
+        <p>Jen markety do 7 dní, s 24h Volume >= 500 a spread <= 0.05.</p>
         <ol>
           ${ideas.map(renderIdea).join("")}
         </ol>
