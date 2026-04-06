@@ -28,6 +28,11 @@ const {
   REVERSAL_MIN_VOLATILITY,
 } = config;
 
+// Adaptive threshold floors — used for momentum, breakout and mispricing movement gate
+const MOMENTUM_FLOOR = 0.0012;
+const BREAKOUT_MOVE_FLOOR = 0.0015;
+const BREAKOUT_VOL_FLOOR = 0.0015;
+
 function marketKey(item) {
   return item.marketSlug || item.question;
 }
@@ -124,14 +129,14 @@ async function buildIdeas(scanStatus) {
   // Re-evaluate momentum / breakout with adaptive thresholds
   for (const item of baseEnriched) {
     item.momentum =
-      item.absMove >= Math.max(0.0012, 2.0 * globalMedianMove) &&
+      item.absMove >= Math.max(MOMENTUM_FLOOR, 2.0 * globalMedianMove) &&
       item.volume24hr >= 50 &&
       item.liquidity >= 500 &&
       item.spreadPct <= 0.25;
 
     item.breakout =
-      item.absMove > Math.max(0.0015, 2.5 * globalMedianMove) ||
-      item.volatility > Math.max(0.0015, 2.0 * globalMedianMove);
+      item.absMove > Math.max(BREAKOUT_MOVE_FLOOR, 2.5 * globalMedianMove) ||
+      item.volatility > Math.max(BREAKOUT_VOL_FLOOR, 2.0 * globalMedianMove);
   }
 
   const filteredCount = baseEnriched.filter((x) => x._filtered).length;
@@ -468,7 +473,7 @@ function finalizeItem(item, inconsistencyThreshold, peerZThreshold) {
     item.spreadPct <= MISPRICING_MAX_SPREAD_PCT_STATIC &&
     (item.eventInconsistencyScore >= inconsistencyThreshold ||
       item.peerZScore >= peerZThreshold);
-  const mispricing = rawMispricing && (item.absMove >= 0.0012 || item.volatility >= 0.0015);
+  const mispricing = rawMispricing && (item.absMove >= MOMENTUM_FLOOR || item.volatility >= BREAKOUT_VOL_FLOOR);
 
   const mispricingTerm = (item.eventInconsistencyScore || 0) * 1.0 + (item.peerZScore || 0) * 20;
   const orderbookTerm =
