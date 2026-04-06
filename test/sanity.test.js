@@ -388,6 +388,7 @@ console.log("\ncomputeTradeInstruction");
       hoursLeft: 48, peerZ: 0,
     };
     const r = computeTradeInstruction(item, "momentum", false);
+    // With spreadPct=0.25 (>10%), size is halved from boosted value (~25 → ~13)
     assert(r.sizeUSD <= 13, "wide spread reduces size");
   }
 

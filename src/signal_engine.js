@@ -628,6 +628,10 @@ function computeTradeInstruction(item, signalType, mispricing) {
   const volume24hr = item.volume24hr || 0;
   const hoursLeft = item.hoursLeft;
 
+  // Confidence scaling caps
+  const CONFIDENCE_MOVE_CAP = 0.02;   // absMove at which move-strength saturates
+  const CONFIDENCE_VOL_CAP = 0.01;    // volatility at which vol-strength saturates
+
   // --- 1. Direction & confidence ---
   let recommendedSide = "WATCH";
   let confidence = 0;
@@ -640,8 +644,8 @@ function computeTradeInstruction(item, signalType, mispricing) {
       recommendedSide = "NO";
     }
     // Confidence based on |delta1| and volatility
-    const moveStrength = Math.min(absMove / 0.02, 1);            // caps at 2% move
-    const volStrength = Math.min(volatility / 0.01, 1);           // caps at 1% vol
+    const moveStrength = Math.min(absMove / CONFIDENCE_MOVE_CAP, 1);
+    const volStrength = Math.min(volatility / CONFIDENCE_VOL_CAP, 1);
     confidence = Math.min(moveStrength * 0.6 + volStrength * 0.4, 1);
   } else if (mispricing) {
     // Mispricing: use peerZ sign if available, else WATCH
@@ -676,10 +680,11 @@ function computeTradeInstruction(item, signalType, mispricing) {
   entryLimit = Math.round(entryLimit * 1000) / 1000;  // round to 0.001
 
   // --- 3. Size ($5 base, up to $25) ---
+  const LOG_SCALE_DIVISOR = 5;  // normalizes log10(liquidity/volume) to 0..1 range
   let sizeUSD = 5;
   // Increase with liquidity + volume
-  const liqBoost = Math.min(Math.log10(Math.max(liquidity, 1)) / 5, 1);    // 0..1
-  const volBoost = Math.min(Math.log10(Math.max(volume24hr, 1)) / 5, 1);   // 0..1
+  const liqBoost = Math.min(Math.log10(Math.max(liquidity, 1)) / LOG_SCALE_DIVISOR, 1);
+  const volBoost = Math.min(Math.log10(Math.max(volume24hr, 1)) / LOG_SCALE_DIVISOR, 1);
   sizeUSD += (liqBoost + volBoost) * 10;   // up to +$20
   sizeUSD = Math.min(sizeUSD, 25);
   // Reduce if spreadPct > 10% or confidence < 0.6
