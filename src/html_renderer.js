@@ -1687,7 +1687,7 @@ function renderTicketsPage(tickets) {
     const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "—";
     const closeHtml = showClose ? `
       <td style="white-space:nowrap;">
-        <input type="number" step="0.01" min="0" max="1" placeholder="price" class="close-price-input" data-ticket-id="${escHtml(String(t._id))}" style="width:70px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.82rem;">
+        <input type="number" step="0.01" min="0" max="1" placeholder="price" class="close-price-input" data-ticket-id="${escHtml(String(t._id))}" aria-label="Close price" style="width:70px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.82rem;">
         <button class="cta-secondary close-ticket-btn" data-ticket-id="${escHtml(String(t._id))}" style="padding:3px 10px;font-size:0.82rem;">Close</button>
       </td>
     ` : `
