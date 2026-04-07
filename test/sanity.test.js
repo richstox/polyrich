@@ -374,6 +374,130 @@ console.log("\ncomputeTradeability");
 }
 
 // ---------------------------------------------------------------------------
+// finalizeItem: near-expiry gate & mispricingTerm clamp
+// ---------------------------------------------------------------------------
+console.log("\nfinalizeItem: near-expiry gate & mispricingTerm clamp");
+
+{
+  const { finalizeItem } = require("../src/signal_engine");
+
+  // Helper: build a minimal enriched item that finalizeItem expects
+  function makeItem(overrides) {
+    return {
+      question: "Test?",
+      category: "",
+      subcategory: "",
+      marketSlug: "test",
+      eventSlug: "test-event",
+      tagIds: [],
+      tagSlugs: [],
+      eventGroup: "test-event",
+      categoryGroup: "uncategorized",
+      latestYes: 0.5,
+      previousYes: 0.5,
+      delta1: 0,
+      delta2: 0,
+      absMove: 0.005,
+      volatility: 0.005,
+      spread: 0.02,
+      spreadPct: 0.04,
+      liquidity: 10000,
+      volume24hr: 5000,
+      bestBidNum: 0.48,
+      bestAskNum: 0.52,
+      mid: 0.5,
+      microEdge: 0,
+      orderbookQualityPenalty: 0,
+      endDate: "",
+      hoursLeft: 48,
+      liquidityScore: Math.log(10001),
+      volumeScore: Math.log(5001),
+      moveTerm: 50,
+      volTerm: 25,
+      costPenalty: 80,
+      activityTerm: 600,
+      extremePenalty: 0,
+      timePenalty: 0,
+      timeBonus: 60,
+      momentum: true,
+      breakout: false,
+      reversal: false,
+      historyPoints: 5,
+      recentSeries: [0.5, 0.5, 0.5, 0.5, 0.5],
+      medianRecentMove: 0.001,
+      noveltyBonus: 0,
+      _filtered: false,
+      eventInconsistencyScore: 10,
+      peerZScore: 300,
+      ...overrides,
+    };
+  }
+
+  // Case 1: timeLeftHours = 2016 (84 days) → no near-expiry, mispricingTerm = 0
+  {
+    const item = makeItem({ hoursLeft: 2016, timeBonus: 25 });
+    const result = finalizeItem(item, 5, 2);
+    assert(!result.reasonCodes.includes("near-expiry"),
+      "2016h (84 days): must NOT have near-expiry tag");
+    assert(result.mispricingTerm === 0,
+      "2016h (84 days): mispricingTerm must be 0 (long-dated disabled)");
+  }
+
+  // Case 2: timeLeftHours = 12 → must have near-expiry
+  {
+    const item = makeItem({ hoursLeft: 12, timeBonus: 60 });
+    const result = finalizeItem(item, 5, 2);
+    assert(result.reasonCodes.includes("near-expiry"),
+      "12h: must have near-expiry tag");
+  }
+
+  // Case 3: timeLeftHours = 24 → mispricingTerm > 0 but <= 500
+  {
+    // peerZScore=300 → raw mispricingTerm = 10*1 + 300*20 = 6010, clamped to 500
+    const item = makeItem({ hoursLeft: 24, timeBonus: 60 });
+    const result = finalizeItem(item, 5, 2);
+    assert(result.mispricingTerm > 0,
+      "24h: mispricingTerm must be > 0");
+    assert(result.mispricingTerm <= 500,
+      "24h: mispricingTerm must be <= 500 after clamp");
+  }
+
+  // Edge: timeLeftHours = 72 → at boundary, should have near-expiry
+  {
+    const item = makeItem({ hoursLeft: 72, timeBonus: 60 });
+    const result = finalizeItem(item, 5, 2);
+    assert(result.reasonCodes.includes("near-expiry"),
+      "72h: must have near-expiry (boundary)");
+  }
+
+  // Edge: timeLeftHours = 73 → just over boundary, no near-expiry
+  {
+    const item = makeItem({ hoursLeft: 73, timeBonus: 60 });
+    const result = finalizeItem(item, 5, 2);
+    assert(!result.reasonCodes.includes("near-expiry"),
+      "73h: must NOT have near-expiry (over boundary)");
+  }
+
+  // Edge: timeLeftHours = 168 → at boundary, mispricingTerm should NOT be zeroed
+  {
+    const item = makeItem({ hoursLeft: 168, timeBonus: 25 });
+    const result = finalizeItem(item, 5, 2);
+    assert(result.mispricingTerm > 0,
+      "168h: mispricingTerm > 0 (at boundary, not long-dated)");
+    assert(result.mispricingTerm <= 500,
+      "168h: mispricingTerm <= 500 (clamped)");
+  }
+
+  // Edge: timeLeftHours = 169 → just over, mispricingTerm = 0
+  {
+    const item = makeItem({ hoursLeft: 169, timeBonus: 25 });
+    const result = finalizeItem(item, 5, 2);
+    assert(result.mispricingTerm === 0,
+      "169h: mispricingTerm must be 0 (long-dated)");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);
