@@ -650,7 +650,7 @@ function pageShell(title, activeNav, bodyHtml) {
     }
     var planBtn = e.target.closest("[data-copy-plan]");
     if (planBtn) {
-      var plan = planBtn.getAttribute("data-copy-plan").replace(/\\\\n/g, "\\n");
+      var plan = planBtn.getAttribute("data-copy-plan");
       if (navigator.clipboard) {
         navigator.clipboard.writeText(plan).then(function() {
           var orig = planBtn.textContent;
@@ -746,6 +746,19 @@ function renderBucketSection(bucketName, items, totalCount, gateSummary, collaps
 // Trade plan heuristics
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Trade plan heuristics — constants
+// ---------------------------------------------------------------------------
+const DIRECTION_DELTA_THRESHOLD = 0.005; // min |delta1| to infer directional trade
+const PRICE_MIDPOINT = 0.5;              // YES price midpoint for side selection
+const SIZE_LIQUIDITY_PCT = 0.01;         // max 1% of liquidity
+const SIZE_VOLUME_PCT = 0.02;            // max 2% of 24h volume
+const SIZE_CAP = 50;                     // max position size in $
+const TP_MULTIPLIER = 1.10;              // take profit at +10%
+const STOP_MULTIPLIER = 0.92;            // stop loss at -8%
+const PRICE_CEILING = 0.99;
+const PRICE_FLOOR = 0.01;
+
 /**
  * Infer trade direction from candidate fields.
  * Returns { action, actionCls } where action is BUY YES / BUY NO / WATCH.
@@ -758,18 +771,18 @@ function inferDirection(item) {
 
   // If mispricing is flagged or delta1 is clearly directional, infer side
   if (item.mispricing) {
-    // When mispricing is detected and YES is cheap (below mid / below 0.5), lean BUY YES
-    if (item.latestYes < 0.5) {
+    // When mispricing is detected and YES is cheap (below mid), lean BUY YES
+    if (item.latestYes < PRICE_MIDPOINT) {
       return { action: "BUY YES", actionCls: "pill-buy-yes" };
     }
     return { action: "BUY NO", actionCls: "pill-buy-no" };
   }
 
-  if (item.delta1 < -0.005 && item.latestYes < 0.5) {
+  if (item.delta1 < -DIRECTION_DELTA_THRESHOLD && item.latestYes < PRICE_MIDPOINT) {
     // Price dropped, YES side looks underpriced
     return { action: "BUY YES", actionCls: "pill-buy-yes" };
   }
-  if (item.delta1 > 0.005 && item.latestYes > 0.5) {
+  if (item.delta1 > DIRECTION_DELTA_THRESHOLD && item.latestYes > PRICE_MIDPOINT) {
     // Price rose and YES is high — consider NO side
     return { action: "BUY NO", actionCls: "pill-buy-no" };
   }
@@ -803,10 +816,9 @@ function inferEntry(item, direction) {
 /** Infer conservative max size from liquidity/volume/spread. */
 function inferSize(item) {
   if (item.liquidity < 500 || item.volume24hr < 50) return "TBD";
-  // Conservative: min of 1% liquidity, 2% of 24h vol, capped at $50
-  const fromLiq = item.liquidity * 0.01;
-  const fromVol = item.volume24hr * 0.02;
-  const raw = Math.min(fromLiq, fromVol, 50);
+  const fromLiq = item.liquidity * SIZE_LIQUIDITY_PCT;
+  const fromVol = item.volume24hr * SIZE_VOLUME_PCT;
+  const raw = Math.min(fromLiq, fromVol, SIZE_CAP);
   if (raw < 1) return "TBD";
   return `$${Math.floor(raw)}`;
 }
@@ -816,9 +828,8 @@ function inferExit(item, direction) {
   if (direction === "WATCH") return { tp: "TBD", stop: "TBD" };
   const base = direction === "BUY YES" ? item.latestYes : (1 - item.latestYes);
   if (base <= 0 || base >= 1) return { tp: "TBD", stop: "TBD" };
-  // Simple heuristic: TP at +10%, stop at -8% from entry
-  const tp = Math.min(base * 1.10, 0.99);
-  const stop = Math.max(base * 0.92, 0.01);
+  const tp = Math.min(base * TP_MULTIPLIER, PRICE_CEILING);
+  const stop = Math.max(base * STOP_MULTIPLIER, PRICE_FLOOR);
   return {
     tp: `$${tp.toFixed(2)}`,
     stop: `$${stop.toFixed(2)}`,
@@ -851,7 +862,7 @@ function renderTradeCard(item) {
     ? `<a href="${safeLink}" target="_blank" rel="noopener" class="trade-card-title">${escHtml(item.question)}</a>`
     : `<span class="trade-card-title">${escHtml(item.question)}</span>`;
 
-  // Build copy-plan text
+  // Build copy-plan text (use \n for newlines in the attribute)
   const planText = [
     item.question,
     action,
@@ -860,7 +871,7 @@ function renderTradeCard(item) {
     `TP: ${exit.tp}`,
     `Stop: ${exit.stop}`,
     whyNow,
-  ].join("\\n");
+  ].join("\n");
 
   return `
     <div class="trade-card">
