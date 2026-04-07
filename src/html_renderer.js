@@ -1028,8 +1028,6 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
   const nextScan = scanStatus.nextScanAt
     ? scanStatus.nextScanAt.toLocaleString("en-US", { hour12: false })
     : "—";
-  const modeLabel = relaxedMode ? "relaxed" : "normal";
-  const modeCls = relaxedMode ? "mode-relaxed" : "mode-normal";
   const eventsScanned = scanStatus.lastEventsFetched || 0;
   const marketsScanned = scanStatus.lastMarketsFlattened || 0;
 
@@ -1038,17 +1036,27 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
       <div class="status-item"><span class="status-label">Last scan</span><span class="status-value">${escHtml(lastScan)}</span></div>
       <div class="status-item"><span class="status-label">Next scan</span><span class="status-value">${escHtml(nextScan)}</span></div>
       <div class="status-item"><span class="status-label">Universe</span><span class="status-value">${eventsScanned} events / ${marketsScanned} markets</span></div>
-      <div class="status-item"><span class="status-label">Mode</span><span class="status-value ${modeCls}">${modeLabel}</span></div>
       <div class="status-item"><span class="status-label">Ready</span><span class="status-value" style="font-weight:700;">${candidateCount} candidates</span></div>
+      <div class="status-item">
+        <label class="status-label" for="risk-profile-select">Risk Profile</label>
+        <select id="risk-profile-select" style="padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
+          <option value="conservative">Conservative</option>
+          <option value="default" selected>Default (Polyrich)</option>
+          <option value="aggressive">Aggressive</option>
+          <option value="very-aggressive">Very aggressive</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
       <div class="status-item">
         <label class="status-label" for="bankroll-input">Bankroll (USD) <small style="text-transform:none;letter-spacing:0;">(optional)</small></label>
         <input id="bankroll-input" type="number" min="0" step="1" placeholder="e.g. 1000"
           style="width:100px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
       </div>
       <div class="status-item">
-        <label class="status-label" for="risk-pct-input">Risk per trade (%) <span id="risk-badge" style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:0.7rem;font-weight:700;vertical-align:middle;margin-left:4px;background:#dcfce7;color:#166534;">Conservative (recommended)</span></label>
-        <input id="risk-pct-input" type="number" min="0.1" step="0.1" placeholder="1"
+        <label class="status-label" for="risk-pct-input">Risk per trade (%) <span id="risk-badge" style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:0.7rem;font-weight:700;vertical-align:middle;margin-left:4px;background:#dcfce7;color:#166534;">Conservative (default)</span></label>
+        <input id="risk-pct-input" type="number" min="0.1" max="100" step="0.1" placeholder="1"
           style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
+        <span style="display:block;font-size:0.68rem;color:#6b7280;margin-top:2px;">Default is 1.00%. Aggressive starts at 1.50%.</span>
       </div>
       <div class="status-item">
         <label class="status-label" for="max-cap-input">Max trade cap (USD)</label>
@@ -1060,25 +1068,76 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
       </div>
       <a href="/scan" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
+    <div id="limit-order-hint" style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#92400e;">
+      ℹ️ LIMIT orders (recommended) require at least $5 per order. If your computed max size is &lt; $5, cards will show WATCH.
+    </div>
+    <div id="limit-order-warning" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#991b1b;">
+      ⚠️ Set Max trade cap to at least $5 to enable LIMIT orders.
+      <button id="set-cap-5-btn" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #991b1b;background:#fff;color:#991b1b;font-weight:600;font-size:0.82rem;cursor:pointer;">Set cap to $5</button>
+    </div>
   `;
 }
 
 /** Render the full /trade page body. */
 function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
-  const cards = tradeCandidates.slice(0, 10);
+  const cards = tradeCandidates.slice(0, 20);
   const statusBar = renderStatusBar(scanStatus, cards.length, relaxedMode);
 
-  const cardsHtml = cards.length === 0
-    ? '<div class="card" style="text-align:center;padding:40px 20px;"><p style="font-size:1.1rem;color:#6b7280;">No candidates yet. Run a scan or wait for the next scheduled scan.</p><a href="/scan" class="cta-primary" style="margin-top:12px;display:inline-flex;">Run scan now</a></div>'
-    : `<div class="trade-grid">${cards.map((item) => {
+  // Split cards into EXECUTE vs WATCH at render time (presentation-only)
+  const executeCards = [];
+  const watchCards = [];
+  for (const item of cards) {
+    try {
+      const dir = inferDirection(item);
+      if (dir.action !== "WATCH") {
+        const entryNum = inferEntry(item, dir.action);
+        if (entryNum !== null) {
+          const sizeNum = inferSize(item);
+          const exits = inferExit(entryNum);
+          if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
+            executeCards.push(item);
+            continue;
+          }
+        }
+      }
+      watchCards.push(item);
+    } catch (_) {
+      watchCards.push(item);
+    }
+  }
+
+  const execSlice = executeCards.slice(0, 10);
+  const watchSlice = watchCards.slice(0, 10);
+
+  const execHtml = execSlice.length === 0
+    ? '<p style="color:#6b7280;font-size:0.92rem;padding:12px 0;">No executable trades right now. Check WATCH list or run a new scan.</p>'
+    : `<div class="trade-grid">${execSlice.map((item) => {
         try { return renderTradeCard(item); }
         catch (_) { return `<div class="trade-card"><p style="color:#b91c1c;">Render error: ${escHtml((item && item.marketSlug) || "unknown")}</p></div>`; }
       }).join("")}</div>`;
 
+  const watchHtml = watchSlice.length === 0
+    ? '<p style="color:#6b7280;font-size:0.92rem;padding:12px 0;">No watch items this scan.</p>'
+    : `<div class="trade-grid">${watchSlice.map((item) => {
+        try { return renderTradeCard(item); }
+        catch (_) { return `<div class="trade-card"><p style="color:#b91c1c;">Render error: ${escHtml((item && item.marketSlug) || "unknown")}</p></div>`; }
+      }).join("")}</div>`;
+
+  const noDataHtml = cards.length === 0
+    ? '<div class="card" style="text-align:center;padding:40px 20px;"><p style="font-size:1.1rem;color:#6b7280;">No candidates yet. Run a scan or wait for the next scheduled scan.</p><a href="/scan" class="cta-primary" style="margin-top:12px;display:inline-flex;">Run scan now</a></div>'
+    : "";
+
   return `
     ${statusBar}
-    <h2 style="margin:20px 0 12px;font-size:1.25rem;">Today's Playbook</h2>
-    ${cardsHtml}
+    ${noDataHtml}
+    ${cards.length > 0 ? `
+    <h2 style="margin:20px 0 12px;font-size:1.25rem;">Today: EXECUTE (${execSlice.length})</h2>
+    ${execHtml}
+    <details class="section-toggle" style="margin-top:20px;">
+      <summary>Today: WATCH (${watchSlice.length})</summary>
+      ${watchHtml}
+    </details>
+    ` : ""}
     <script>
     (function() {
       var RISK_PCT_DEF = ${RISK_PCT_DEFAULT};
@@ -1087,13 +1146,25 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       var KEY_BR = 'polyrich_bankroll_usd';
       var KEY_RISK = 'polyrich_risk_pct';
       var KEY_CAP = 'polyrich_max_trade_cap_usd';
+      var KEY_PROFILE = 'polyrich_risk_profile';
+
+      var PRESETS = {
+        'conservative':      { riskPct: 0.5, cap: 10 },
+        'default':           { riskPct: 1.0, cap: 50 },
+        'aggressive':        { riskPct: 2.0, cap: 50 },
+        'very-aggressive':   { riskPct: 5.0, cap: 50 }
+      };
 
       var brInput = document.getElementById('bankroll-input');
       var riskInput = document.getElementById('risk-pct-input');
       var capInput = document.getElementById('max-cap-input');
+      var profileSelect = document.getElementById('risk-profile-select');
       var badge = document.getElementById('risk-badge');
       var devMsg = document.getElementById('deviation-msg');
-      if (!brInput || !riskInput || !capInput) return;
+      var limitHint = document.getElementById('limit-order-hint');
+      var limitWarn = document.getElementById('limit-order-warning');
+      var setCap5Btn = document.getElementById('set-cap-5-btn');
+      if (!brInput || !riskInput || !capInput || !profileSelect) return;
 
       // Restore saved values
       var sBr = localStorage.getItem(KEY_BR);
@@ -1102,6 +1173,10 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       riskInput.value = sRisk || '1';
       var sCap = localStorage.getItem(KEY_CAP);
       capInput.value = sCap || '50';
+      var sProfile = localStorage.getItem(KEY_PROFILE);
+      if (sProfile && profileSelect.querySelector('option[value="' + sProfile + '"]')) {
+        profileSelect.value = sProfile;
+      }
 
       function fmtPct(val, denom) {
         var p = val / denom * 100;
@@ -1111,11 +1186,14 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       function updateBadge(riskDec) {
         if (!badge) return;
         if (riskDec <= 0.01) {
-          badge.textContent = 'Conservative (recommended)';
+          badge.textContent = 'Conservative (default)';
           badge.style.background = '#dcfce7'; badge.style.color = '#166534';
+        } else if (riskDec <= 0.015) {
+          badge.textContent = 'Slightly aggressive (above default)';
+          badge.style.background = '#fef9c3'; badge.style.color = '#854d0e';
         } else if (riskDec <= 0.05) {
           badge.textContent = 'Aggressive';
-          badge.style.background = '#fef9c3'; badge.style.color = '#854d0e';
+          badge.style.background = '#fde68a'; badge.style.color = '#92400e';
         } else {
           badge.textContent = 'Very aggressive \\u2014 high risk';
           badge.style.background = '#fee2e2'; badge.style.color = '#991b1b';
@@ -1133,6 +1211,43 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
         }
       }
 
+      function updateLimitWarning(capUsd) {
+        if (capUsd < 5) {
+          if (limitHint) limitHint.style.display = 'none';
+          if (limitWarn) limitWarn.style.display = 'block';
+        } else {
+          if (limitHint) limitHint.style.display = 'block';
+          if (limitWarn) limitWarn.style.display = 'none';
+        }
+      }
+
+      // Profile dropdown handler
+      profileSelect.addEventListener('change', function() {
+        var preset = PRESETS[profileSelect.value];
+        if (preset) {
+          riskInput.value = String(preset.riskPct);
+          capInput.value = String(preset.cap);
+        }
+        localStorage.setItem(KEY_PROFILE, profileSelect.value);
+        updateCards();
+      });
+
+      // Manual edit switches to Custom
+      function onManualEdit() {
+        profileSelect.value = 'custom';
+        localStorage.setItem(KEY_PROFILE, 'custom');
+        updateCards();
+      }
+
+      if (setCap5Btn) {
+        setCap5Btn.addEventListener('click', function() {
+          capInput.value = '5';
+          profileSelect.value = 'custom';
+          localStorage.setItem(KEY_PROFILE, 'custom');
+          updateCards();
+        });
+      }
+
       function updateCards() {
         var bankroll = parseFloat(brInput.value);
         var hasBankroll = !isNaN(bankroll) && bankroll > 0;
@@ -1140,16 +1255,18 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
         else localStorage.removeItem(KEY_BR);
 
         var riskPctNum = parseFloat(riskInput.value);
-        if (isNaN(riskPctNum) || riskPctNum <= 0) riskPctNum = 1;
+        riskPctNum = Math.max(0.1, Math.min(100, isNaN(riskPctNum) ? 1 : riskPctNum));
         var riskDec = riskPctNum / 100;
         localStorage.setItem(KEY_RISK, String(riskPctNum));
 
         var capUsd = parseFloat(capInput.value);
         if (isNaN(capUsd) || capUsd <= 0) capUsd = MAX_CAP_DEF;
         localStorage.setItem(KEY_CAP, String(capUsd));
+        localStorage.setItem(KEY_PROFILE, profileSelect.value);
 
         updateBadge(riskDec);
         updateDeviation(riskDec, capUsd);
+        updateLimitWarning(capUsd);
 
         var cards = document.querySelectorAll('[data-execute="1"]');
         for (var i = 0; i < cards.length; i++) {
@@ -1266,8 +1383,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       }
 
       brInput.addEventListener('input', updateCards);
-      riskInput.addEventListener('input', updateCards);
-      capInput.addEventListener('input', updateCards);
+      riskInput.addEventListener('input', onManualEdit);
+      capInput.addEventListener('input', onManualEdit);
       updateCards();
     })();
     </script>
@@ -1285,24 +1402,146 @@ function renderExplorePage(data) {
     buckets, thresholds, closestToThreshold,
   } = data;
 
+  // Collect signal tags present on items for the signal tag filter.
+  // Use item.reasonCodes (richest item-level tag array, includes near-expiry etc.)
+  // with fallback to [item.signalType] when reasonCodes is absent.
+  const allExploreItems = [...tradeCandidates, ...movers, ...mispricing];
+  const signalTagsPresent = [...new Set(
+    allExploreItems.flatMap((x) => {
+      const codes = Array.isArray(x.reasonCodes) && x.reasonCodes.length > 0
+        ? x.reasonCodes
+        : (x.signalType ? [x.signalType] : []);
+      return codes.map((t) => String(t).trim().toLowerCase()).filter(Boolean);
+    })
+  )].sort();
+
   const hasCategories = categories.length > 0 || subcategories.length > 0;
-  const filterBarHtml = hasCategories
-    ? renderFilterBar(categories, subcategories, tagSlugsAll, filterActive, "/explore")
-    : '<p style="color:#6b7280;font-size:0.85rem;margin-bottom:16px;">Categories not available yet.</p>' +
-      (tagSlugsAll.length > 0 ? renderFilterBar([], [], tagSlugsAll, filterActive, "/explore") : "");
+
+  // Build explore-specific filter bar (Tradeability + Signal tag + existing cat/sub/tag filters)
+  const tradeabilityActive = (filterActive || {}).tradeability || "";
+  const signalTagActive = (filterActive || {}).signalTag || "";
+
+  function filterOpts(values, selected) {
+    return values.map((v) => {
+      const sel = v === selected ? " selected" : "";
+      return `<option value="${escHtml(v)}"${sel}>${escHtml(v)}</option>`;
+    }).join("");
+  }
+
+  const exploreFilterHtml = `
+    <form class="filter-bar" method="get" action="/explore">
+      <label>Tradeability
+        <select name="tradeability">
+          <option value="">All</option>
+          <option value="EXECUTE"${tradeabilityActive === "EXECUTE" ? " selected" : ""}>EXECUTE</option>
+          <option value="WATCH"${tradeabilityActive === "WATCH" ? " selected" : ""}>WATCH</option>
+        </select>
+      </label>
+      ${signalTagsPresent.length > 0 ? `<label>Signal tag
+        <select name="signalTag">
+          <option value="">All</option>
+          ${filterOpts(signalTagsPresent, signalTagActive)}
+        </select>
+      </label>` : ""}
+      ${categories.length > 0 ? `<label>Category
+        <select name="cat">
+          <option value="">All</option>
+          ${filterOpts(categories, (filterActive || {}).cat || "")}
+        </select>
+      </label>` : ""}
+      ${subcategories.length > 0 ? `<label>Subcategory
+        <select name="sub">
+          <option value="">All</option>
+          ${filterOpts(subcategories, (filterActive || {}).sub || "")}
+        </select>
+      </label>` : ""}
+      <label>Tag
+        <select name="tag">
+          <option value="">All</option>
+          ${filterOpts(tagSlugsAll, (filterActive || {}).tag || "")}
+        </select>
+      </label>
+      <button type="submit" class="cta-primary" style="padding:5px 14px;font-size:0.85rem;">Filter</button>
+      <a href="/explore" style="color:#6b7280;font-size:0.82rem;text-decoration:none;">Reset</a>
+    </form>
+  `;
+
+  // Tag legend
+  const tagLegendHtml = `
+    <details style="margin-bottom:16px;">
+      <summary style="cursor:pointer;font-size:0.82rem;color:#6b7280;font-weight:600;">What do these mean?</summary>
+      <div style="padding:8px 0;font-size:0.82rem;color:#374151;line-height:1.7;">
+        <strong>breakout</strong>: recent sharp move with activity<br>
+        <strong>momentum</strong>: sustained directional move<br>
+        <strong>reversal</strong>: move suggests turning point<br>
+        <strong>mispricing</strong>: eligible event/market inconsistency signal<br>
+        <strong>near-expiry</strong>: resolves soon
+      </div>
+    </details>
+  `;
+
+  // Helper: compact plan preview for /explore candidate cards
+  function explorePlanPreview(item) {
+    const dir = inferDirection(item);
+    if (dir.action !== "WATCH") {
+      const entryNum = inferEntry(item, dir.action);
+      if (entryNum !== null) {
+        const sizeNum = inferSize(item);
+        const exits = inferExit(entryNum);
+        if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
+          return `<div style="margin-top:8px;padding:8px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;font-size:0.78rem;">
+            <span style="font-weight:700;color:#166534;">⚡ EXECUTE</span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">ENTRY LIMIT</span> <strong>$${entryNum.toFixed(2)}</strong></span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">TAKE PROFIT</span> <strong>$${exits.tp.toFixed(2)}</strong></span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">RISK EXIT LIMIT</span> <strong>$${exits.stop.toFixed(2)}</strong></span>
+          </div>`;
+        }
+      }
+    }
+    return '<div style="margin-top:8px;padding:6px 10px;background:#f3f4f6;border-radius:6px;font-size:0.78rem;color:#6b7280;"><span style="font-weight:600;">👁 WATCH</span> — Plan: TBD</div>';
+  }
+
+  // Wrap renderCandidate to add plan preview
+  function renderCandidateWithPlan(item) {
+    return renderCandidate(item) + explorePlanPreview(item);
+  }
+
+  // Render bucket section with plan previews
+  function renderBucketSectionWithPlan(bucketName, items, totalCount, gateSummary) {
+    const icons = { INTRADAY: "⏱️", THIS_WEEK: "📅", WATCH: "👀" };
+    const labels = { INTRADAY: "Intraday (≤48 h)", THIS_WEEK: "This Week (≤168 h)", WATCH: "Watch (>168 h)" };
+    const icon = icons[bucketName] || "📊";
+    const label = labels[bucketName] || bucketName;
+
+    const itemsHtml = items.length === 0
+      ? '<p style="color:#6b7280;font-size:0.85rem;padding:8px 0;">No markets passed the gates this scan.</p>'
+      : `<ol class="candidates">${items.map((item) => {
+          try { return renderCandidateWithPlan(item); }
+          catch (e) { return `<li class="candidate-card">render error: ${escHtml((item && item.marketSlug) || "unknown")} — ${escHtml(e.message)}</li>`; }
+        }).join("")}</ol>`;
+
+    return `
+      <details class="section-toggle">
+        <summary>${icon} ${escHtml(label)} <span class="badge-count">${totalCount}</span></summary>
+        <p style="color:#6b7280;font-size:0.82rem;margin:0 0 8px;">Gates: ${escHtml(gateSummary)} · Showing top ${items.length} of ${totalCount}</p>
+        ${itemsHtml}
+      </details>
+    `;
+  }
 
   return `
     <h1>Explore Markets</h1>
-    ${filterBarHtml}
-    ${buckets ? renderBucketSection("INTRADAY", data.filteredBuckets.INTRADAY, buckets.counts.INTRADAY, buckets.gates.INTRADAY, false) : ""}
-    ${buckets ? renderBucketSection("THIS_WEEK", data.filteredBuckets.THIS_WEEK, buckets.counts.THIS_WEEK, buckets.gates.THIS_WEEK, false) : ""}
-    ${buckets ? renderBucketSection("WATCH", data.filteredBuckets.WATCH.slice(0, 10), buckets.counts.WATCH, buckets.gates.WATCH, true) : ""}
+    ${exploreFilterHtml}
+    ${tagLegendHtml}
+    ${buckets ? renderBucketSectionWithPlan("INTRADAY", data.filteredBuckets.INTRADAY, buckets.counts.INTRADAY, buckets.gates.INTRADAY) : ""}
+    ${buckets ? renderBucketSectionWithPlan("THIS_WEEK", data.filteredBuckets.THIS_WEEK, buckets.counts.THIS_WEEK, buckets.gates.THIS_WEEK) : ""}
+    ${buckets ? renderBucketSectionWithPlan("WATCH", data.filteredBuckets.WATCH.slice(0, 10), buckets.counts.WATCH, buckets.gates.WATCH) : ""}
 
     <details class="section-toggle">
       <summary>All trade candidates <span class="badge-count">${tradeCandidates.length}</span></summary>
       <ol class="candidates">
         ${tradeCandidates.map((item) => {
-          try { return renderCandidate(item); }
+          try { return renderCandidateWithPlan(item); }
           catch (_) { return `<li class="candidate-card">render error: ${escHtml((item && item.marketSlug) || "unknown")}</li>`; }
         }).join("")}
       </ol>
@@ -1314,7 +1553,7 @@ function renderExplorePage(data) {
       <summary>Movers <span class="badge-count">${movers.length}</span></summary>
       <ol class="candidates">
         ${movers.map((item) => {
-          try { return renderCandidate(item); }
+          try { return renderCandidateWithPlan(item); }
           catch (_) { return `<li class="candidate-card">render error</li>`; }
         }).join("")}
       </ol>
@@ -1324,7 +1563,7 @@ function renderExplorePage(data) {
       <summary>Mispricing <span class="badge-count">${mispricing.length}</span></summary>
       <ol class="candidates">
         ${mispricing.map((item) => {
-          try { return renderCandidate(item); }
+          try { return renderCandidateWithPlan(item); }
           catch (_) { return `<li class="candidate-card">render error</li>`; }
         }).join("")}
       </ol>
@@ -1368,4 +1607,8 @@ module.exports = {
   renderExplorePage,
   renderSystemPage,
   pageShell,
+  inferDirection,
+  inferEntry,
+  inferSize,
+  inferExit,
 };

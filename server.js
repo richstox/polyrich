@@ -31,6 +31,10 @@ const {
   renderExplorePage,
   renderSystemPage,
   pageShell,
+  inferDirection,
+  inferEntry,
+  inferSize,
+  inferExit,
 } = require("./src/html_renderer");
 
 // ---------------------------------------------------------------------------
@@ -304,6 +308,8 @@ const server = http.createServer(async (req, res) => {
       const filterCatRaw = url.searchParams.get("cat") || "";
       const filterSubRaw = url.searchParams.get("sub") || "";
       const filterTagRaw = url.searchParams.get("tag") || "";
+      const filterTradeabilityRaw = url.searchParams.get("tradeability") || "";
+      const filterSignalTagRaw = url.searchParams.get("signalTag") || "";
       const filterCat = filterCatRaw.toLowerCase();
       const filterSub = filterSubRaw.toLowerCase();
       const filterTag = filterTagRaw.toLowerCase();
@@ -320,7 +326,30 @@ const server = http.createServer(async (req, res) => {
         if (filterCat && (item.category || "").toLowerCase() !== filterCat) return false;
         if (filterSub && (item.subcategory || "").toLowerCase() !== filterSub) return false;
         if (filterTag && !(item.tagSlugs || []).some((t) => t.toLowerCase() === filterTag)) return false;
+        if (filterSignalTagRaw) {
+          const codes = Array.isArray(item.reasonCodes) && item.reasonCodes.length > 0
+            ? item.reasonCodes
+            : (item.signalType ? [item.signalType] : []);
+          if (!codes.some((t) => String(t).trim().toLowerCase() === filterSignalTagRaw)) return false;
+        }
+        if (filterTradeabilityRaw) {
+          const isExec = isItemExecutable(item);
+          if (filterTradeabilityRaw === "EXECUTE" && !isExec) return false;
+          if (filterTradeabilityRaw === "WATCH" && isExec) return false;
+        }
         return true;
+      }
+
+      function isItemExecutable(item) {
+        try {
+          const dir = inferDirection(item);
+          if (dir.action === "WATCH") return false;
+          const entryNum = inferEntry(item, dir.action);
+          if (entryNum === null) return false;
+          const sizeNum = inferSize(item);
+          const exits = inferExit(entryNum);
+          return sizeNum !== null && exits.tp !== null && exits.stop !== null;
+        } catch (_) { return false; }
       }
 
       const tradeCandidates = rawCandidates.filter(matchesFilter);
@@ -352,7 +381,7 @@ const server = http.createServer(async (req, res) => {
 
       const body = renderExplorePage({
         categories, subcategories, tagSlugsAll,
-        filterActive: { cat: filterCatRaw, sub: filterSubRaw, tag: filterTagRaw },
+        filterActive: { cat: filterCatRaw, sub: filterSubRaw, tag: filterTagRaw, tradeability: filterTradeabilityRaw, signalTag: filterSignalTagRaw },
         tradeCandidates, movers, mispricing,
         buckets, filteredBuckets,
         thresholds, closestToThreshold,
