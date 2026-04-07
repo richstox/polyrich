@@ -609,6 +609,12 @@ function sharedStyles() {
   }
   .ticket-meta-label { display: block; color: #6b7280; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; }
   .ticket-meta-value { display: block; font-weight: 600; color: #1d1d1f; }
+  .type-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 0.72rem; font-weight: 700;
+  }
+  .type-badge-exec { background: #dcfce7; color: #166534; }
+  .type-badge-watch { background: #f3f4f6; color: #6b7280; }
 </style>`;
 }
 
@@ -1801,7 +1807,7 @@ function renderTicketsPage(tickets, highlightId) {
     const chartW = 100;
     const chartH = 60;
     const svgPoints = points.map((p, i) => {
-      const x = points.length > 1 ? (i / (points.length - 1)) * chartW : chartW / 2;
+      const x = (i / (points.length - 1)) * chartW;
       const y = chartH - ((p.pnl - minVal) / range) * (chartH - 10) - 5;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(" ");
