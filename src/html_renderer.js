@@ -798,6 +798,7 @@ function inferDirection(item) {
   }
 
   // Gate: movement / volatility (real action required)
+  // OR logic matches signal_engine mispricing gate — either metric suffices
   const hasMovement = item.absMove >= MIN_ABS_MOVE_FOR_EXEC || item.volatility >= MIN_VOL_FOR_EXEC;
 
   // Determine raw direction from existing fields (no new logic)
