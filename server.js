@@ -842,7 +842,7 @@ const server = http.createServer(async (req, res) => {
       const statusFilter = url.searchParams.get("status");
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "200", 10) || 200, 1000);
       const query = {};
-      if (statusFilter === "OPEN" || statusFilter === "CLOSED") query.status = statusFilter;
+      if (statusFilter === "OPEN" || statusFilter === "CLOSED") query.status = String(statusFilter);
       const tickets = await TradeTicket.find(query).sort({ createdAt: -1 }).limit(limit).lean();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(tickets));
@@ -865,7 +865,13 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ error: "Missing ticketId or closePrice" }));
           return;
         }
-        const ticket = await TradeTicket.findById(data.ticketId);
+        // Validate ticketId is a valid Mongo ObjectId
+        if (!mongoose.Types.ObjectId.isValid(data.ticketId)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid ticketId format" }));
+          return;
+        }
+        const ticket = await TradeTicket.findById(String(data.ticketId));
         if (!ticket) {
           res.writeHead(404, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Ticket not found" }));
