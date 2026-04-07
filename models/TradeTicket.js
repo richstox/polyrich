@@ -51,5 +51,10 @@ const tradeTicketSchema = new mongoose.Schema(
 tradeTicketSchema.index({ createdAt: -1 });
 tradeTicketSchema.index({ marketId: 1 });
 tradeTicketSchema.index({ status: 1 });
+// Prevent duplicate OPEN tickets for same market+action
+tradeTicketSchema.index(
+  { marketId: 1, action: 1, status: 1 },
+  { unique: true, partialFilterExpression: { status: "OPEN" } }
+);
 
 module.exports = mongoose.model("TradeTicket", tradeTicketSchema);

@@ -825,6 +825,17 @@ const server = http.createServer(async (req, res) => {
           ];
           for (const f of numericPlanFields) data[f] = null;
         }
+        // Idempotent: return existing OPEN ticket instead of creating duplicate
+        const existing = await TradeTicket.findOne({
+          marketId: data.marketId,
+          action: data.action,
+          status: "OPEN",
+        }).lean();
+        if (existing) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(existing));
+          return;
+        }
         const ticket = await TradeTicket.create(data);
         res.writeHead(201, { "Content-Type": "application/json" });
         res.end(JSON.stringify(ticket));
@@ -908,7 +919,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/tickets") {
     try {
       const tickets = await TradeTicket.find().sort({ createdAt: -1 }).limit(500).lean();
-      const body = renderTicketsPage(tickets);
+      const highlightId = url.searchParams.get("highlight") || null;
+      const body = renderTicketsPage(tickets, highlightId);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(pageShell("Tickets", "/tickets", body));
       return;
