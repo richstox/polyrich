@@ -999,18 +999,6 @@ function renderTradeCard(item) {
     const pnlTpUsd = sizeNum * (tpNum - entryNum) / entryNum;
     const pnlStopUsd = sizeNum * (stopNum - entryNum) / entryNum;
 
-    const ticketText = [
-      `ACTION: ${action}`,
-      `MARKET: ${item.question}`,
-      `ENTRY LIMIT: $${entryNum.toFixed(2)}`,
-      `MAX SIZE: $${sizeNum}`,
-      `TAKE PROFIT: $${tpNum.toFixed(2)}`,
-      `STOP-LOSS: $${stopNum.toFixed(2)}`,
-      `EST PnL @ TP: +$${pnlTpUsd.toFixed(2)} (+${pnlTpPct.toFixed(1)}% of stake)`,
-      `EST PnL @ SL: -$${Math.abs(pnlStopUsd).toFixed(2)} (${pnlStopPct.toFixed(1)}% of stake)`,
-      `WHY NOW: ${whyNow}`,
-    ].join("\n");
-
     const savePayload = JSON.stringify({
       scanId: item.scanId || null,
       source: "TRADE_PAGE",
@@ -1053,7 +1041,6 @@ function renderTradeCard(item) {
         <p class="why-now">WHY NOW: ${escHtml(whyNow)}</p>
         <div class="cta-row">
           ${link ? `<a href="${safeLink}" target="_blank" rel="noopener" class="cta-primary">Open on Polymarket</a>` : ""}
-          <button class="cta-secondary copy-ticket" data-copy-plan="${escHtml(ticketText)}">Copy ticket</button>
           <button class="cta-secondary save-ticket-btn" data-save-ticket="${escHtml(savePayload)}">Save ticket</button>
         </div>
         ${debugHtml}
@@ -1064,12 +1051,6 @@ function renderTradeCard(item) {
   // --- WATCH card ---
   const watchReason = whyWatch || "Missing executable trade parameters";
   const watchNext = nextStep || "Entry, size, TP, or stop-loss could not be determined";
-  const watchPlanText = [
-    "ACTION: WATCH",
-    `MARKET: ${item.question}`,
-    `WHY WATCH: ${watchReason}`,
-    `NEXT: ${watchNext}`,
-  ].join("\n");
 
   const watchSavePayload = JSON.stringify({
     scanId: item.scanId || null,
@@ -1100,7 +1081,6 @@ function renderTradeCard(item) {
       </div>
       <div class="cta-row">
         ${link ? `<a href="${safeLink}" target="_blank" rel="noopener" class="cta-primary">Open on Polymarket</a>` : ""}
-        <button class="cta-secondary" data-copy-plan="${escHtml(watchPlanText)}">Copy plan</button>
         <button class="cta-secondary save-ticket-btn" data-save-ticket="${escHtml(watchSavePayload)}">Save watch</button>
       </div>
       ${debugHtml}
@@ -1151,9 +1131,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
         <input id="max-cap-input" type="number" min="1" step="1" placeholder="50"
           style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
       </div>
-      <div class="status-item" style="align-self:center;">
-        <span id="deviation-msg" style="font-size:0.75rem;font-weight:600;color:#166534;">Safer than default.</span>
-      </div>
+
       <a href="/scan" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
     <div id="limit-order-warning" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#991b1b;">
@@ -1245,7 +1223,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       var capInput = document.getElementById('max-cap-input');
       var profileSelect = document.getElementById('risk-profile-select');
       var badge = document.getElementById('risk-badge');
-      var devMsg = document.getElementById('deviation-msg');
       var limitWarn = document.getElementById('limit-order-warning');
       var setCap5Btn = document.getElementById('set-cap-5-btn');
       if (!brInput || !riskInput || !capInput || !profileSelect) return;
@@ -1281,19 +1258,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
         } else {
           badge.textContent = 'Very aggressive \\u2014 high risk';
           badge.style.background = '#fee2e2'; badge.style.color = '#991b1b';
-        }
-      }
-
-      function updateDeviation(riskDec, capUsd) {
-        if (!devMsg) return;
-        if (riskDec > 0.01 || capUsd > 50) {
-          devMsg.textContent = 'You are above Polyrich defaults.';
-          devMsg.style.color = '#b45309';
-        } else if (capUsd < 5) {
-          devMsg.textContent = '';
-        } else {
-          devMsg.textContent = 'Safer than default.';
-          devMsg.style.color = '#166534';
         }
       }
 
@@ -1349,7 +1313,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
         localStorage.setItem(KEY_PROFILE, profileSelect.value);
 
         updateBadge(riskDec);
-        updateDeviation(riskDec, capUsd);
         updateLimitWarning(capUsd);
 
         var cards = document.querySelectorAll('[data-execute="1"]');
@@ -1396,12 +1359,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
               '<p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> Increase risk% or cap, or increase bankroll</p>';
             var noteEl = card.querySelector('.bankroll-note');
             if (noteEl) noteEl.style.display = 'none';
-            // Clear copy ticket to watch plan
-            var copyBtn = card.querySelector('.copy-ticket');
-            if (copyBtn) {
-              copyBtn.setAttribute('data-copy-plan', 'ACTION: WATCH\\nMARKET: ' + market + '\\nWHY WATCH: Max size $' + maxSizeDisplay.toFixed(2) + ' is below $' + MIN_ORDER + ' minimum limit order\\nNEXT: Increase risk% or cap, or increase bankroll');
-              copyBtn.textContent = 'Copy plan';
-            }
             // Update save-ticket to WATCH snapshot with context fields
             var saveBtn0 = card.querySelector('.save-ticket-btn');
             if (saveBtn0) {
@@ -1436,8 +1393,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           if (planGrid3) planGrid3.style.display = '';
           var whyBlock2 = card.querySelector('.min-order-watch');
           if (whyBlock2) whyBlock2.style.display = 'none';
-          var copyBtn2 = card.querySelector('.copy-ticket');
-          if (copyBtn2) copyBtn2.textContent = 'Copy ticket';
 
           var sizeNote;
           if (hasBankroll) {
@@ -1459,27 +1414,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             if (tpEl) tpEl.textContent = '+$' + pTpU.toFixed(2) + ' (+' + pTpP.toFixed(1) + '% of stake)';
             var slEl = card.querySelector('.trade-pnl-stop');
             if (slEl) slEl.textContent = '-$' + Math.abs(pSlU).toFixed(2) + ' (' + pSlP.toFixed(1) + '% of stake)';
-          }
-
-          var copyBtn3 = card.querySelector('.copy-ticket');
-          if (copyBtn3) {
-            var lines = [
-              'ACTION: ' + act,
-              'MARKET: ' + market,
-              'ENTRY LIMIT: $' + entry.toFixed(2),
-              'MAX SIZE: $' + maxSizeDisplay.toFixed(2),
-              'TAKE PROFIT: $' + tp.toFixed(2),
-              'STOP-LOSS: $' + stop.toFixed(2)
-            ];
-            if (!isNaN(tp) && !isNaN(stop)) {
-              var ptu = maxSizeDisplay * (tp - entry) / entry;
-              var ptp = (tp - entry) / entry * 100;
-              var psu = maxSizeDisplay * (stop - entry) / entry;
-              var psp = (stop - entry) / entry * 100;
-              lines.push('EST PnL @ TP: +$' + ptu.toFixed(2) + ' (+' + ptp.toFixed(1) + '% of stake)');
-              lines.push('EST PnL @ SL: -$' + Math.abs(psu).toFixed(2) + ' (' + psp.toFixed(1) + '% of stake)');
-            }
-            copyBtn3.setAttribute('data-copy-plan', lines.join('\\n'));
           }
 
           var noteEl2 = card.querySelector('.bankroll-note');
