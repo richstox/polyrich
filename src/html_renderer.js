@@ -604,6 +604,7 @@ function renderNav(active) {
   const links = [
     { href: "/trade", label: "Trade" },
     { href: "/explore", label: "Explore" },
+    { href: "/tickets", label: "Tickets" },
     { href: "/system", label: "System" },
   ];
   const items = links.map((l) => {
@@ -665,6 +666,30 @@ function pageShell(title, activeNav, bodyHtml) {
         setTimeout(function() { planBtn.textContent = "Copy plan"; }, 1500);
       }
     }
+    // Save ticket button
+    var saveBtn = e.target.closest("[data-save-ticket]");
+    if (saveBtn) {
+      var payload = saveBtn.getAttribute("data-save-ticket");
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving...";
+      fetch("/api/tickets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.error) { saveBtn.textContent = "Error"; }
+        else { saveBtn.textContent = "Saved ✓"; saveBtn.style.background = "#dcfce7"; saveBtn.style.color = "#166534"; saveBtn.style.borderColor = "#bbf7d0"; }
+      }).catch(function() { saveBtn.textContent = "Error"; saveBtn.disabled = false; });
+      return;
+    }
+  });
+  // Tooltip hover for info icons
+  document.querySelectorAll(".info-tooltip").forEach(function(el) {
+    var tip = el.querySelector(".info-tooltip-text");
+    if (!tip) return;
+    el.addEventListener("mouseenter", function() { tip.style.display = "block"; });
+    el.addEventListener("mouseleave", function() { tip.style.display = "none"; });
+    el.addEventListener("click", function(ev) { ev.preventDefault(); tip.style.display = tip.style.display === "block" ? "none" : "block"; });
   });
   </script>
 </body>
@@ -970,6 +995,27 @@ function renderTradeCard(item) {
       `WHY NOW: ${whyNow}`,
     ].join("\n");
 
+    const savePayload = JSON.stringify({
+      scanId: item.scanId || null,
+      marketId: item.marketSlug || item.conditionId || item.question,
+      eventSlug: item.eventSlug || null,
+      marketUrl: link || null,
+      question: item.question,
+      tradeability: "EXECUTE",
+      action: action === "BUY YES" ? "BUY_YES" : action === "BUY NO" ? "BUY_NO" : "WATCH",
+      reasonCodes: item.reasonCodes || [],
+      whyNow: whyNow,
+      planTbd: false,
+      entryLimit: entryNum,
+      takeProfit: tpNum,
+      riskExitLimit: stopNum,
+      maxSizeUsd: sizeNum,
+      pnlTpUsd: Math.round(pnlTpUsd * 100) / 100,
+      pnlTpPct: Math.round(pnlTpPct * 10) / 1000,
+      pnlExitUsd: Math.round(pnlStopUsd * 100) / 100,
+      pnlExitPct: Math.round(pnlStopPct * 10) / 1000,
+    });
+
     return `
       <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(item.question)}" data-action="${escHtml(action)}">
         <div class="trade-card-header">${questionHtml}</div>
@@ -987,6 +1033,7 @@ function renderTradeCard(item) {
         <div class="cta-row">
           ${link ? `<a href="${safeLink}" target="_blank" rel="noopener" class="cta-primary">Open on Polymarket</a>` : ""}
           <button class="cta-secondary copy-ticket" data-copy-plan="${escHtml(ticketText)}">Copy ticket</button>
+          <button class="cta-secondary save-ticket-btn" data-save-ticket="${escHtml(savePayload)}">Save ticket</button>
         </div>
         ${debugHtml}
       </div>
@@ -1003,6 +1050,20 @@ function renderTradeCard(item) {
     `NEXT: ${watchNext}`,
   ].join("\n");
 
+  const watchSavePayload = JSON.stringify({
+    scanId: item.scanId || null,
+    marketId: item.marketSlug || item.conditionId || item.question,
+    eventSlug: item.eventSlug || null,
+    marketUrl: link || null,
+    question: item.question,
+    tradeability: "WATCH",
+    action: "WATCH",
+    reasonCodes: item.reasonCodes || [],
+    whyWatch: watchReason,
+    nextStep: watchNext,
+    planTbd: true,
+  });
+
   return `
     <div class="trade-card">
       <div class="trade-card-header">${questionHtml}</div>
@@ -1014,6 +1075,7 @@ function renderTradeCard(item) {
       <div class="cta-row">
         ${link ? `<a href="${safeLink}" target="_blank" rel="noopener" class="cta-primary">Open on Polymarket</a>` : ""}
         <button class="cta-secondary" data-copy-plan="${escHtml(watchPlanText)}">Copy plan</button>
+        <button class="cta-secondary save-ticket-btn" data-save-ticket="${escHtml(watchSavePayload)}">Save watch</button>
       </div>
       ${debugHtml}
     </div>
@@ -1023,10 +1085,10 @@ function renderTradeCard(item) {
 /** Render the compact status bar at top of /trade. */
 function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
   const lastScan = scanStatus.lastScanAt
-    ? scanStatus.lastScanAt.toLocaleString("en-US", { hour12: false })
+    ? scanStatus.lastScanAt.toLocaleString("en-GB", { hour12: false, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
     : "not yet";
   const nextScan = scanStatus.nextScanAt
-    ? scanStatus.nextScanAt.toLocaleString("en-US", { hour12: false })
+    ? scanStatus.nextScanAt.toLocaleString("en-GB", { hour12: false, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
     : "—";
   const eventsScanned = scanStatus.lastEventsFetched || 0;
   const marketsScanned = scanStatus.lastMarketsFlattened || 0;
@@ -1059,7 +1121,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
         <span style="display:block;font-size:0.68rem;color:#6b7280;margin-top:2px;">Default is 1.00%. Aggressive starts at 1.50%.</span>
       </div>
       <div class="status-item">
-        <label class="status-label" for="max-cap-input">Max trade cap (USD)</label>
+        <label class="status-label" for="max-cap-input">Max trade cap (USD) <span class="info-tooltip" style="position:relative;cursor:pointer;font-size:0.78rem;color:#6b7280;">ℹ️<span class="info-tooltip-text" style="display:none;position:absolute;bottom:120%;left:50%;transform:translateX(-50%);background:#1f2937;color:#fff;padding:8px 12px;border-radius:8px;font-size:0.78rem;white-space:normal;width:260px;z-index:10;font-weight:400;line-height:1.4;box-shadow:0 2px 8px rgba(0,0,0,.18);">LIMIT orders (recommended) require at least $5 per order. If computed max size is &lt; $5, cards will show WATCH.</span></span></label>
         <input id="max-cap-input" type="number" min="1" step="1" placeholder="50"
           style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
       </div>
@@ -1068,11 +1130,8 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
       </div>
       <a href="/scan" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
-    <div id="limit-order-hint" style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#92400e;">
-      ℹ️ LIMIT orders (recommended) require at least $5 per order. If your computed max size is &lt; $5, cards will show WATCH.
-    </div>
     <div id="limit-order-warning" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#991b1b;">
-      ⚠️ Set Max trade cap to at least $5 to enable LIMIT orders.
+      ⚠️ Max trade cap must be at least $5 for limit orders.
       <button id="set-cap-5-btn" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #991b1b;background:#fff;color:#991b1b;font-weight:600;font-size:0.82rem;cursor:pointer;">Set cap to $5</button>
     </div>
   `;
@@ -1161,7 +1220,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       var profileSelect = document.getElementById('risk-profile-select');
       var badge = document.getElementById('risk-badge');
       var devMsg = document.getElementById('deviation-msg');
-      var limitHint = document.getElementById('limit-order-hint');
       var limitWarn = document.getElementById('limit-order-warning');
       var setCap5Btn = document.getElementById('set-cap-5-btn');
       if (!brInput || !riskInput || !capInput || !profileSelect) return;
@@ -1205,6 +1263,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
         if (riskDec > 0.01 || capUsd > 50) {
           devMsg.textContent = 'You are above Polyrich defaults.';
           devMsg.style.color = '#b45309';
+        } else if (capUsd < 5) {
+          devMsg.textContent = '';
         } else {
           devMsg.textContent = 'Safer than default.';
           devMsg.style.color = '#166534';
@@ -1213,10 +1273,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
 
       function updateLimitWarning(capUsd) {
         if (capUsd < 5) {
-          if (limitHint) limitHint.style.display = 'none';
           if (limitWarn) limitWarn.style.display = 'block';
         } else {
-          if (limitHint) limitHint.style.display = 'block';
           if (limitWarn) limitWarn.style.display = 'none';
         }
       }
@@ -1589,6 +1647,135 @@ function renderSystemPage(healthData, metrics) {
   `;
 }
 
+/** Render the /tickets page body. */
+function renderTicketsPage(tickets) {
+  const openTickets = tickets.filter((t) => t.status === "OPEN");
+  const closedTickets = tickets.filter((t) => t.status === "CLOSED");
+  const openCount = openTickets.length;
+  const closedCount = closedTickets.length;
+  const closedWithPnl = closedTickets.filter((t) => typeof t.realizedPnlUsd === "number");
+  const realizedPnlSumUsd = closedWithPnl.reduce((s, t) => s + t.realizedPnlUsd, 0);
+  const wins = closedWithPnl.filter((t) => t.realizedPnlUsd > 0).length;
+  const winRate = closedWithPnl.length > 0 ? (wins / closedWithPnl.length * 100) : 0;
+
+  function fmtDate(d) {
+    if (!d) return "—";
+    return new Date(d).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+
+  function pnlColor(val) {
+    if (typeof val !== "number") return "#6b7280";
+    return val > 0 ? "#166534" : val < 0 ? "#dc2626" : "#6b7280";
+  }
+
+  const summaryHtml = `
+    <div class="card" style="margin-bottom:20px;">
+      <h2 style="margin-top:0;font-size:1.1rem;">Summary</h2>
+      <div style="display:flex;gap:24px;flex-wrap:wrap;font-size:0.92rem;">
+        <div><span style="color:#6b7280;">Open:</span> <strong>${openCount}</strong></div>
+        <div><span style="color:#6b7280;">Closed:</span> <strong>${closedCount}</strong></div>
+        <div><span style="color:#6b7280;">Realized PnL:</span> <strong style="color:${pnlColor(realizedPnlSumUsd)};">${realizedPnlSumUsd >= 0 ? "+" : ""}$${realizedPnlSumUsd.toFixed(2)}</strong></div>
+        <div><span style="color:#6b7280;">Win rate:</span> <strong>${winRate.toFixed(1)}%</strong> <span style="font-size:0.78rem;color:#6b7280;">(${wins}/${closedWithPnl.length})</span></div>
+      </div>
+    </div>
+  `;
+
+  function ticketRow(t, showClose) {
+    const tradeLabel = t.tradeability === "EXECUTE" ? "⚡ EXECUTE" : "👁 WATCH";
+    const actionLabel = t.action || "—";
+    const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "—";
+    const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "—";
+    const closeHtml = showClose ? `
+      <td style="white-space:nowrap;">
+        <input type="number" step="0.01" min="0" max="1" placeholder="price" class="close-price-input" data-ticket-id="${escHtml(String(t._id))}" style="width:70px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.82rem;">
+        <button class="cta-secondary close-ticket-btn" data-ticket-id="${escHtml(String(t._id))}" style="padding:3px 10px;font-size:0.82rem;">Close</button>
+      </td>
+    ` : `
+      <td style="color:${pnlColor(t.realizedPnlUsd)};">
+        ${typeof t.realizedPnlUsd === "number" ? (t.realizedPnlUsd >= 0 ? "+" : "") + "$" + t.realizedPnlUsd.toFixed(2) : "—"}
+        ${typeof t.realizedPnlPct === "number" ? " (" + (t.realizedPnlPct * 100).toFixed(1) + "%)" : ""}
+      </td>
+    `;
+    return `<tr>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(t.question)}">${escHtml(t.question)}</td>
+      <td>${tradeLabel}</td>
+      <td>${escHtml(actionLabel)}</td>
+      <td>${entry}</td>
+      <td>${size}</td>
+      <td>${fmtDate(t.createdAt)}</td>
+      ${closeHtml}
+    </tr>`;
+  }
+
+  const openTableHtml = openTickets.length === 0
+    ? '<p style="color:#6b7280;font-size:0.92rem;">No open tickets.</p>'
+    : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+        <thead><tr style="background:#f9fafb;text-align:left;">
+          <th style="padding:6px 8px;">Question</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Action</th>
+          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Created</th><th style="padding:6px 8px;">Close</th>
+        </tr></thead>
+        <tbody>${openTickets.map((t) => ticketRow(t, true)).join("")}</tbody>
+      </table></div>`;
+
+  const closedTableHtml = closedTickets.length === 0
+    ? '<p style="color:#6b7280;font-size:0.92rem;">No closed tickets yet.</p>'
+    : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+        <thead><tr style="background:#f9fafb;text-align:left;">
+          <th style="padding:6px 8px;">Question</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Action</th>
+          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Closed</th><th style="padding:6px 8px;">Realized PnL</th>
+        </tr></thead>
+        <tbody>${closedTickets.map((t) => {
+          const tradeLabel = t.tradeability === "EXECUTE" ? "⚡ EXECUTE" : "👁 WATCH";
+          const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "—";
+          const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "—";
+          return `<tr>
+            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(t.question)}">${escHtml(t.question)}</td>
+            <td>${tradeLabel}</td>
+            <td>${escHtml(t.action || "—")}</td>
+            <td>${entry}</td>
+            <td>${size}</td>
+            <td>${fmtDate(t.closedAt)}</td>
+            <td style="color:${pnlColor(t.realizedPnlUsd)};">
+              ${typeof t.realizedPnlUsd === "number" ? (t.realizedPnlUsd >= 0 ? "+" : "") + "$" + t.realizedPnlUsd.toFixed(2) : "—"}
+              ${typeof t.realizedPnlPct === "number" ? " (" + (t.realizedPnlPct * 100).toFixed(1) + "%)" : ""}
+            </td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table></div>`;
+
+  return `
+    <h1>Tickets</h1>
+    ${summaryHtml}
+    <h2 style="margin:20px 0 12px;font-size:1.15rem;">OPEN (${openCount})</h2>
+    ${openTableHtml}
+    <h2 style="margin:20px 0 12px;font-size:1.15rem;">CLOSED (${closedCount})</h2>
+    ${closedTableHtml}
+    <script>
+    (function() {
+      document.addEventListener("click", function(e) {
+        var btn = e.target.closest(".close-ticket-btn");
+        if (!btn) return;
+        var ticketId = btn.getAttribute("data-ticket-id");
+        var input = document.querySelector('.close-price-input[data-ticket-id="' + ticketId + '"]');
+        if (!input) return;
+        var closePrice = parseFloat(input.value);
+        if (isNaN(closePrice) || closePrice <= 0) { alert("Enter a valid close price"); return; }
+        btn.disabled = true;
+        btn.textContent = "Closing...";
+        fetch("/api/tickets/close", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ticketId: ticketId, closePrice: closePrice }),
+        }).then(function(r) { return r.json(); }).then(function(d) {
+          if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); }
+          else { location.reload(); }
+        }).catch(function() { btn.textContent = "Error"; btn.disabled = false; });
+      });
+    })();
+    </script>
+  `;
+}
+
 module.exports = {
   renderBreakdown,
   computeWhyPick,
@@ -1606,6 +1793,7 @@ module.exports = {
   renderTradePage,
   renderExplorePage,
   renderSystemPage,
+  renderTicketsPage,
   pageShell,
   inferDirection,
   inferEntry,
