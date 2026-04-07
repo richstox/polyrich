@@ -827,8 +827,8 @@ const server = http.createServer(async (req, res) => {
         }
         // Idempotent: return existing OPEN ticket instead of creating duplicate
         const existing = await TradeTicket.findOne({
-          marketId: data.marketId,
-          action: data.action,
+          marketId: String(data.marketId),
+          action: String(data.action),
           status: "OPEN",
         }).lean();
         if (existing) {

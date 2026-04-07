@@ -1810,7 +1810,7 @@ function renderTicketsPage(tickets, highlightId) {
       <td>${sl}</td>
       <td>${size}</td>
       <td style="max-width:140px;">${tags}</td>
-      <td>${fmtDate(t.createdAt)}</td>
+      <td>${fmtDate(showClose ? t.createdAt : t.closedAt)}</td>
       ${closeHtml}
     </tr>`;
   }
@@ -1832,37 +1832,7 @@ function renderTicketsPage(tickets, highlightId) {
           <th style="padding:6px 8px;">Question</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Action</th>
           <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">TP</th><th style="padding:6px 8px;">SL</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Signals</th><th style="padding:6px 8px;">Closed</th><th style="padding:6px 8px;">Realized PnL</th>
         </tr></thead>
-        <tbody>${closedTickets.map((t) => {
-          const tradeLabel = t.tradeability === "EXECUTE" ? "⚡ EXECUTE" : "👁 WATCH";
-          const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "—";
-          const tp = typeof t.takeProfit === "number" ? "$" + t.takeProfit.toFixed(2) : "—";
-          const sl = typeof t.riskExitLimit === "number" ? "$" + t.riskExitLimit.toFixed(2) : "—";
-          const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "—";
-          const tags = Array.isArray(t.reasonCodes) && t.reasonCodes.length > 0
-            ? t.reasonCodes.map((c) => `<span style="display:inline-block;background:#f3f4f6;border-radius:4px;padding:1px 5px;font-size:0.75rem;margin:1px 2px;">${escHtml(c)}</span>`).join("")
-            : "—";
-          const polyUrl = t.eventSlug
-            ? `https://polymarket.com/event/${encodeURIComponent(t.eventSlug)}`
-            : t.marketUrl || null;
-          const linkHtml = polyUrl
-            ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="font-size:0.78rem;">Polymarket ↗</a>`
-            : "";
-          return `<tr>
-            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(t.question)}">${escHtml(t.question)}${linkHtml ? "<br>" + linkHtml : ""}</td>
-            <td>${tradeLabel}</td>
-            <td>${escHtml(t.action || "—")}</td>
-            <td>${entry}</td>
-            <td>${tp}</td>
-            <td>${sl}</td>
-            <td>${size}</td>
-            <td style="max-width:140px;">${tags}</td>
-            <td>${fmtDate(t.closedAt)}</td>
-            <td style="color:${pnlColor(t.realizedPnlUsd)};">
-              ${typeof t.realizedPnlUsd === "number" ? (t.realizedPnlUsd >= 0 ? "+" : "") + "$" + t.realizedPnlUsd.toFixed(2) : "—"}
-              ${typeof t.realizedPnlPct === "number" ? " (" + (t.realizedPnlPct * 100).toFixed(1) + "%)" : ""}
-            </td>
-          </tr>`;
-        }).join("")}</tbody>
+        <tbody>${closedTickets.map((t) => ticketRow(t, false, highlightId)).join("")}</tbody>
       </table></div>`;
 
   return `
