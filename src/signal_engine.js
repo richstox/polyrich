@@ -71,6 +71,10 @@ const MOMENTUM_FLOOR = 0.0012;
 const BREAKOUT_MOVE_FLOOR = 0.0015;
 const BREAKOUT_VOL_FLOOR = 0.0015;
 
+// Mispricing eligibility gate — require real market action before allowing mispricing
+const MIN_ABS_MOVE_FOR_MISPRICING = 0.005;
+const MIN_VOL_FOR_MISPRICING = 0.002;
+
 function marketKey(item) {
   return item.marketSlug || item.question;
 }
@@ -327,7 +331,8 @@ async function buildIdeas(scanStatus, opts = {}) {
       }
     }
 
-    takeTypeQuota(byType.mispricing, 8);
+    const mispricingCap = Math.ceil(FINAL_CANDIDATES_SIZE * 0.30);
+    takeTypeQuota(byType.mispricing, mispricingCap);
     takeTypeQuota(byType.momentumBreakout, 8);
     takeTypeQuota(byType.reversal, 4);
 
@@ -340,10 +345,10 @@ async function buildIdeas(scanStatus, opts = {}) {
       }
     }
 
-    // Hard ceiling: mispricing must not exceed 50% of finalCandidates
+    // Hard ceiling: mispricing must not exceed 30% of finalCandidates
     // unless total signals < FINAL_CANDIDATES_SIZE (i.e. we can't fill otherwise).
     if (signals.length >= FINAL_CANDIDATES_SIZE) {
-      const mispricingCeil = Math.floor(selected.length * 0.5);
+      const mispricingCeil = Math.ceil(selected.length * 0.30);
       const mispricingInSelected = selected.filter((x) => x.signalType === "mispricing");
       if (mispricingInSelected.length > mispricingCeil) {
         // Remove excess mispricing from the end (lowest priority) and backfill
@@ -639,13 +644,15 @@ function finalizeItem(item, inconsistencyThreshold, peerZThreshold) {
   // Mispricing is only flagged for non-filtered items to avoid noise.
   // Also reject when the static spreadPct exceeds the ceiling — wide spreads
   // mechanically inflate peer-Z / inconsistency scores and create false positives.
-  // Movement gate: mispricing requires minimum movement to avoid zero-movement noise.
+  // Eligibility gate: mispricing requires real market action (movement OR volatility).
+  const mispricingEligible =
+    item.absMove >= MIN_ABS_MOVE_FOR_MISPRICING || item.volatility >= MIN_VOL_FOR_MISPRICING;
   const rawMispricing =
     !item._filtered &&
     item.spreadPct <= MISPRICING_MAX_SPREAD_PCT_STATIC &&
     (item.eventInconsistencyScore >= inconsistencyThreshold ||
       item.peerZScore >= peerZThreshold);
-  const mispricing = rawMispricing && (item.absMove >= MOMENTUM_FLOOR || item.volatility >= BREAKOUT_VOL_FLOOR);
+  const mispricing = rawMispricing && mispricingEligible;
 
   // item.hoursLeft is always in hours (number|null) — set by getHoursLeft() in normalizer.js
   const timeLeftHours = typeof item.hoursLeft === "number" ? item.hoursLeft : 0;
@@ -653,6 +660,7 @@ function finalizeItem(item, inconsistencyThreshold, peerZThreshold) {
   let mispricingTerm = (item.eventInconsistencyScore || 0) * 1.0 + (item.peerZScore || 0) * 20;
   mispricingTerm = Math.min(mispricingTerm, 500);
   if (timeLeftHours > 168) mispricingTerm = 0;
+  if (!mispricingEligible) mispricingTerm = 0;
   const orderbookTerm =
     (item.bestBidNum > 0 && item.bestAskNum > 0 ? 50 : -200) -
     item.spreadPct * 500 -

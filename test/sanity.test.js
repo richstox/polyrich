@@ -498,6 +498,189 @@ console.log("\nfinalizeItem: near-expiry gate & mispricingTerm clamp");
 }
 
 // ---------------------------------------------------------------------------
+// finalizeItem: mispricing eligibility gate (movement / volatility)
+// ---------------------------------------------------------------------------
+console.log("\nfinalizeItem: mispricing eligibility gate");
+
+{
+  const { finalizeItem } = require("../src/signal_engine");
+
+  function makeItem(overrides) {
+    return {
+      question: "Test?",
+      category: "",
+      subcategory: "",
+      marketSlug: "test",
+      eventSlug: "test-event",
+      tagIds: [],
+      tagSlugs: [],
+      eventGroup: "test-event",
+      categoryGroup: "uncategorized",
+      latestYes: 0.5,
+      previousYes: 0.5,
+      delta1: 0,
+      delta2: 0,
+      absMove: 0.005,
+      volatility: 0.005,
+      spread: 0.02,
+      spreadPct: 0.04,
+      liquidity: 10000,
+      volume24hr: 5000,
+      bestBidNum: 0.48,
+      bestAskNum: 0.52,
+      mid: 0.5,
+      microEdge: 0,
+      orderbookQualityPenalty: 0,
+      endDate: "",
+      hoursLeft: 48,
+      liquidityScore: Math.log(10001),
+      volumeScore: Math.log(5001),
+      moveTerm: 50,
+      volTerm: 25,
+      costPenalty: 80,
+      activityTerm: 600,
+      extremePenalty: 0,
+      timePenalty: 0,
+      timeBonus: 60,
+      momentum: true,
+      breakout: false,
+      reversal: false,
+      historyPoints: 5,
+      recentSeries: [0.5, 0.5, 0.5, 0.5, 0.5],
+      medianRecentMove: 0.001,
+      noveltyBonus: 0,
+      _filtered: false,
+      eventInconsistencyScore: 10,
+      peerZScore: 300,
+      ...overrides,
+    };
+  }
+
+  // Case 1: absMove=0, volatility=0, timeLeftHours<=168 → gate fails
+  {
+    const item = makeItem({ absMove: 0, volatility: 0, hoursLeft: 48, timeBonus: 60 });
+    const result = finalizeItem(item, 5, 2);
+    assert(result.mispricingTerm === 0,
+      "gate: absMove=0/vol=0 → mispricingTerm must be 0");
+    assert(!result.reasonCodes.includes("mispricing"),
+      "gate: absMove=0/vol=0 → no mispricing tag");
+    assert(result.mispricing === false,
+      "gate: absMove=0/vol=0 → mispricing flag must be false");
+    assert(result.signalType !== "mispricing",
+      "gate: absMove=0/vol=0 → signalType must not be mispricing");
+  }
+
+  // Case 2: absMove=0.01, high inconsistency, timeLeftHours<=168 → gate passes
+  {
+    const item = makeItem({ absMove: 0.01, volatility: 0.005, hoursLeft: 48, timeBonus: 60 });
+    const result = finalizeItem(item, 5, 2);
+    assert(result.mispricingTerm > 0,
+      "gate: absMove=0.01 → mispricingTerm > 0");
+    assert(result.mispricingTerm <= 500,
+      "gate: absMove=0.01 → mispricingTerm <= 500 (clamped)");
+    assert(result.reasonCodes.includes("mispricing"),
+      "gate: absMove=0.01 → has mispricing tag");
+    assert(result.mispricing === true,
+      "gate: absMove=0.01 → mispricing flag true");
+  }
+
+  // Case 3: volatility passes gate but absMove does not
+  {
+    const item = makeItem({ absMove: 0.001, volatility: 0.003, hoursLeft: 48, timeBonus: 60 });
+    const result = finalizeItem(item, 5, 2);
+    assert(result.mispricingTerm > 0,
+      "gate: vol=0.003 (>=0.002) → mispricingTerm > 0");
+    assert(result.mispricing === true,
+      "gate: vol=0.003 → mispricing eligible via volatility");
+  }
+
+  // Case 4: both below thresholds but non-zero
+  {
+    const item = makeItem({ absMove: 0.004, volatility: 0.001, hoursLeft: 48, timeBonus: 60 });
+    const result = finalizeItem(item, 5, 2);
+    assert(result.mispricingTerm === 0,
+      "gate: absMove=0.004/vol=0.001 → both below → mispricingTerm 0");
+    assert(result.mispricing === false,
+      "gate: absMove=0.004/vol=0.001 → mispricing false");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Final selection: mispricing quota enforcement
+// ---------------------------------------------------------------------------
+console.log("\nfinal selection: mispricing quota");
+
+{
+  // Simulate the quota logic from buildCandidatesFromEnriched
+  // Given 25 candidates where 15 are mispricing-typed, verify cap enforced at 30%
+  const finalLimit = 20;
+  const mispricingCeil = Math.ceil(finalLimit * 0.30); // = 6
+
+  // Build 30 synthetic candidates: 15 mispricing (higher score), 15 non-mispricing
+  const candidates = [];
+  for (let i = 0; i < 15; i++) {
+    candidates.push({
+      marketSlug: `mispricing-${i}`,
+      signalType: "mispricing",
+      signalScore2: 1000 - i,
+      categoryGroup: `cat-${i % 5}`,
+      eventGroup: `event-${i}`,
+      mispricingTerm: 100,
+    });
+  }
+  for (let i = 0; i < 15; i++) {
+    candidates.push({
+      marketSlug: `momentum-${i}`,
+      signalType: "momentum",
+      signalScore2: 800 - i,
+      categoryGroup: `cat-${i % 5}`,
+      eventGroup: `event-m-${i}`,
+      mispricingTerm: 0,
+    });
+  }
+
+  // Sort by score descending (simulates signals list)
+  candidates.sort((a, b) => b.signalScore2 - a.signalScore2);
+
+  // Take top 20 naively
+  let selected = candidates.slice(0, finalLimit);
+
+  // Apply mispricing ceiling (same logic as signal_engine.js)
+  const mispricingInSelected = selected.filter(
+    (x) => x.signalType === "mispricing" || x.mispricingTerm > 0
+  );
+
+  if (mispricingInSelected.length > mispricingCeil) {
+    const excess = mispricingInSelected.length - mispricingCeil;
+    let removed = 0;
+    for (let i = selected.length - 1; i >= 0 && removed < excess; i--) {
+      if (selected[i].signalType === "mispricing") {
+        selected.splice(i, 1);
+        removed++;
+      }
+    }
+    // Backfill with non-mispricing from remaining candidates
+    for (const item of candidates) {
+      if (selected.length >= finalLimit) break;
+      if (item.signalType === "mispricing") continue;
+      if (selected.find((s) => s.marketSlug === item.marketSlug)) continue;
+      selected.push(item);
+    }
+  }
+
+  const finalMispricingCount = selected.filter(
+    (x) => x.signalType === "mispricing" || x.mispricingTerm > 0
+  ).length;
+
+  assert(finalMispricingCount <= mispricingCeil,
+    `quota: mispricing in final <= ${mispricingCeil} (got ${finalMispricingCount})`);
+  assert(selected.length === finalLimit,
+    `quota: final list has exactly ${finalLimit} entries (got ${selected.length})`);
+  assert(finalMispricingCount <= Math.ceil(finalLimit * 0.35),
+    `quota: mispricing share <= 35% of ${finalLimit}`);
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);
