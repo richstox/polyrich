@@ -1785,9 +1785,10 @@ function renderTicketsPage(tickets, highlightId) {
     const polyUrl = t.eventSlug
       ? `https://polymarket.com/event/${encodeURIComponent(t.eventSlug)}`
       : t.marketUrl || null;
-    const linkHtml = polyUrl
-      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="font-size:0.78rem;">Polymarket ↗</a>`
-      : "";
+    const linksHtml = [
+      polyUrl ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="font-size:0.78rem;">Polymarket ↗</a>` : "",
+      `<a href="/trade" style="font-size:0.78rem;">Polyrich ↗</a>`,
+    ].filter(Boolean).join(" ");
     const isHighlighted = highlightId && String(t._id) === highlightId;
     const rowStyle = isHighlighted ? ' style="background:#fef9c3;"' : "";
     const closeHtml = showClose ? `
@@ -1802,13 +1803,14 @@ function renderTicketsPage(tickets, highlightId) {
       </td>
     `;
     return `<tr id="ticket-${escHtml(String(t._id))}"${rowStyle}>
-      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(t.question)}">${escHtml(t.question)}${linkHtml ? "<br>" + linkHtml : ""}</td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(t.question)}">${escHtml(t.question)}</td>
       <td>${tradeLabel}</td>
       <td>${escHtml(actionLabel)}</td>
       <td>${entry}</td>
       <td>${tp}</td>
       <td>${sl}</td>
       <td>${size}</td>
+      <td style="white-space:nowrap;">${linksHtml}</td>
       <td style="max-width:140px;">${tags}</td>
       <td>${fmtDate(showClose ? t.createdAt : t.closedAt)}</td>
       ${closeHtml}
@@ -1820,7 +1822,7 @@ function renderTicketsPage(tickets, highlightId) {
     : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
         <thead><tr style="background:#f9fafb;text-align:left;">
           <th style="padding:6px 8px;">Question</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Action</th>
-          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">TP</th><th style="padding:6px 8px;">SL</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Signals</th><th style="padding:6px 8px;">Created</th><th style="padding:6px 8px;">Close</th>
+          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">TP</th><th style="padding:6px 8px;">Exit (risk)</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Links</th><th style="padding:6px 8px;">Signals</th><th style="padding:6px 8px;">Created</th><th style="padding:6px 8px;">Close</th>
         </tr></thead>
         <tbody>${openTickets.map((t) => ticketRow(t, true, highlightId)).join("")}</tbody>
       </table></div>`;
@@ -1830,7 +1832,7 @@ function renderTicketsPage(tickets, highlightId) {
     : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
         <thead><tr style="background:#f9fafb;text-align:left;">
           <th style="padding:6px 8px;">Question</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Action</th>
-          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">TP</th><th style="padding:6px 8px;">SL</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Signals</th><th style="padding:6px 8px;">Closed</th><th style="padding:6px 8px;">Realized PnL</th>
+          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">TP</th><th style="padding:6px 8px;">Exit (risk)</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Links</th><th style="padding:6px 8px;">Signals</th><th style="padding:6px 8px;">Closed</th><th style="padding:6px 8px;">Realized PnL</th>
         </tr></thead>
         <tbody>${closedTickets.map((t) => ticketRow(t, false, highlightId)).join("")}</tbody>
       </table></div>`;
