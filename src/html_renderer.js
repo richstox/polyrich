@@ -1506,6 +1506,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
 
       async function markSavedCards() {
         var allBtns = document.querySelectorAll('.save-ticket-btn');
+        var items = [];
         for (var k = 0; k < allBtns.length; k++) {
           var btn = allBtns[k];
           var raw = btn.getAttribute('data-save-ticket');
@@ -1513,18 +1514,23 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           try {
             var payload = JSON.parse(raw);
             var keyStr = computeDedupeKeyClient(payload);
-            var key = await sha1(keyStr);
-            if (openDedupeKeys[key]) {
-              btn.textContent = 'Saved \\u2713';
-              btn.style.background = '#dcfce7';
-              btn.style.color = '#166534';
-              btn.style.borderColor = '#bbf7d0';
-              btn.style.cursor = 'pointer';
-              btn.disabled = false;
-              btn.removeAttribute('data-save-ticket');
-              btn.setAttribute('data-goto-ticket', openDedupeKeys[key]);
-            }
+            items.push({ btn: btn, keyPromise: sha1(keyStr) });
           } catch (_) {}
+        }
+        var keys = await Promise.all(items.map(function(it) { return it.keyPromise; }));
+        for (var m = 0; m < items.length; m++) {
+          var key = keys[m];
+          if (openDedupeKeys[key]) {
+            var b = items[m].btn;
+            b.textContent = 'Saved \u2713';
+            b.style.background = '#dcfce7';
+            b.style.color = '#166534';
+            b.style.borderColor = '#bbf7d0';
+            b.style.cursor = 'pointer';
+            b.disabled = false;
+            b.removeAttribute('data-save-ticket');
+            b.setAttribute('data-goto-ticket', openDedupeKeys[key]);
+          }
         }
       }
 
@@ -1532,6 +1538,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       window.__polyrichMarkSaved = markSavedCards;
 
       fetch('/api/tickets?status=OPEN').then(function(r) {
+        if (!r.ok) return [];
         return r.json();
       }).then(function(tickets) {
         if (!Array.isArray(tickets)) return;
