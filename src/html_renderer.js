@@ -997,6 +997,7 @@ function renderTradeCard(item) {
 
     const savePayload = JSON.stringify({
       scanId: item.scanId || null,
+      source: "TRADE_PAGE",
       marketId: item.marketSlug || item.conditionId || item.question,
       eventSlug: item.eventSlug || null,
       marketUrl: link || null,
@@ -1010,6 +1011,10 @@ function renderTradeCard(item) {
       takeProfit: tpNum,
       riskExitLimit: stopNum,
       maxSizeUsd: sizeNum,
+      bankrollUsd: null,
+      riskPct: null,
+      maxTradeCapUsd: null,
+      minLimitOrderUsd: MIN_LIMIT_ORDER_USD,
       pnlTpUsd: Math.round(pnlTpUsd * 100) / 100,
       pnlTpPct: Math.round(pnlTpPct * 10) / 1000,
       pnlExitUsd: Math.round(pnlStopUsd * 100) / 100,
@@ -1052,6 +1057,7 @@ function renderTradeCard(item) {
 
   const watchSavePayload = JSON.stringify({
     scanId: item.scanId || null,
+    source: "TRADE_PAGE",
     marketId: item.marketSlug || item.conditionId || item.question,
     eventSlug: item.eventSlug || null,
     marketUrl: link || null,
@@ -1062,6 +1068,10 @@ function renderTradeCard(item) {
     whyWatch: watchReason,
     nextStep: watchNext,
     planTbd: true,
+    bankrollUsd: null,
+    riskPct: null,
+    maxTradeCapUsd: null,
+    minLimitOrderUsd: MIN_LIMIT_ORDER_USD,
   });
 
   return `
@@ -1376,6 +1386,27 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
               copyBtn.setAttribute('data-copy-plan', 'ACTION: WATCH\\nMARKET: ' + market + '\\nWHY WATCH: Max size $' + maxSizeDisplay.toFixed(2) + ' is below $' + MIN_ORDER + ' minimum limit order\\nNEXT: Increase risk% or cap, or increase bankroll');
               copyBtn.textContent = 'Copy plan';
             }
+            // Update save-ticket to WATCH snapshot with context fields
+            var saveBtn0 = card.querySelector('.save-ticket-btn');
+            if (saveBtn0) {
+              try {
+                var base0 = JSON.parse(saveBtn0.getAttribute('data-save-ticket'));
+                base0.tradeability = 'WATCH';
+                base0.action = 'WATCH';
+                base0.planTbd = true;
+                base0.whyWatch = 'Max size $' + maxSizeDisplay.toFixed(2) + ' is below $' + MIN_ORDER + ' minimum limit order';
+                base0.nextStep = 'Increase risk% or cap, or increase bankroll';
+                base0.entryLimit = null; base0.takeProfit = null; base0.riskExitLimit = null;
+                base0.maxSizeUsd = null; base0.pnlTpUsd = null; base0.pnlTpPct = null;
+                base0.pnlExitUsd = null; base0.pnlExitPct = null;
+                base0.bankrollUsd = hasBankroll ? bankroll : null;
+                base0.riskPct = riskDec;
+                base0.maxTradeCapUsd = capUsd;
+                base0.minLimitOrderUsd = MIN_ORDER;
+                saveBtn0.setAttribute('data-save-ticket', JSON.stringify(base0));
+                saveBtn0.textContent = 'Save watch';
+              } catch (_) {}
+            }
             continue;
           }
 
@@ -1437,6 +1468,51 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
 
           var noteEl2 = card.querySelector('.bankroll-note');
           if (noteEl2) noteEl2.style.display = hasBankroll ? 'none' : 'block';
+
+          // Update save-ticket to match current display values + context fields
+          var saveBtn1 = card.querySelector('.save-ticket-btn');
+          if (saveBtn1) {
+            try {
+              var base1 = JSON.parse(saveBtn1.getAttribute('data-save-ticket'));
+              base1.tradeability = 'EXECUTE';
+              base1.action = act === 'BUY YES' ? 'BUY_YES' : act === 'BUY NO' ? 'BUY_NO' : 'WATCH';
+              base1.planTbd = false;
+              base1.maxSizeUsd = maxSizeDisplay;
+              base1.bankrollUsd = hasBankroll ? bankroll : null;
+              base1.riskPct = riskDec;
+              base1.maxTradeCapUsd = capUsd;
+              base1.minLimitOrderUsd = MIN_ORDER;
+              delete base1.whyWatch; delete base1.nextStep;
+              if (!isNaN(tp) && !isNaN(stop)) {
+                var sTpU = maxSizeDisplay * (tp - entry) / entry;
+                var sTpP = (tp - entry) / entry * 100;
+                var sSlU = maxSizeDisplay * (stop - entry) / entry;
+                var sSlP = (stop - entry) / entry * 100;
+                base1.pnlTpUsd = Math.round(sTpU * 100) / 100;
+                base1.pnlTpPct = Math.round(sTpP * 10) / 1000;
+                base1.pnlExitUsd = Math.round(sSlU * 100) / 100;
+                base1.pnlExitPct = Math.round(sSlP * 10) / 1000;
+              }
+              saveBtn1.setAttribute('data-save-ticket', JSON.stringify(base1));
+              saveBtn1.textContent = 'Save ticket';
+            } catch (_) {}
+          }
+        }
+
+        // Update context fields on native WATCH cards (not data-execute="1")
+        var allSaveBtns = document.querySelectorAll('.save-ticket-btn');
+        for (var j = 0; j < allSaveBtns.length; j++) {
+          var sb = allSaveBtns[j];
+          var parentCard = sb.closest('.trade-card');
+          if (parentCard && parentCard.getAttribute('data-execute') === '1') continue;
+          try {
+            var baseW = JSON.parse(sb.getAttribute('data-save-ticket'));
+            baseW.bankrollUsd = hasBankroll ? bankroll : null;
+            baseW.riskPct = riskDec;
+            baseW.maxTradeCapUsd = capUsd;
+            baseW.minLimitOrderUsd = MIN_ORDER;
+            sb.setAttribute('data-save-ticket', JSON.stringify(baseW));
+          } catch (_) {}
         }
       }
 
