@@ -1464,12 +1464,84 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             sb.setAttribute('data-save-ticket', JSON.stringify(baseW));
           } catch (_) {}
         }
+
+        // Re-check saved state after payload updates
+        if (typeof window.__polyrichMarkSaved === 'function') window.__polyrichMarkSaved();
       }
 
       brInput.addEventListener('input', updateCards);
       riskInput.addEventListener('input', onManualEdit);
       capInput.addEventListener('input', onManualEdit);
       updateCards();
+
+      // ── Saved-state persistence ──────────────────────────────────
+      // Fetch open tickets and mark cards whose dedupeKey already exists
+      var openDedupeKeys = {};  // dedupeKey → ticketId
+
+      function canon(v) {
+        if (v === null || v === undefined) return 'null';
+        if (typeof v === 'number') return Number(v).toString();
+        return String(v).trim();
+      }
+
+      function computeDedupeKeyClient(data) {
+        return [
+          canon(data.marketId),
+          canon(data.tradeability),
+          canon(data.action),
+          canon(data.entryLimit),
+          canon(data.takeProfit),
+          canon(data.riskExitLimit),
+          canon(data.maxSizeUsd),
+          canon(data.scanId)
+        ].join('|');
+      }
+
+      async function sha1(str) {
+        var buf = new TextEncoder().encode(str);
+        var hash = await crypto.subtle.digest('SHA-1', buf);
+        var arr = Array.from(new Uint8Array(hash));
+        return arr.map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+      }
+
+      async function markSavedCards() {
+        var allBtns = document.querySelectorAll('.save-ticket-btn');
+        for (var k = 0; k < allBtns.length; k++) {
+          var btn = allBtns[k];
+          var raw = btn.getAttribute('data-save-ticket');
+          if (!raw) continue;
+          try {
+            var payload = JSON.parse(raw);
+            var keyStr = computeDedupeKeyClient(payload);
+            var key = await sha1(keyStr);
+            if (openDedupeKeys[key]) {
+              btn.textContent = 'Saved \\u2713';
+              btn.style.background = '#dcfce7';
+              btn.style.color = '#166534';
+              btn.style.borderColor = '#bbf7d0';
+              btn.style.cursor = 'pointer';
+              btn.disabled = false;
+              btn.removeAttribute('data-save-ticket');
+              btn.setAttribute('data-goto-ticket', openDedupeKeys[key]);
+            }
+          } catch (_) {}
+        }
+      }
+
+      // Expose markSavedCards for updateCards to call
+      window.__polyrichMarkSaved = markSavedCards;
+
+      fetch('/api/tickets?status=OPEN').then(function(r) {
+        return r.json();
+      }).then(function(tickets) {
+        if (!Array.isArray(tickets)) return;
+        for (var t = 0; t < tickets.length; t++) {
+          if (tickets[t].dedupeKey) {
+            openDedupeKeys[tickets[t].dedupeKey] = String(tickets[t]._id);
+          }
+        }
+        markSavedCards();
+      }).catch(function() {});
     })();
     </script>
   `;
