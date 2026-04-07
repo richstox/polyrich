@@ -534,24 +534,83 @@ function sharedStyles() {
     padding: 5px 10px; border-radius: 6px; border: 1px solid #d1d5db;
     font-size: 0.85rem; background: #fff;
   }
+
+  /* Trade page styles */
+  .status-bar {
+    display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center;
+    background: #fff; border-radius: 12px; padding: 14px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 8px;
+  }
+  .status-item { display: flex; flex-direction: column; font-size: 0.82rem; }
+  .status-label { color: #6b7280; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .status-value { font-weight: 600; color: #1d1d1f; }
+  .mode-normal { color: #059669; }
+  .mode-relaxed { color: #d97706; }
+
+  .trade-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  }
+  @media (max-width: 700px) {
+    .trade-grid { grid-template-columns: 1fr; }
+  }
+
+  .trade-card {
+    background: #fff; border-radius: 12px; padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  }
+  .trade-card-header { margin-bottom: 10px; }
+  .trade-card-title {
+    font-weight: 700; font-size: 0.95rem; line-height: 1.35;
+    color: #2563eb; text-decoration: none;
+  }
+  .trade-card-title:hover { text-decoration: underline; }
+
+  .action-pill {
+    display: inline-block; padding: 6px 18px; border-radius: 20px;
+    font-weight: 700; font-size: 0.9rem; letter-spacing: 0.03em;
+    margin-bottom: 12px;
+  }
+  .pill-buy-yes { background: #dcfce7; color: #166534; }
+  .pill-buy-no { background: #fef3c7; color: #92400e; }
+  .pill-watch { background: #f3f4f6; color: #6b7280; }
+
+  .trade-plan-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px;
+    margin-bottom: 10px;
+  }
+  .trade-plan-item { display: flex; flex-direction: column; }
+  .trade-plan-label {
+    font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; color: #6b7280;
+  }
+  .trade-plan-value { font-size: 0.92rem; font-weight: 700; color: #1d1d1f; }
+
+  .why-now {
+    font-size: 0.82rem; color: #374151; margin: 0 0 10px;
+    padding: 6px 10px; background: #f9fafb; border-radius: 6px;
+    border-left: 3px solid #2563eb;
+  }
+
+  .trade-details { margin-top: 8px; }
+  .trade-details summary {
+    cursor: pointer; font-size: 0.78rem; color: #6b7280; font-weight: 600;
+  }
+  .trade-details-inner { padding-top: 8px; }
 </style>`;
 }
 
 /** Shared top navigation bar. */
 function renderNav(active) {
   const links = [
-    { href: "/", label: "Domů" },
-    { href: "/ideas", label: "Dashboard" },
-    { href: "/snapshots", label: "Snapshoty" },
-    { href: "/scan", label: "Scan" },
-    { href: "/health-ui", label: "Health" },
-    { href: "/metrics-ui", label: "Metrics" },
+    { href: "/trade", label: "Trade" },
+    { href: "/explore", label: "Explore" },
+    { href: "/system", label: "System" },
   ];
   const items = links.map((l) => {
     const style = l.href === active ? "color:#fff;font-weight:600;" : "";
     return `<a href="${l.href}" style="${style}">${l.label}</a>`;
   }).join("");
-  return `<nav class="top-bar"><div class="inner"><span class="brand">Polyrich</span>${items}</div></nav>`;
+  return `<nav class="top-bar"><div class="inner"><a href="/trade" class="brand" style="color:#f5f5f7;text-decoration:none;">Polyrich</a>${items}</div></nav>`;
 }
 
 /** Wrap page content with DOCTYPE, head, nav and container. */
@@ -572,20 +631,39 @@ function pageShell(title, activeNav, bodyHtml) {
   <script>
   document.addEventListener("click", function(e) {
     var btn = e.target.closest("[data-copy-url]");
-    if (!btn) return;
-    var url = btn.getAttribute("data-copy-url");
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(url).then(function() {
-        var orig = btn.textContent;
-        btn.textContent = "Copied!";
-        setTimeout(function() { btn.textContent = orig; }, 1500);
-      }, function() {
-        btn.textContent = "Copy failed";
+    if (btn) {
+      var url = btn.getAttribute("data-copy-url");
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(url).then(function() {
+          var orig = btn.textContent;
+          btn.textContent = "Copied!";
+          setTimeout(function() { btn.textContent = orig; }, 1500);
+        }, function() {
+          btn.textContent = "Copy failed";
+          setTimeout(function() { btn.textContent = "Copy link"; }, 1500);
+        });
+      } else {
+        btn.textContent = "Copy not supported";
         setTimeout(function() { btn.textContent = "Copy link"; }, 1500);
-      });
-    } else {
-      btn.textContent = "Copy not supported";
-      setTimeout(function() { btn.textContent = "Copy link"; }, 1500);
+      }
+      return;
+    }
+    var planBtn = e.target.closest("[data-copy-plan]");
+    if (planBtn) {
+      var plan = planBtn.getAttribute("data-copy-plan");
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(plan).then(function() {
+          var orig = planBtn.textContent;
+          planBtn.textContent = "Copied!";
+          setTimeout(function() { planBtn.textContent = orig; }, 1500);
+        }, function() {
+          planBtn.textContent = "Copy failed";
+          setTimeout(function() { planBtn.textContent = "Copy plan"; }, 1500);
+        });
+      } else {
+        planBtn.textContent = "Copy not supported";
+        setTimeout(function() { planBtn.textContent = "Copy plan"; }, 1500);
+      }
     }
   });
   </script>
@@ -598,8 +676,9 @@ function pageShell(title, activeNav, bodyHtml) {
  * categories and tags are arrays of strings (distinct values).
  * active = { cat, sub, tag } from current query params.
  */
-function renderFilterBar(categories, subcategories, tagSlugs, active) {
+function renderFilterBar(categories, subcategories, tagSlugs, active, actionUrl) {
   active = active || {};
+  const formAction = actionUrl || "/ideas";
   function opts(values, selected) {
     return values.map((v) => {
       const sel = v === selected ? " selected" : "";
@@ -607,20 +686,26 @@ function renderFilterBar(categories, subcategories, tagSlugs, active) {
     }).join("");
   }
 
+  const catHtml = categories.length > 0 ? `
+    <label>Category
+      <select name="cat">
+        <option value="">All</option>
+        ${opts(categories, active.cat)}
+      </select>
+    </label>` : "";
+
+  const subHtml = subcategories.length > 0 ? `
+    <label>Subcategory
+      <select name="sub">
+        <option value="">All</option>
+        ${opts(subcategories, active.sub)}
+      </select>
+    </label>` : "";
+
   return `
-    <form class="filter-bar" method="get" action="/ideas">
-      <label>Category
-        <select name="cat">
-          <option value="">All</option>
-          ${opts(categories, active.cat)}
-        </select>
-      </label>
-      <label>Subcategory
-        <select name="sub">
-          <option value="">All</option>
-          ${opts(subcategories, active.sub)}
-        </select>
-      </label>
+    <form class="filter-bar" method="get" action="${escHtml(formAction)}">
+      ${catHtml}
+      ${subHtml}
       <label>Tag
         <select name="tag">
           <option value="">All</option>
@@ -628,7 +713,7 @@ function renderFilterBar(categories, subcategories, tagSlugs, active) {
         </select>
       </label>
       <button type="submit" class="cta-primary" style="padding:5px 14px;font-size:0.85rem;">Filter</button>
-      <a href="/ideas" style="color:#6b7280;font-size:0.82rem;text-decoration:none;">Reset</a>
+      <a href="${escHtml(formAction)}" style="color:#6b7280;font-size:0.82rem;text-decoration:none;">Reset</a>
     </form>
   `;
 }
@@ -657,6 +742,296 @@ function renderBucketSection(bucketName, items, totalCount, gateSummary, collaps
   `;
 }
 
+// ---------------------------------------------------------------------------
+// Trade plan heuristics
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Trade plan heuristics — constants
+// ---------------------------------------------------------------------------
+const DIRECTION_DELTA_THRESHOLD = 0.005; // min |delta1| to infer directional trade
+const PRICE_MIDPOINT = 0.5;              // YES price midpoint for side selection
+const SIZE_LIQUIDITY_PCT = 0.01;         // max 1% of liquidity
+const SIZE_VOLUME_PCT = 0.02;            // max 2% of 24h volume
+const SIZE_CAP = 50;                     // max position size in $
+const TP_MULTIPLIER = 1.10;              // take profit at +10%
+const STOP_MULTIPLIER = 0.92;            // stop loss at -8%
+const PRICE_CEILING = 0.99;
+const PRICE_FLOOR = 0.01;
+
+/**
+ * Infer trade direction from candidate fields.
+ * Returns { action, actionCls } where action is BUY YES / BUY NO / WATCH.
+ */
+function inferDirection(item) {
+  const trade = computeTradeability(item);
+  if (trade.label === "Excluded" || trade.label === "Watch") {
+    return { action: "WATCH", actionCls: "pill-watch" };
+  }
+
+  // If mispricing is flagged or delta1 is clearly directional, infer side
+  if (item.mispricing) {
+    // When mispricing is detected and YES is cheap (below mid), lean BUY YES
+    if (item.latestYes < PRICE_MIDPOINT) {
+      return { action: "BUY YES", actionCls: "pill-buy-yes" };
+    }
+    return { action: "BUY NO", actionCls: "pill-buy-no" };
+  }
+
+  if (item.delta1 < -DIRECTION_DELTA_THRESHOLD && item.latestYes < PRICE_MIDPOINT) {
+    // Price dropped, YES side looks underpriced
+    return { action: "BUY YES", actionCls: "pill-buy-yes" };
+  }
+  if (item.delta1 > DIRECTION_DELTA_THRESHOLD && item.latestYes > PRICE_MIDPOINT) {
+    // Price rose and YES is high — consider NO side
+    return { action: "BUY NO", actionCls: "pill-buy-no" };
+  }
+  if (item.momentum || item.breakout) {
+    // General momentum — lean with direction of move
+    if (item.delta1 > 0) {
+      return { action: "BUY YES", actionCls: "pill-buy-yes" };
+    }
+    if (item.delta1 < 0) {
+      return { action: "BUY NO", actionCls: "pill-buy-no" };
+    }
+  }
+  return { action: "WATCH", actionCls: "pill-watch" };
+}
+
+/** Infer entry limit price. */
+function inferEntry(item, direction) {
+  if (direction === "BUY YES") {
+    if (item.bestAskNum > 0) return `$${item.bestAskNum.toFixed(2)}`;
+    if (item.latestYes > 0) return `$${item.latestYes.toFixed(2)}`;
+    return "TBD";
+  }
+  if (direction === "BUY NO") {
+    const noPrice = 1 - item.latestYes;
+    if (noPrice > 0) return `$${noPrice.toFixed(2)}`;
+    return "TBD";
+  }
+  return "TBD";
+}
+
+/** Infer conservative max size from liquidity/volume/spread. */
+function inferSize(item) {
+  if (item.liquidity < 500 || item.volume24hr < 50) return "TBD";
+  const fromLiq = item.liquidity * SIZE_LIQUIDITY_PCT;
+  const fromVol = item.volume24hr * SIZE_VOLUME_PCT;
+  const raw = Math.min(fromLiq, fromVol, SIZE_CAP);
+  if (raw < 1) return "TBD";
+  return `$${Math.floor(raw)}`;
+}
+
+/** Infer exit plan (take profit + stop). */
+function inferExit(item, direction) {
+  if (direction === "WATCH") return { tp: "TBD", stop: "TBD" };
+  const base = direction === "BUY YES" ? item.latestYes : (1 - item.latestYes);
+  if (base <= 0 || base >= 1) return { tp: "TBD", stop: "TBD" };
+  const tp = Math.min(base * TP_MULTIPLIER, PRICE_CEILING);
+  const stop = Math.max(base * STOP_MULTIPLIER, PRICE_FLOOR);
+  return {
+    tp: `$${tp.toFixed(2)}`,
+    stop: `$${stop.toFixed(2)}`,
+  };
+}
+
+/** One-line "Why now" summary. */
+function whyNowSummary(item) {
+  const parts = [];
+  if (item.delta1 !== 0) {
+    const sign = item.delta1 > 0 ? "+" : "";
+    parts.push(`Move ${sign}${(item.delta1 * 100).toFixed(1)}%`);
+  }
+  if (item.volume24hr > 0) parts.push(`Vol ${formatVolume(item.volume24hr)}`);
+  if (item.spreadPct > 0) parts.push(`Spread ${(item.spreadPct * 100).toFixed(1)}%`);
+  if (item.hoursLeft !== null && item.hoursLeft > 0) parts.push(`${formatHoursLeft(item.hoursLeft)} left`);
+  return parts.join(" · ") || "—";
+}
+
+/** Render a single trade card for the /trade page. */
+function renderTradeCard(item) {
+  const { action, actionCls } = inferDirection(item);
+  const entry = inferEntry(item, action);
+  const size = inferSize(item);
+  const exit = inferExit(item, action);
+  const whyNow = whyNowSummary(item);
+  const link = polymarketUrl(item);
+  const safeLink = link ? escHtml(link) : "";
+  const questionHtml = link
+    ? `<a href="${safeLink}" target="_blank" rel="noopener" class="trade-card-title">${escHtml(item.question)}</a>`
+    : `<span class="trade-card-title">${escHtml(item.question)}</span>`;
+
+  // Build copy-plan text (use \n for newlines in the attribute)
+  const planText = [
+    item.question,
+    action,
+    `Entry: ${entry}`,
+    `Size: ${size}`,
+    `TP: ${exit.tp}`,
+    `Stop: ${exit.stop}`,
+    whyNow,
+  ].join("\n");
+
+  return `
+    <div class="trade-card">
+      <div class="trade-card-header">${questionHtml}</div>
+      <div class="action-pill ${actionCls}">${escHtml(action)}</div>
+      <div class="trade-plan-grid">
+        <div class="trade-plan-item"><span class="trade-plan-label">ENTRY LIMIT</span><span class="trade-plan-value">${escHtml(entry)}</span></div>
+        <div class="trade-plan-item"><span class="trade-plan-label">MAX SIZE</span><span class="trade-plan-value">${escHtml(size)}</span></div>
+        <div class="trade-plan-item"><span class="trade-plan-label">TAKE PROFIT</span><span class="trade-plan-value">${escHtml(exit.tp)}</span></div>
+        <div class="trade-plan-item"><span class="trade-plan-label">STOP</span><span class="trade-plan-value">${escHtml(exit.stop)}</span></div>
+      </div>
+      <p class="why-now">${escHtml(whyNow)}</p>
+      <div class="cta-row">
+        ${link ? `<a href="${safeLink}" target="_blank" rel="noopener" class="cta-primary">Open on Polymarket</a>` : ""}
+        <button class="cta-secondary" data-copy-plan="${escHtml(planText)}">Copy plan</button>
+      </div>
+      <details class="trade-details">
+        <summary>Details</summary>
+        <div class="trade-details-inner">
+          <p style="font-weight:600;font-size:0.82rem;margin:0 0 6px;">Why this is a pick</p>
+          <ul style="margin:0 0 8px;padding-left:18px;font-size:0.82rem;color:#374151;">
+            ${computeWhyPick(item).map((b) => `<li>${escHtml(b)}</li>`).join("")}
+          </ul>
+          <p style="font-weight:600;font-size:0.82rem;margin:0 0 4px;">Debug / scoring</p>
+          <pre class="breakdown">${renderBreakdown(item)}</pre>
+          <div class="candidate-grid" style="margin-top:6px;font-size:0.78rem;">
+            <div><span class="label">absMove</span><span class="val">${item.absMove.toFixed(4)}</span></div>
+            <div><span class="label">volatility</span><span class="val">${item.volatility.toFixed(4)}</span></div>
+            <div><span class="label">spreadPct</span><span class="val">${(item.spreadPct * 100).toFixed(1)}%</span></div>
+            <div><span class="label">liquidity</span><span class="val">${Math.round(item.liquidity).toLocaleString("en-US")}</span></div>
+            <div><span class="label">volume24h</span><span class="val">${formatVolume(item.volume24hr)}</span></div>
+            <div><span class="label">timeLeftHours</span><span class="val">${formatHoursLeft(item.hoursLeft)}</span></div>
+            <div><span class="label">tags</span><span class="val">${(item.tagSlugs || []).map((t) => escHtml(t)).join(", ") || "-"}</span></div>
+          </div>
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+/** Render the compact status bar at top of /trade. */
+function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
+  const lastScan = scanStatus.lastScanAt
+    ? scanStatus.lastScanAt.toLocaleString("en-US", { hour12: false })
+    : "not yet";
+  const nextScan = scanStatus.nextScanAt
+    ? scanStatus.nextScanAt.toLocaleString("en-US", { hour12: false })
+    : "—";
+  const modeLabel = relaxedMode ? "relaxed" : "normal";
+  const modeCls = relaxedMode ? "mode-relaxed" : "mode-normal";
+  const eventsScanned = scanStatus.lastEventsFetched || 0;
+  const marketsScanned = scanStatus.lastMarketsFlattened || 0;
+
+  return `
+    <div class="status-bar">
+      <div class="status-item"><span class="status-label">Last scan</span><span class="status-value">${escHtml(lastScan)}</span></div>
+      <div class="status-item"><span class="status-label">Next scan</span><span class="status-value">${escHtml(nextScan)}</span></div>
+      <div class="status-item"><span class="status-label">Universe</span><span class="status-value">${eventsScanned} events / ${marketsScanned} markets</span></div>
+      <div class="status-item"><span class="status-label">Mode</span><span class="status-value ${modeCls}">${modeLabel}</span></div>
+      <div class="status-item"><span class="status-label">Ready</span><span class="status-value" style="font-weight:700;">${candidateCount} candidates</span></div>
+      <a href="/scan" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
+    </div>
+  `;
+}
+
+/** Render the full /trade page body. */
+function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
+  const cards = tradeCandidates.slice(0, 10);
+  const statusBar = renderStatusBar(scanStatus, cards.length, relaxedMode);
+
+  const cardsHtml = cards.length === 0
+    ? '<div class="card" style="text-align:center;padding:40px 20px;"><p style="font-size:1.1rem;color:#6b7280;">No candidates yet. Run a scan or wait for the next scheduled scan.</p><a href="/scan" class="cta-primary" style="margin-top:12px;display:inline-flex;">Run scan now</a></div>'
+    : `<div class="trade-grid">${cards.map((item) => {
+        try { return renderTradeCard(item); }
+        catch (_) { return `<div class="trade-card"><p style="color:#b91c1c;">Render error: ${escHtml((item && item.marketSlug) || "unknown")}</p></div>`; }
+      }).join("")}</div>`;
+
+  return `
+    ${statusBar}
+    <h2 style="margin:20px 0 12px;font-size:1.25rem;">Today's Playbook</h2>
+    ${cardsHtml}
+  `;
+}
+
+/**
+ * Render the /explore page body.
+ * Reuses filters, buckets, candidate lists from /ideas.
+ */
+function renderExplorePage(data) {
+  const {
+    categories, subcategories, tagSlugsAll,
+    filterActive, tradeCandidates, movers, mispricing,
+    buckets, thresholds, closestToThreshold,
+  } = data;
+
+  const hasCategories = categories.length > 0 || subcategories.length > 0;
+  const filterBarHtml = hasCategories
+    ? renderFilterBar(categories, subcategories, tagSlugsAll, filterActive, "/explore")
+    : '<p style="color:#6b7280;font-size:0.85rem;margin-bottom:16px;">Categories not available yet.</p>' +
+      (tagSlugsAll.length > 0 ? renderFilterBar([], [], tagSlugsAll, filterActive, "/explore") : "");
+
+  return `
+    <h1>Explore Markets</h1>
+    ${filterBarHtml}
+    ${buckets ? renderBucketSection("INTRADAY", data.filteredBuckets.INTRADAY, buckets.counts.INTRADAY, buckets.gates.INTRADAY, false) : ""}
+    ${buckets ? renderBucketSection("THIS_WEEK", data.filteredBuckets.THIS_WEEK, buckets.counts.THIS_WEEK, buckets.gates.THIS_WEEK, false) : ""}
+    ${buckets ? renderBucketSection("WATCH", data.filteredBuckets.WATCH.slice(0, 10), buckets.counts.WATCH, buckets.gates.WATCH, true) : ""}
+
+    <details class="section-toggle">
+      <summary>All trade candidates <span class="badge-count">${tradeCandidates.length}</span></summary>
+      <ol class="candidates">
+        ${tradeCandidates.map((item) => {
+          try { return renderCandidate(item); }
+          catch (_) { return `<li class="candidate-card">render error: ${escHtml((item && item.marketSlug) || "unknown")}</li>`; }
+        }).join("")}
+      </ol>
+    </details>
+
+    ${movers.length === 0 && thresholds ? renderWhyNoMovers(thresholds, closestToThreshold) : ""}
+
+    <details class="section-toggle">
+      <summary>Movers <span class="badge-count">${movers.length}</span></summary>
+      <ol class="candidates">
+        ${movers.map((item) => {
+          try { return renderCandidate(item); }
+          catch (_) { return `<li class="candidate-card">render error</li>`; }
+        }).join("")}
+      </ol>
+    </details>
+
+    <details class="section-toggle">
+      <summary>Mispricing <span class="badge-count">${mispricing.length}</span></summary>
+      <ol class="candidates">
+        ${mispricing.map((item) => {
+          try { return renderCandidate(item); }
+          catch (_) { return `<li class="candidate-card">render error</li>`; }
+        }).join("")}
+      </ol>
+    </details>
+  `;
+}
+
+/** Render the /system page body. */
+function renderSystemPage(healthData, metrics) {
+  return `
+    <h1>System</h1>
+    ${renderHealthUi(healthData)}
+    ${renderMetricsUi(metrics)}
+    <div class="card">
+      <h2 style="margin-top:0;">Quick Links</h2>
+      <div class="grid-2">
+        <p><a href="/scan" style="color:#2563eb;font-weight:600;">Run scan</a></p>
+        <p><a href="/snapshots" style="color:#2563eb;font-weight:600;">Snapshots</a></p>
+        <p><a href="/health" style="color:#2563eb;font-weight:600;">Health JSON</a></p>
+        <p><a href="/metrics" style="color:#2563eb;font-weight:600;">Metrics JSON</a></p>
+      </div>
+    </div>
+  `;
+}
+
 module.exports = {
   renderBreakdown,
   computeWhyPick,
@@ -669,5 +1044,10 @@ module.exports = {
   renderMetricsUi,
   renderFilterBar,
   renderBucketSection,
+  renderTradeCard,
+  renderStatusBar,
+  renderTradePage,
+  renderExplorePage,
+  renderSystemPage,
   pageShell,
 };
