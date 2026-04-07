@@ -1105,9 +1105,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
 
       function fmtPct(val, denom) {
         var p = val / denom * 100;
-        var s = p.toFixed(2);
-        // strip trailing zeros but keep at least 2 decimals
-        return s;
+        return p.toFixed(2);
       }
 
       function updateBadge(riskDec) {
