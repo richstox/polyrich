@@ -758,82 +758,117 @@ const TP_MULTIPLIER = 1.10;              // take profit at +10%
 const STOP_MULTIPLIER = 0.92;            // stop loss at -8%
 const PRICE_CEILING = 0.99;
 const PRICE_FLOOR = 0.01;
+const RISK_PCT_DEFAULT = 0.01;         // 1% of bankroll per trade
+const MAX_TRADE_CAP_USD = 50;          // absolute max position cap (matches SIZE_CAP)
+const MIN_ABS_MOVE_FOR_EXEC = 0.003;   // min |absMove| for direction confidence
+const MIN_VOL_FOR_EXEC = 0.002;        // min volatility for direction confidence
 
 /**
- * Infer trade direction from candidate fields.
- * Returns { action, actionCls } where action is BUY YES / BUY NO / WATCH.
+ * Infer trade direction from candidate fields with safety gates.
+ * Returns { action, actionCls, whyWatch, nextStep }.
+ * Gates: tradeability, movement/volatility, direction indicator, pricing integrity.
  */
 function inferDirection(item) {
   const trade = computeTradeability(item);
   if (trade.label === "Excluded" || trade.label === "Watch") {
-    return { action: "WATCH", actionCls: "pill-watch" };
+    let whyWatch, nextStep;
+    if (trade.label === "Excluded") {
+      whyWatch = "Market excluded (expired or filtered)";
+      nextStep = "Market must be active and within time window";
+    } else if (item.hoursLeft !== null && item.hoursLeft > 240) {
+      whyWatch = "Too far from expiry (>10 days)";
+      nextStep = "Wait for market to approach expiry window";
+    } else if (item.spreadPct > 0.15) {
+      whyWatch = `Spread too wide (${(item.spreadPct * 100).toFixed(1)}%)`;
+      nextStep = "Need spread \u2264 15%";
+    } else if (item.liquidity < 500) {
+      whyWatch = `Low liquidity ($${Math.round(item.liquidity)})`;
+      nextStep = "Need liquidity \u2265 $500";
+    } else if (item.volume24hr < 50) {
+      whyWatch = `Low 24h volume (${formatVolume(item.volume24hr)})`;
+      nextStep = "Need higher trading activity";
+    } else if (item.hoursLeft !== null && item.hoursLeft < 2) {
+      whyWatch = "Too close to expiry (< 2h)";
+      nextStep = "Avoid entries near resolution";
+    } else {
+      whyWatch = "Market conditions insufficient";
+      nextStep = "Improve liquidity, volume, or spread";
+    }
+    return { action: "WATCH", actionCls: "pill-watch", whyWatch, nextStep };
   }
 
-  // If mispricing is flagged or delta1 is clearly directional, infer side
+  // Gate: movement / volatility (real action required)
+  const hasMovement = item.absMove >= MIN_ABS_MOVE_FOR_EXEC || item.volatility >= MIN_VOL_FOR_EXEC;
+
+  // Determine raw direction from existing fields (no new logic)
+  let rawAction = null;
   if (item.mispricing) {
-    // When mispricing is detected and YES is cheap (below mid), lean BUY YES
-    if (item.latestYes < PRICE_MIDPOINT) {
-      return { action: "BUY YES", actionCls: "pill-buy-yes" };
-    }
-    return { action: "BUY NO", actionCls: "pill-buy-no" };
+    rawAction = item.latestYes < PRICE_MIDPOINT ? "BUY YES" : "BUY NO";
+  } else if (item.delta1 < -DIRECTION_DELTA_THRESHOLD && item.latestYes < PRICE_MIDPOINT) {
+    rawAction = "BUY YES";
+  } else if (item.delta1 > DIRECTION_DELTA_THRESHOLD && item.latestYes > PRICE_MIDPOINT) {
+    rawAction = "BUY NO";
+  } else if (item.momentum || item.breakout) {
+    if (item.delta1 > 0) rawAction = "BUY YES";
+    else if (item.delta1 < 0) rawAction = "BUY NO";
   }
 
-  if (item.delta1 < -DIRECTION_DELTA_THRESHOLD && item.latestYes < PRICE_MIDPOINT) {
-    // Price dropped, YES side looks underpriced
-    return { action: "BUY YES", actionCls: "pill-buy-yes" };
+  if (!rawAction) {
+    return { action: "WATCH", actionCls: "pill-watch",
+      whyWatch: "Direction unclear \u2014 no strong signal",
+      nextStep: "Need clearer directional indicator (delta, mispricing, or momentum)" };
   }
-  if (item.delta1 > DIRECTION_DELTA_THRESHOLD && item.latestYes > PRICE_MIDPOINT) {
-    // Price rose and YES is high — consider NO side
-    return { action: "BUY NO", actionCls: "pill-buy-no" };
+
+  if (!hasMovement) {
+    return { action: "WATCH", actionCls: "pill-watch",
+      whyWatch: "Insufficient price movement or volatility",
+      nextStep: "Need absMove \u2265 0.3% or volatility \u2265 0.2%" };
   }
-  if (item.momentum || item.breakout) {
-    // General momentum — lean with direction of move
-    if (item.delta1 > 0) {
-      return { action: "BUY YES", actionCls: "pill-buy-yes" };
-    }
-    if (item.delta1 < 0) {
-      return { action: "BUY NO", actionCls: "pill-buy-no" };
-    }
+
+  // Gate: BUY NO requires real NO-side orderbook pricing (not synthetic 1\u2212yesPrice)
+  if (rawAction === "BUY NO") {
+    return { action: "WATCH", actionCls: "pill-watch",
+      whyWatch: "No reliable NO-side orderbook pricing",
+      nextStep: "Need real NO-side bestAsk (synthetic 1\u2212yesPrice not executable)" };
   }
-  return { action: "WATCH", actionCls: "pill-watch" };
+
+  // Gate: BUY YES requires executable pricing (bestAskNum from orderbook)
+  if (rawAction === "BUY YES" && !(item.bestAskNum > 0)) {
+    return { action: "WATCH", actionCls: "pill-watch",
+      whyWatch: "No executable YES-side pricing (bestAsk missing)",
+      nextStep: "Need reliable orderbook bestAsk price" };
+  }
+
+  return { action: rawAction, actionCls: "pill-buy-yes", whyWatch: "", nextStep: "" };
 }
 
-/** Infer entry limit price. */
+/** Infer entry limit price (numeric). Returns null if not executable. */
 function inferEntry(item, direction) {
   if (direction === "BUY YES") {
-    if (item.bestAskNum > 0) return `$${item.bestAskNum.toFixed(2)}`;
-    if (item.latestYes > 0) return `$${item.latestYes.toFixed(2)}`;
-    return "TBD";
+    // Only real orderbook bestAsk — no latestYes fallback
+    if (item.bestAskNum > 0) return item.bestAskNum;
+    return null;
   }
-  if (direction === "BUY NO") {
-    const noPrice = 1 - item.latestYes;
-    if (noPrice > 0) return `$${noPrice.toFixed(2)}`;
-    return "TBD";
-  }
-  return "TBD";
+  // BUY NO would need real NO-side bestAsk — not available in current data
+  return null;
 }
 
-/** Infer conservative max size from liquidity/volume/spread. */
+/** Infer conservative max size (numeric $) from liquidity/volume. Returns null if not computable. */
 function inferSize(item) {
-  if (item.liquidity < 500 || item.volume24hr < 50) return "TBD";
+  if (item.liquidity < 500 || item.volume24hr < 50) return null;
   const fromLiq = item.liquidity * SIZE_LIQUIDITY_PCT;
   const fromVol = item.volume24hr * SIZE_VOLUME_PCT;
-  const raw = Math.min(fromLiq, fromVol, SIZE_CAP);
-  if (raw < 1) return "TBD";
-  return `$${Math.floor(raw)}`;
+  const raw = Math.min(fromLiq, fromVol, MAX_TRADE_CAP_USD);
+  if (raw < 1) return null;
+  return Math.floor(raw);
 }
 
-/** Infer exit plan (take profit + stop). */
-function inferExit(item, direction) {
-  if (direction === "WATCH") return { tp: "TBD", stop: "TBD" };
-  const base = direction === "BUY YES" ? item.latestYes : (1 - item.latestYes);
-  if (base <= 0 || base >= 1) return { tp: "TBD", stop: "TBD" };
-  const tp = Math.min(base * TP_MULTIPLIER, PRICE_CEILING);
-  const stop = Math.max(base * STOP_MULTIPLIER, PRICE_FLOOR);
-  return {
-    tp: `$${tp.toFixed(2)}`,
-    stop: `$${stop.toFixed(2)}`,
-  };
+/** Infer exit plan (take profit + stop-loss) from entry price. Returns { tp, stop } as numbers or null. */
+function inferExit(entryNum) {
+  if (entryNum === null || entryNum <= 0 || entryNum >= PRICE_CEILING) return { tp: null, stop: null };
+  const tp = Math.min(entryNum * TP_MULTIPLIER, PRICE_CEILING);
+  const stop = Math.max(entryNum * STOP_MULTIPLIER, PRICE_FLOOR);
+  return { tp, stop };
 }
 
 /** One-line "Why now" summary. */
@@ -851,10 +886,7 @@ function whyNowSummary(item) {
 
 /** Render a single trade card for the /trade page. */
 function renderTradeCard(item) {
-  const { action, actionCls } = inferDirection(item);
-  const entry = inferEntry(item, action);
-  const size = inferSize(item);
-  const exit = inferExit(item, action);
+  let { action, actionCls, whyWatch, nextStep } = inferDirection(item);
   const whyNow = whyNowSummary(item);
   const link = polymarketUrl(item);
   const safeLink = link ? escHtml(link) : "";
@@ -862,52 +894,126 @@ function renderTradeCard(item) {
     ? `<a href="${safeLink}" target="_blank" rel="noopener" class="trade-card-title">${escHtml(item.question)}</a>`
     : `<span class="trade-card-title">${escHtml(item.question)}</span>`;
 
-  // Build copy-plan text (use \n for newlines in the attribute)
-  const planText = [
-    item.question,
-    action,
-    `Entry: ${entry}`,
-    `Size: ${size}`,
-    `TP: ${exit.tp}`,
-    `Stop: ${exit.stop}`,
-    whyNow,
+  let entryNum = null, sizeNum = null, tpNum = null, stopNum = null;
+
+  if (action !== "WATCH") {
+    entryNum = inferEntry(item, action);
+    if (entryNum !== null) {
+      sizeNum = inferSize(item);
+      const exits = inferExit(entryNum);
+      tpNum = exits.tp;
+      stopNum = exits.stop;
+    }
+    // EXECUTE completeness rule: all must be numeric
+    if (entryNum === null || sizeNum === null || tpNum === null || stopNum === null) {
+      if (entryNum === null) {
+        whyWatch = "No executable pricing available";
+        nextStep = "Need reliable orderbook bestAsk price";
+      } else if (sizeNum === null) {
+        whyWatch = "Cannot determine safe position size";
+        nextStep = "Need liquidity \u2265 $500 and 24h volume \u2265 $50";
+      } else {
+        whyWatch = "Cannot determine exit levels";
+        nextStep = "Entry price at extreme \u2014 no room for TP/SL";
+      }
+      action = "WATCH";
+      actionCls = "pill-watch";
+    }
+  }
+
+  const isExecute = action !== "WATCH";
+
+  // Debug section (shared between EXECUTE and WATCH)
+  const debugHtml = `
+    <details class="trade-details">
+      <summary>Details</summary>
+      <div class="trade-details-inner">
+        <p style="font-weight:600;font-size:0.82rem;margin:0 0 6px;">Why this is a pick</p>
+        <ul style="margin:0 0 8px;padding-left:18px;font-size:0.82rem;color:#374151;">
+          ${computeWhyPick(item).map((b) => `<li>${escHtml(b)}</li>`).join("")}
+        </ul>
+        <p style="font-weight:600;font-size:0.82rem;margin:0 0 4px;">Debug / scoring</p>
+        <pre class="breakdown">${renderBreakdown(item)}</pre>
+        <div class="candidate-grid" style="margin-top:6px;font-size:0.78rem;">
+          <div><span class="label">absMove</span><span class="val">${item.absMove.toFixed(4)}</span></div>
+          <div><span class="label">volatility</span><span class="val">${item.volatility.toFixed(4)}</span></div>
+          <div><span class="label">spreadPct</span><span class="val">${(item.spreadPct * 100).toFixed(1)}%</span></div>
+          <div><span class="label">liquidity</span><span class="val">${Math.round(item.liquidity).toLocaleString("en-US")}</span></div>
+          <div><span class="label">volume24h</span><span class="val">${formatVolume(item.volume24hr)}</span></div>
+          <div><span class="label">timeLeftHours</span><span class="val">${formatHoursLeft(item.hoursLeft)}</span></div>
+          <div><span class="label">bestBid</span><span class="val">${item.bestBidNum.toFixed(3)}</span></div>
+          <div><span class="label">bestAsk</span><span class="val">${item.bestAskNum.toFixed(3)}</span></div>
+          <div><span class="label">tags</span><span class="val">${(item.tagSlugs || []).map((t) => escHtml(t)).join(", ") || "-"}</span></div>
+        </div>
+      </div>
+    </details>
+  `;
+
+  if (isExecute) {
+    // --- EXECUTE card ---
+    const pnlTpPct = (tpNum - entryNum) / entryNum * 100;
+    const pnlStopPct = (stopNum - entryNum) / entryNum * 100;
+    const pnlTpUsd = sizeNum * (tpNum - entryNum) / entryNum;
+    const pnlStopUsd = sizeNum * (stopNum - entryNum) / entryNum;
+
+    const ticketText = [
+      `ACTION: ${action}`,
+      `MARKET: ${item.question}`,
+      `ENTRY LIMIT: $${entryNum.toFixed(2)}`,
+      `MAX SIZE: $${sizeNum}`,
+      `TAKE PROFIT: $${tpNum.toFixed(2)}`,
+      `STOP-LOSS: $${stopNum.toFixed(2)}`,
+      `EST PnL @ TP: +$${pnlTpUsd.toFixed(2)} (+${pnlTpPct.toFixed(1)}% of stake)`,
+      `EST PnL @ SL: -$${Math.abs(pnlStopUsd).toFixed(2)} (${pnlStopPct.toFixed(1)}% of stake)`,
+      `WHY NOW: ${whyNow}`,
+    ].join("\n");
+
+    return `
+      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(item.question)}" data-action="${escHtml(action)}">
+        <div class="trade-card-header">${questionHtml}</div>
+        <div class="action-pill ${actionCls}">\u26A1 EXECUTE \u00B7 ${escHtml(action)}</div>
+        <div class="trade-plan-grid">
+          <div class="trade-plan-item"><span class="trade-plan-label">ENTRY LIMIT</span><span class="trade-plan-value">$${entryNum.toFixed(2)}</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">TAKE PROFIT</span><span class="trade-plan-value">$${tpNum.toFixed(2)}</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">STOP-LOSS</span><span class="trade-plan-value">$${stopNum.toFixed(2)}</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">PnL @ TP (approx)</span><span class="trade-plan-value trade-pnl-tp" style="color:#166534;">+$${pnlTpUsd.toFixed(2)} (+${pnlTpPct.toFixed(1)}% of stake)</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">PnL @ SL (approx)</span><span class="trade-plan-value trade-pnl-stop" style="color:#dc2626;">-$${Math.abs(pnlStopUsd).toFixed(2)} (${pnlStopPct.toFixed(1)}% of stake)</span></div>
+        </div>
+        <p class="bankroll-note" style="font-size:0.75rem;color:#6b7280;margin:0 0 8px;">\u2139\uFE0F Set bankroll to get % sizing</p>
+        <p class="why-now">WHY NOW: ${escHtml(whyNow)}</p>
+        <div class="cta-row">
+          ${link ? `<a href="${safeLink}" target="_blank" rel="noopener" class="cta-primary">Open on Polymarket</a>` : ""}
+          <button class="cta-secondary copy-ticket" data-copy-plan="${escHtml(ticketText)}">Copy ticket</button>
+        </div>
+        ${debugHtml}
+      </div>
+    `;
+  }
+
+  // --- WATCH card ---
+  const watchReason = whyWatch || "Missing executable trade parameters";
+  const watchNext = nextStep || "Entry, size, TP, or stop-loss could not be determined";
+  const watchPlanText = [
+    "ACTION: WATCH",
+    `MARKET: ${item.question}`,
+    `WHY WATCH: ${watchReason}`,
+    `NEXT: ${watchNext}`,
   ].join("\n");
 
   return `
     <div class="trade-card">
       <div class="trade-card-header">${questionHtml}</div>
-      <div class="action-pill ${actionCls}">${escHtml(action)}</div>
-      <div class="trade-plan-grid">
-        <div class="trade-plan-item"><span class="trade-plan-label">ENTRY LIMIT</span><span class="trade-plan-value">${escHtml(entry)}</span></div>
-        <div class="trade-plan-item"><span class="trade-plan-label">MAX SIZE</span><span class="trade-plan-value">${escHtml(size)}</span></div>
-        <div class="trade-plan-item"><span class="trade-plan-label">TAKE PROFIT</span><span class="trade-plan-value">${escHtml(exit.tp)}</span></div>
-        <div class="trade-plan-item"><span class="trade-plan-label">STOP</span><span class="trade-plan-value">${escHtml(exit.stop)}</span></div>
+      <div class="action-pill pill-watch">\uD83D\uDC41 WATCH</div>
+      <div style="padding:8px 0;">
+        <p style="margin:0 0 6px;font-size:0.88rem;"><strong>WHY WATCH:</strong> ${escHtml(watchReason)}</p>
+        <p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> ${escHtml(watchNext)}</p>
       </div>
-      <p class="why-now">${escHtml(whyNow)}</p>
       <div class="cta-row">
         ${link ? `<a href="${safeLink}" target="_blank" rel="noopener" class="cta-primary">Open on Polymarket</a>` : ""}
-        <button class="cta-secondary" data-copy-plan="${escHtml(planText)}">Copy plan</button>
+        <button class="cta-secondary" data-copy-plan="${escHtml(watchPlanText)}">Copy plan</button>
       </div>
-      <details class="trade-details">
-        <summary>Details</summary>
-        <div class="trade-details-inner">
-          <p style="font-weight:600;font-size:0.82rem;margin:0 0 6px;">Why this is a pick</p>
-          <ul style="margin:0 0 8px;padding-left:18px;font-size:0.82rem;color:#374151;">
-            ${computeWhyPick(item).map((b) => `<li>${escHtml(b)}</li>`).join("")}
-          </ul>
-          <p style="font-weight:600;font-size:0.82rem;margin:0 0 4px;">Debug / scoring</p>
-          <pre class="breakdown">${renderBreakdown(item)}</pre>
-          <div class="candidate-grid" style="margin-top:6px;font-size:0.78rem;">
-            <div><span class="label">absMove</span><span class="val">${item.absMove.toFixed(4)}</span></div>
-            <div><span class="label">volatility</span><span class="val">${item.volatility.toFixed(4)}</span></div>
-            <div><span class="label">spreadPct</span><span class="val">${(item.spreadPct * 100).toFixed(1)}%</span></div>
-            <div><span class="label">liquidity</span><span class="val">${Math.round(item.liquidity).toLocaleString("en-US")}</span></div>
-            <div><span class="label">volume24h</span><span class="val">${formatVolume(item.volume24hr)}</span></div>
-            <div><span class="label">timeLeftHours</span><span class="val">${formatHoursLeft(item.hoursLeft)}</span></div>
-            <div><span class="label">tags</span><span class="val">${(item.tagSlugs || []).map((t) => escHtml(t)).join(", ") || "-"}</span></div>
-          </div>
-        </div>
-      </details>
+      ${debugHtml}
     </div>
   `;
 }
@@ -932,6 +1038,11 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
       <div class="status-item"><span class="status-label">Universe</span><span class="status-value">${eventsScanned} events / ${marketsScanned} markets</span></div>
       <div class="status-item"><span class="status-label">Mode</span><span class="status-value ${modeCls}">${modeLabel}</span></div>
       <div class="status-item"><span class="status-label">Ready</span><span class="status-value" style="font-weight:700;">${candidateCount} candidates</span></div>
+      <div class="status-item">
+        <label class="status-label" for="bankroll-input">Bankroll (USD) <small style="text-transform:none;letter-spacing:0;">(optional)</small></label>
+        <input id="bankroll-input" type="number" min="0" step="1" placeholder="e.g. 1000"
+          style="width:100px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
+      </div>
       <a href="/scan" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
   `;
@@ -953,6 +1064,89 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
     ${statusBar}
     <h2 style="margin:20px 0 12px;font-size:1.25rem;">Today's Playbook</h2>
     ${cardsHtml}
+    <script>
+    (function() {
+      var RISK_PCT = ${RISK_PCT_DEFAULT};
+      var MAX_CAP = ${MAX_TRADE_CAP_USD};
+      var KEY = 'polyrich_bankroll_usd';
+      var input = document.getElementById('bankroll-input');
+      if (!input) return;
+
+      var saved = localStorage.getItem(KEY);
+      if (saved) input.value = saved;
+
+      function updateCards() {
+        var bankroll = parseFloat(input.value);
+        var hasBankroll = !isNaN(bankroll) && bankroll > 0;
+        if (hasBankroll) localStorage.setItem(KEY, String(bankroll));
+        else localStorage.removeItem(KEY);
+
+        var cards = document.querySelectorAll('[data-execute="1"]');
+        for (var i = 0; i < cards.length; i++) {
+          var card = cards[i];
+          var hMax = parseFloat(card.getAttribute('data-heuristic-max'));
+          var entry = parseFloat(card.getAttribute('data-entry-num'));
+          var tp = parseFloat(card.getAttribute('data-tp-num'));
+          var stop = parseFloat(card.getAttribute('data-stop-num'));
+          var market = card.getAttribute('data-market') || '';
+          var act = card.getAttribute('data-action') || '';
+          if (isNaN(hMax) || isNaN(entry) || entry <= 0) continue;
+
+          var maxSize, sizeNote;
+          if (hasBankroll) {
+            var riskBudget = bankroll * RISK_PCT;
+            maxSize = Math.floor(Math.min(MAX_CAP, riskBudget, hMax));
+            var pct = (maxSize / bankroll * 100).toFixed(1);
+            sizeNote = '(' + pct + '% of bankroll)';
+          } else {
+            maxSize = hMax;
+            sizeNote = '(bankroll not set)';
+          }
+
+          var sizeEl = card.querySelector('.trade-size');
+          if (sizeEl) sizeEl.innerHTML = '$' + maxSize + ' <span class="size-note">' + sizeNote + '</span>';
+
+          if (!isNaN(tp) && !isNaN(stop)) {
+            var pTpU = maxSize * (tp - entry) / entry;
+            var pTpP = (tp - entry) / entry * 100;
+            var pSlU = maxSize * (stop - entry) / entry;
+            var pSlP = (stop - entry) / entry * 100;
+            var tpEl = card.querySelector('.trade-pnl-tp');
+            if (tpEl) tpEl.textContent = '+$' + pTpU.toFixed(2) + ' (+' + pTpP.toFixed(1) + '% of stake)';
+            var slEl = card.querySelector('.trade-pnl-stop');
+            if (slEl) slEl.textContent = '-$' + Math.abs(pSlU).toFixed(2) + ' (' + pSlP.toFixed(1) + '% of stake)';
+          }
+
+          var copyBtn = card.querySelector('.copy-ticket');
+          if (copyBtn) {
+            var lines = [
+              'ACTION: ' + act,
+              'MARKET: ' + market,
+              'ENTRY LIMIT: $' + entry.toFixed(2),
+              'MAX SIZE: $' + maxSize,
+              'TAKE PROFIT: $' + tp.toFixed(2),
+              'STOP-LOSS: $' + stop.toFixed(2)
+            ];
+            if (!isNaN(tp) && !isNaN(stop)) {
+              var ptu = maxSize * (tp - entry) / entry;
+              var ptp = (tp - entry) / entry * 100;
+              var psu = maxSize * (stop - entry) / entry;
+              var psp = (stop - entry) / entry * 100;
+              lines.push('EST PnL @ TP: +$' + ptu.toFixed(2) + ' (+' + ptp.toFixed(1) + '% of stake)');
+              lines.push('EST PnL @ SL: -$' + Math.abs(psu).toFixed(2) + ' (' + psp.toFixed(1) + '% of stake)');
+            }
+            copyBtn.setAttribute('data-copy-plan', lines.join('\\n'));
+          }
+
+          var noteEl = card.querySelector('.bankroll-note');
+          if (noteEl) noteEl.style.display = hasBankroll ? 'none' : 'block';
+        }
+      }
+
+      input.addEventListener('input', updateCards);
+      updateCards();
+    })();
+    </script>
   `;
 }
 
