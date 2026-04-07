@@ -1402,9 +1402,18 @@ function renderExplorePage(data) {
     buckets, thresholds, closestToThreshold,
   } = data;
 
-  // Collect signal tags present on items for the signal tag filter
+  // Collect signal tags present on items for the signal tag filter.
+  // Use item.reasonCodes (richest item-level tag array, includes near-expiry etc.)
+  // with fallback to [item.signalType] when reasonCodes is absent.
   const allExploreItems = [...tradeCandidates, ...movers, ...mispricing];
-  const signalTagsPresent = [...new Set(allExploreItems.map((x) => x.signalType).filter(Boolean))].sort();
+  const signalTagsPresent = [...new Set(
+    allExploreItems.flatMap((x) => {
+      const codes = Array.isArray(x.reasonCodes) && x.reasonCodes.length > 0
+        ? x.reasonCodes
+        : (x.signalType ? [x.signalType] : []);
+      return codes.map((t) => String(t).trim().toLowerCase()).filter(Boolean);
+    })
+  )].sort();
 
   const hasCategories = categories.length > 0 || subcategories.length > 0;
 

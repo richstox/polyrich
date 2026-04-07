@@ -326,7 +326,12 @@ const server = http.createServer(async (req, res) => {
         if (filterCat && (item.category || "").toLowerCase() !== filterCat) return false;
         if (filterSub && (item.subcategory || "").toLowerCase() !== filterSub) return false;
         if (filterTag && !(item.tagSlugs || []).some((t) => t.toLowerCase() === filterTag)) return false;
-        if (filterSignalTagRaw && (item.signalType || "") !== filterSignalTagRaw) return false;
+        if (filterSignalTagRaw) {
+          const codes = Array.isArray(item.reasonCodes) && item.reasonCodes.length > 0
+            ? item.reasonCodes
+            : (item.signalType ? [item.signalType] : []);
+          if (!codes.some((t) => String(t).trim().toLowerCase() === filterSignalTagRaw)) return false;
+        }
         if (filterTradeabilityRaw) {
           const isExec = isItemExecutable(item);
           if (filterTradeabilityRaw === "EXECUTE" && !isExec) return false;
