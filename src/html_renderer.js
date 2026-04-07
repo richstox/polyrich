@@ -1162,16 +1162,17 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var act = card.getAttribute('data-action') || '';
           if (isNaN(hMax) || isNaN(entry) || entry <= 0) continue;
 
-          var maxSize;
+          var maxSizeRaw;
           if (hasBankroll) {
             var riskBudget = bankroll * riskDec;
-            maxSize = Math.floor(Math.min(capUsd, riskBudget, hMax));
+            maxSizeRaw = Math.min(capUsd, riskBudget, hMax);
           } else {
-            maxSize = Math.floor(Math.min(capUsd, hMax));
+            maxSizeRaw = Math.min(capUsd, hMax);
           }
+          var maxSizeDisplay = Math.round(maxSizeRaw * 100) / 100;
 
-          // Min $5 gating — downgrade to WATCH per-card
-          if (maxSize < MIN_ORDER) {
+          // Min $5 gating — downgrade to WATCH per-card (uses raw, not rounded)
+          if (maxSizeRaw < MIN_ORDER) {
             var pillEl = card.querySelector('.action-pill');
             if (pillEl) {
               pillEl.className = 'action-pill pill-watch';
@@ -1190,14 +1191,14 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
               else card.appendChild(whyBlock);
             }
             whyBlock.style.display = 'block';
-            whyBlock.innerHTML = '<p style="margin:0 0 6px;font-size:0.88rem;"><strong>WHY WATCH:</strong> Max size $' + maxSize + ' is below $' + MIN_ORDER + ' minimum limit order</p>' +
+            whyBlock.innerHTML = '<p style="margin:0 0 6px;font-size:0.88rem;"><strong>WHY WATCH:</strong> Max size $' + maxSizeDisplay.toFixed(2) + ' is below $' + MIN_ORDER + ' minimum limit order</p>' +
               '<p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> Increase risk% or cap, or increase bankroll</p>';
             var noteEl = card.querySelector('.bankroll-note');
             if (noteEl) noteEl.style.display = 'none';
             // Clear copy ticket to watch plan
             var copyBtn = card.querySelector('.copy-ticket');
             if (copyBtn) {
-              copyBtn.setAttribute('data-copy-plan', 'ACTION: WATCH\\nMARKET: ' + market + '\\nWHY WATCH: Max size $' + maxSize + ' is below $' + MIN_ORDER + ' minimum limit order\\nNEXT: Increase risk% or cap, or increase bankroll');
+              copyBtn.setAttribute('data-copy-plan', 'ACTION: WATCH\\nMARKET: ' + market + '\\nWHY WATCH: Max size $' + maxSizeDisplay.toFixed(2) + ' is below $' + MIN_ORDER + ' minimum limit order\\nNEXT: Increase risk% or cap, or increase bankroll');
               copyBtn.textContent = 'Copy plan';
             }
             continue;
@@ -1218,19 +1219,19 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
 
           var sizeNote;
           if (hasBankroll) {
-            var pctStr = fmtPct(maxSize, bankroll);
+            var pctStr = fmtPct(maxSizeRaw, bankroll);
             sizeNote = '(' + pctStr + '% of bankroll)';
           } else {
             sizeNote = '(bankroll not set)';
           }
 
           var sizeEl = card.querySelector('.trade-size');
-          if (sizeEl) sizeEl.innerHTML = '$' + maxSize + ' <span class="size-note">' + sizeNote + '</span>';
+          if (sizeEl) sizeEl.innerHTML = '$' + maxSizeDisplay.toFixed(2) + ' <span class="size-note">' + sizeNote + '</span>';
 
           if (!isNaN(tp) && !isNaN(stop)) {
-            var pTpU = maxSize * (tp - entry) / entry;
+            var pTpU = maxSizeDisplay * (tp - entry) / entry;
             var pTpP = (tp - entry) / entry * 100;
-            var pSlU = maxSize * (stop - entry) / entry;
+            var pSlU = maxSizeDisplay * (stop - entry) / entry;
             var pSlP = (stop - entry) / entry * 100;
             var tpEl = card.querySelector('.trade-pnl-tp');
             if (tpEl) tpEl.textContent = '+$' + pTpU.toFixed(2) + ' (+' + pTpP.toFixed(1) + '% of stake)';
@@ -1244,14 +1245,14 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
               'ACTION: ' + act,
               'MARKET: ' + market,
               'ENTRY LIMIT: $' + entry.toFixed(2),
-              'MAX SIZE: $' + maxSize,
+              'MAX SIZE: $' + maxSizeDisplay.toFixed(2),
               'TAKE PROFIT: $' + tp.toFixed(2),
               'STOP-LOSS: $' + stop.toFixed(2)
             ];
             if (!isNaN(tp) && !isNaN(stop)) {
-              var ptu = maxSize * (tp - entry) / entry;
+              var ptu = maxSizeDisplay * (tp - entry) / entry;
               var ptp = (tp - entry) / entry * 100;
-              var psu = maxSize * (stop - entry) / entry;
+              var psu = maxSizeDisplay * (stop - entry) / entry;
               var psp = (stop - entry) / entry * 100;
               lines.push('EST PnL @ TP: +$' + ptu.toFixed(2) + ' (+' + ptp.toFixed(1) + '% of stake)');
               lines.push('EST PnL @ SL: -$' + Math.abs(psu).toFixed(2) + ' (' + psp.toFixed(1) + '% of stake)');
