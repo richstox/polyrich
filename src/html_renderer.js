@@ -596,6 +596,25 @@ function sharedStyles() {
     cursor: pointer; font-size: 0.78rem; color: #6b7280; font-weight: 600;
   }
   .trade-details-inner { padding-top: 8px; }
+
+  /* Ticket card styles (mobile-first) */
+  .ticket-list { display: flex; flex-direction: column; gap: 10px; }
+  .ticket-card {
+    background: #fff; border-radius: 10px; padding: 14px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  .ticket-meta-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 4px 12px; font-size: 0.82rem;
+  }
+  .ticket-meta-label { display: block; color: #6b7280; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .ticket-meta-value { display: block; font-weight: 600; color: #1d1d1f; }
+  .type-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 0.72rem; font-weight: 700;
+  }
+  .type-badge-exec { background: #dcfce7; color: #166534; }
+  .type-badge-watch { background: #f3f4f6; color: #6b7280; }
 </style>`;
 }
 
@@ -999,18 +1018,6 @@ function renderTradeCard(item) {
     const pnlTpUsd = sizeNum * (tpNum - entryNum) / entryNum;
     const pnlStopUsd = sizeNum * (stopNum - entryNum) / entryNum;
 
-    const ticketText = [
-      `ACTION: ${action}`,
-      `MARKET: ${item.question}`,
-      `ENTRY LIMIT: $${entryNum.toFixed(2)}`,
-      `MAX SIZE: $${sizeNum}`,
-      `TAKE PROFIT: $${tpNum.toFixed(2)}`,
-      `STOP-LOSS: $${stopNum.toFixed(2)}`,
-      `EST PnL @ TP: +$${pnlTpUsd.toFixed(2)} (+${pnlTpPct.toFixed(1)}% of stake)`,
-      `EST PnL @ SL: -$${Math.abs(pnlStopUsd).toFixed(2)} (${pnlStopPct.toFixed(1)}% of stake)`,
-      `WHY NOW: ${whyNow}`,
-    ].join("\n");
-
     const savePayload = JSON.stringify({
       scanId: item.scanId || null,
       source: "TRADE_PAGE",
@@ -1052,8 +1059,6 @@ function renderTradeCard(item) {
         <p class="bankroll-note" style="font-size:0.75rem;color:#6b7280;margin:0 0 8px;">\u2139\uFE0F Set bankroll to get % sizing</p>
         <p class="why-now">WHY NOW: ${escHtml(whyNow)}</p>
         <div class="cta-row">
-          ${link ? `<a href="${safeLink}" target="_blank" rel="noopener" class="cta-primary">Open on Polymarket</a>` : ""}
-          <button class="cta-secondary copy-ticket" data-copy-plan="${escHtml(ticketText)}">Copy ticket</button>
           <button class="cta-secondary save-ticket-btn" data-save-ticket="${escHtml(savePayload)}">Save ticket</button>
         </div>
         ${debugHtml}
@@ -1064,12 +1069,6 @@ function renderTradeCard(item) {
   // --- WATCH card ---
   const watchReason = whyWatch || "Missing executable trade parameters";
   const watchNext = nextStep || "Entry, size, TP, or stop-loss could not be determined";
-  const watchPlanText = [
-    "ACTION: WATCH",
-    `MARKET: ${item.question}`,
-    `WHY WATCH: ${watchReason}`,
-    `NEXT: ${watchNext}`,
-  ].join("\n");
 
   const watchSavePayload = JSON.stringify({
     scanId: item.scanId || null,
@@ -1099,8 +1098,6 @@ function renderTradeCard(item) {
         <p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> ${escHtml(watchNext)}</p>
       </div>
       <div class="cta-row">
-        ${link ? `<a href="${safeLink}" target="_blank" rel="noopener" class="cta-primary">Open on Polymarket</a>` : ""}
-        <button class="cta-secondary" data-copy-plan="${escHtml(watchPlanText)}">Copy plan</button>
         <button class="cta-secondary save-ticket-btn" data-save-ticket="${escHtml(watchSavePayload)}">Save watch</button>
       </div>
       ${debugHtml}
@@ -1151,9 +1148,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
         <input id="max-cap-input" type="number" min="1" step="1" placeholder="50"
           style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
       </div>
-      <div class="status-item" style="align-self:center;">
-        <span id="deviation-msg" style="font-size:0.75rem;font-weight:600;color:#166534;">Safer than default.</span>
-      </div>
+
       <a href="/scan" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
     <div id="limit-order-warning" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#991b1b;">
@@ -1245,7 +1240,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       var capInput = document.getElementById('max-cap-input');
       var profileSelect = document.getElementById('risk-profile-select');
       var badge = document.getElementById('risk-badge');
-      var devMsg = document.getElementById('deviation-msg');
       var limitWarn = document.getElementById('limit-order-warning');
       var setCap5Btn = document.getElementById('set-cap-5-btn');
       if (!brInput || !riskInput || !capInput || !profileSelect) return;
@@ -1281,19 +1275,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
         } else {
           badge.textContent = 'Very aggressive \\u2014 high risk';
           badge.style.background = '#fee2e2'; badge.style.color = '#991b1b';
-        }
-      }
-
-      function updateDeviation(riskDec, capUsd) {
-        if (!devMsg) return;
-        if (riskDec > 0.01 || capUsd > 50) {
-          devMsg.textContent = 'You are above Polyrich defaults.';
-          devMsg.style.color = '#b45309';
-        } else if (capUsd < 5) {
-          devMsg.textContent = '';
-        } else {
-          devMsg.textContent = 'Safer than default.';
-          devMsg.style.color = '#166534';
         }
       }
 
@@ -1349,7 +1330,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
         localStorage.setItem(KEY_PROFILE, profileSelect.value);
 
         updateBadge(riskDec);
-        updateDeviation(riskDec, capUsd);
         updateLimitWarning(capUsd);
 
         var cards = document.querySelectorAll('[data-execute="1"]');
@@ -1396,12 +1376,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
               '<p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> Increase risk% or cap, or increase bankroll</p>';
             var noteEl = card.querySelector('.bankroll-note');
             if (noteEl) noteEl.style.display = 'none';
-            // Clear copy ticket to watch plan
-            var copyBtn = card.querySelector('.copy-ticket');
-            if (copyBtn) {
-              copyBtn.setAttribute('data-copy-plan', 'ACTION: WATCH\\nMARKET: ' + market + '\\nWHY WATCH: Max size $' + maxSizeDisplay.toFixed(2) + ' is below $' + MIN_ORDER + ' minimum limit order\\nNEXT: Increase risk% or cap, or increase bankroll');
-              copyBtn.textContent = 'Copy plan';
-            }
             // Update save-ticket to WATCH snapshot with context fields
             var saveBtn0 = card.querySelector('.save-ticket-btn');
             if (saveBtn0) {
@@ -1436,8 +1410,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           if (planGrid3) planGrid3.style.display = '';
           var whyBlock2 = card.querySelector('.min-order-watch');
           if (whyBlock2) whyBlock2.style.display = 'none';
-          var copyBtn2 = card.querySelector('.copy-ticket');
-          if (copyBtn2) copyBtn2.textContent = 'Copy ticket';
 
           var sizeNote;
           if (hasBankroll) {
@@ -1459,27 +1431,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             if (tpEl) tpEl.textContent = '+$' + pTpU.toFixed(2) + ' (+' + pTpP.toFixed(1) + '% of stake)';
             var slEl = card.querySelector('.trade-pnl-stop');
             if (slEl) slEl.textContent = '-$' + Math.abs(pSlU).toFixed(2) + ' (' + pSlP.toFixed(1) + '% of stake)';
-          }
-
-          var copyBtn3 = card.querySelector('.copy-ticket');
-          if (copyBtn3) {
-            var lines = [
-              'ACTION: ' + act,
-              'MARKET: ' + market,
-              'ENTRY LIMIT: $' + entry.toFixed(2),
-              'MAX SIZE: $' + maxSizeDisplay.toFixed(2),
-              'TAKE PROFIT: $' + tp.toFixed(2),
-              'STOP-LOSS: $' + stop.toFixed(2)
-            ];
-            if (!isNaN(tp) && !isNaN(stop)) {
-              var ptu = maxSizeDisplay * (tp - entry) / entry;
-              var ptp = (tp - entry) / entry * 100;
-              var psu = maxSizeDisplay * (stop - entry) / entry;
-              var psp = (stop - entry) / entry * 100;
-              lines.push('EST PnL @ TP: +$' + ptu.toFixed(2) + ' (+' + ptp.toFixed(1) + '% of stake)');
-              lines.push('EST PnL @ SL: -$' + Math.abs(psu).toFixed(2) + ' (' + psp.toFixed(1) + '% of stake)');
-            }
-            copyBtn3.setAttribute('data-copy-plan', lines.join('\\n'));
           }
 
           var noteEl2 = card.querySelector('.bankroll-note');
@@ -1530,12 +1481,91 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             sb.setAttribute('data-save-ticket', JSON.stringify(baseW));
           } catch (_) {}
         }
+
+        // Re-check saved state after payload updates
+        if (typeof window.__polyrichMarkSaved === 'function') window.__polyrichMarkSaved();
       }
 
       brInput.addEventListener('input', updateCards);
       riskInput.addEventListener('input', onManualEdit);
       capInput.addEventListener('input', onManualEdit);
       updateCards();
+
+      // ── Saved-state persistence ──────────────────────────────────
+      // Fetch open tickets and mark cards whose dedupeKey already exists
+      var openDedupeKeys = {};  // dedupeKey → ticketId
+
+      function canon(v) {
+        if (v === null || v === undefined) return 'null';
+        if (typeof v === 'number') return Number(v).toString();
+        return String(v).trim();
+      }
+
+      function computeDedupeKeyClient(data) {
+        return [
+          canon(data.marketId),
+          canon(data.tradeability),
+          canon(data.action),
+          canon(data.entryLimit),
+          canon(data.takeProfit),
+          canon(data.riskExitLimit),
+          canon(data.maxSizeUsd),
+          canon(data.scanId)
+        ].join('|');
+      }
+
+      async function sha1(str) {
+        var buf = new TextEncoder().encode(str);
+        var hash = await crypto.subtle.digest('SHA-1', buf);
+        var arr = Array.from(new Uint8Array(hash));
+        return arr.map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+      }
+
+      async function markSavedCards() {
+        var allBtns = document.querySelectorAll('.save-ticket-btn');
+        var items = [];
+        for (var k = 0; k < allBtns.length; k++) {
+          var btn = allBtns[k];
+          var raw = btn.getAttribute('data-save-ticket');
+          if (!raw) continue;
+          try {
+            var payload = JSON.parse(raw);
+            var keyStr = computeDedupeKeyClient(payload);
+            items.push({ btn: btn, keyPromise: sha1(keyStr) });
+          } catch (_) {}
+        }
+        var keys = await Promise.all(items.map(function(it) { return it.keyPromise; }));
+        for (var m = 0; m < items.length; m++) {
+          var key = keys[m];
+          if (openDedupeKeys[key]) {
+            var b = items[m].btn;
+            b.textContent = 'Saved \u2713';
+            b.style.background = '#dcfce7';
+            b.style.color = '#166534';
+            b.style.borderColor = '#bbf7d0';
+            b.style.cursor = 'pointer';
+            b.disabled = false;
+            b.removeAttribute('data-save-ticket');
+            b.setAttribute('data-goto-ticket', openDedupeKeys[key]);
+          }
+        }
+      }
+
+      // Expose markSavedCards for updateCards to call
+      window.__polyrichMarkSaved = markSavedCards;
+
+      fetch('/api/tickets?status=OPEN').then(function(r) {
+        if (!r.ok) return [];
+        return r.json();
+      }).then(function(tickets) {
+        if (!Array.isArray(tickets)) return;
+        for (var t = 0; t < tickets.length; t++) {
+          if (tickets[t].dedupeKey) {
+            openDedupeKeys[tickets[t].dedupeKey] = String(tickets[t]._id);
+          }
+        }
+        markSavedCards();
+      }).catch(function() {});
     })();
     </script>
   `;
@@ -1751,13 +1781,52 @@ function renderTicketsPage(tickets, highlightId) {
   const winRate = closedWithPnl.length > 0 ? (wins / closedWithPnl.length * 100) : 0;
 
   function fmtDate(d) {
-    if (!d) return "—";
+    if (!d) return "\u2014";
     return new Date(d).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
   }
 
   function pnlColor(val) {
     if (typeof val !== "number") return "#6b7280";
     return val > 0 ? "#166534" : val < 0 ? "#dc2626" : "#6b7280";
+  }
+
+  // --- Equity chart ---
+  let equityChartHtml;
+  if (closedWithPnl.length < 2) {
+    equityChartHtml = '<p style="color:#6b7280;font-size:0.92rem;padding:12px 0;">Equity curve will appear after at least 2 tickets are closed.</p>';
+  } else {
+    const sorted = closedWithPnl.slice().sort((a, b) => new Date(a.closedAt) - new Date(b.closedAt));
+    let cumPnl = 0;
+    const points = sorted.map((t) => {
+      cumPnl += t.realizedPnlUsd;
+      return { date: fmtDate(t.closedAt), pnl: Math.round(cumPnl * 100) / 100 };
+    });
+    const maxVal = Math.max(...points.map((p) => p.pnl));
+    const minVal = Math.min(...points.map((p) => p.pnl));
+    const range = maxVal - minVal || 1;
+    const chartW = 100;
+    const chartH = 60;
+    const svgPoints = points.map((p, i) => {
+      const x = (i / (points.length - 1)) * chartW;
+      const y = chartH - ((p.pnl - minVal) / range) * (chartH - 10) - 5;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    const lineColor = cumPnl >= 0 ? "#166534" : "#dc2626";
+    const zeroY = chartH - ((0 - minVal) / range) * (chartH - 10) - 5;
+    equityChartHtml = `
+      <div style="background:#fff;border-radius:10px;padding:12px 16px;box-shadow:0 1px 3px rgba(0,0,0,.06);margin-bottom:16px;">
+        <p style="font-size:0.82rem;font-weight:600;margin:0 0 8px;color:#374151;">Equity Curve</p>
+        <svg viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="none" style="width:100%;height:80px;display:block;">
+          <line x1="0" y1="${zeroY}" x2="${chartW}" y2="${zeroY}" stroke="#e5e7eb" stroke-width="0.3" stroke-dasharray="2,2" />
+          <polyline points="${svgPoints}" fill="none" stroke="${lineColor}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round" />
+        </svg>
+        <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:#6b7280;margin-top:4px;">
+          <span>${escHtml(points[0].date)}</span>
+          <span>Cum. PnL: <strong style="color:${pnlColor(cumPnl)};">${cumPnl >= 0 ? "+" : ""}$${cumPnl.toFixed(2)}</strong></span>
+          <span>${escHtml(points[points.length - 1].date)}</span>
+        </div>
+      </div>
+    `;
   }
 
   const summaryHtml = `
@@ -1772,78 +1841,74 @@ function renderTicketsPage(tickets, highlightId) {
     </div>
   `;
 
-  function ticketRow(t, showClose, highlightId) {
-    const tradeLabel = t.tradeability === "EXECUTE" ? "⚡ EXECUTE" : "👁 WATCH";
-    const actionLabel = t.action || "—";
-    const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "—";
-    const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "—";
-    const tp = typeof t.takeProfit === "number" ? "$" + t.takeProfit.toFixed(2) : "—";
-    const sl = typeof t.riskExitLimit === "number" ? "$" + t.riskExitLimit.toFixed(2) : "—";
-    const tags = Array.isArray(t.reasonCodes) && t.reasonCodes.length > 0
-      ? t.reasonCodes.map((c) => `<span style="display:inline-block;background:#f3f4f6;border-radius:4px;padding:1px 5px;font-size:0.75rem;margin:1px 2px;">${escHtml(c)}</span>`).join("")
-      : "—";
+  function ticketCard(t, showClose, highlightId) {
+    const isExec = t.tradeability === "EXECUTE";
+    const typeBadge = isExec
+      ? '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:700;background:#dcfce7;color:#166534;">\u26A1 EXEC</span>'
+      : '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:700;background:#f3f4f6;color:#6b7280;">\uD83D\uDC41 WATCH</span>';
+    const actionLabel = t.action || "\u2014";
+    const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "\u2014";
+    const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "\u2014";
+    const tp = typeof t.takeProfit === "number" ? "$" + t.takeProfit.toFixed(2) : "\u2014";
+    const sl = typeof t.riskExitLimit === "number" ? "$" + t.riskExitLimit.toFixed(2) : "\u2014";
     const polyUrl = t.eventSlug
       ? `https://polymarket.com/event/${encodeURIComponent(t.eventSlug)}`
       : t.marketUrl || null;
-    const linksHtml = [
-      polyUrl ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="font-size:0.78rem;">Polymarket ↗</a>` : "",
-      `<a href="/trade" style="font-size:0.78rem;">Polyrich ↗</a>`,
-    ].filter(Boolean).join(" ");
+    const questionLink = polyUrl
+      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:700;font-size:0.92rem;line-height:1.35;">${escHtml(t.question)}</a>`
+      : `<span style="font-weight:700;font-size:0.92rem;line-height:1.35;">${escHtml(t.question)}</span>`;
+    const marketId = t.marketId || "";
+    const actionLink = `<a href="/trade?marketId=${encodeURIComponent(marketId)}" style="color:#2563eb;text-decoration:none;font-size:0.85rem;font-weight:600;">${escHtml(actionLabel)}</a>`;
     const isHighlighted = highlightId && String(t._id) === highlightId;
-    const rowStyle = isHighlighted ? ' style="background:#fef9c3;"' : "";
+    const hlStyle = isHighlighted ? "background:#fef9c3;" : "";
     const closeHtml = showClose ? `
-      <td style="white-space:nowrap;">
-        <input type="number" step="0.01" min="0" max="1" placeholder="price" class="close-price-input" data-ticket-id="${escHtml(String(t._id))}" aria-label="Close price" style="width:70px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.82rem;">
-        <button class="cta-secondary close-ticket-btn" data-ticket-id="${escHtml(String(t._id))}" style="padding:3px 10px;font-size:0.82rem;">Close</button>
-      </td>
-    ` : `
-      <td style="color:${pnlColor(t.realizedPnlUsd)};">
-        ${typeof t.realizedPnlUsd === "number" ? (t.realizedPnlUsd >= 0 ? "+" : "") + "$" + t.realizedPnlUsd.toFixed(2) : "—"}
-        ${typeof t.realizedPnlPct === "number" ? " (" + (t.realizedPnlPct * 100).toFixed(1) + "%)" : ""}
-      </td>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid #f3f4f6;">
+        <input type="number" step="0.01" min="0" max="1" placeholder="close price" class="close-price-input" data-ticket-id="${escHtml(String(t._id))}" aria-label="Close price" style="width:80px;padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.82rem;">
+        <button class="cta-secondary close-ticket-btn" data-ticket-id="${escHtml(String(t._id))}" style="padding:4px 12px;font-size:0.82rem;">Close</button>
+      </div>
+    ` : "";
+    const pnlHtml = !showClose && typeof t.realizedPnlUsd === "number" ? `
+      <div style="margin-top:6px;font-size:0.88rem;font-weight:700;color:${pnlColor(t.realizedPnlUsd)};">
+        PnL: ${t.realizedPnlUsd >= 0 ? "+" : ""}$${t.realizedPnlUsd.toFixed(2)}${typeof t.realizedPnlPct === "number" ? " (" + (t.realizedPnlPct * 100).toFixed(1) + "%)" : ""}
+      </div>
+    ` : "";
+
+    return `
+      <div class="ticket-card" id="ticket-${escHtml(String(t._id))}" style="${hlStyle}">
+        <div style="margin-bottom:6px;">${questionLink}</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
+          ${typeBadge}
+          ${actionLink}
+        </div>
+        <div class="ticket-meta-grid">
+          <div><span class="ticket-meta-label">Entry</span><span class="ticket-meta-value">${entry}</span></div>
+          <div><span class="ticket-meta-label">TP</span><span class="ticket-meta-value">${tp}</span></div>
+          <div><span class="ticket-meta-label">Exit</span><span class="ticket-meta-value">${sl}</span></div>
+          <div><span class="ticket-meta-label">Size</span><span class="ticket-meta-value">${size}</span></div>
+          <div><span class="ticket-meta-label">${showClose ? "Created" : "Closed"}</span><span class="ticket-meta-value">${fmtDate(showClose ? t.createdAt : t.closedAt)}</span></div>
+        </div>
+        ${pnlHtml}
+        ${closeHtml}
+      </div>
     `;
-    return `<tr id="ticket-${escHtml(String(t._id))}"${rowStyle}>
-      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(t.question)}">${escHtml(t.question)}</td>
-      <td>${tradeLabel}</td>
-      <td>${escHtml(actionLabel)}</td>
-      <td>${entry}</td>
-      <td>${tp}</td>
-      <td>${sl}</td>
-      <td>${size}</td>
-      <td style="white-space:nowrap;">${linksHtml}</td>
-      <td style="max-width:140px;">${tags}</td>
-      <td>${fmtDate(showClose ? t.createdAt : t.closedAt)}</td>
-      ${closeHtml}
-    </tr>`;
   }
 
-  const openTableHtml = openTickets.length === 0
+  const openListHtml = openTickets.length === 0
     ? '<p style="color:#6b7280;font-size:0.92rem;">No open tickets.</p>'
-    : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-        <thead><tr style="background:#f9fafb;text-align:left;">
-          <th style="padding:6px 8px;">Question</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Action</th>
-          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">TP</th><th style="padding:6px 8px;">Exit (risk)</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Links</th><th style="padding:6px 8px;">Signals</th><th style="padding:6px 8px;">Created</th><th style="padding:6px 8px;">Close</th>
-        </tr></thead>
-        <tbody>${openTickets.map((t) => ticketRow(t, true, highlightId)).join("")}</tbody>
-      </table></div>`;
+    : `<div class="ticket-list">${openTickets.map((t) => ticketCard(t, true, highlightId)).join("")}</div>`;
 
-  const closedTableHtml = closedTickets.length === 0
+  const closedListHtml = closedTickets.length === 0
     ? '<p style="color:#6b7280;font-size:0.92rem;">No closed tickets yet.</p>'
-    : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-        <thead><tr style="background:#f9fafb;text-align:left;">
-          <th style="padding:6px 8px;">Question</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Action</th>
-          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">TP</th><th style="padding:6px 8px;">Exit (risk)</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Links</th><th style="padding:6px 8px;">Signals</th><th style="padding:6px 8px;">Closed</th><th style="padding:6px 8px;">Realized PnL</th>
-        </tr></thead>
-        <tbody>${closedTickets.map((t) => ticketRow(t, false, highlightId)).join("")}</tbody>
-      </table></div>`;
+    : `<div class="ticket-list">${closedTickets.map((t) => ticketCard(t, false, highlightId)).join("")}</div>`;
 
   return `
     <h1>Tickets</h1>
     ${summaryHtml}
+    ${equityChartHtml}
     <h2 style="margin:20px 0 12px;font-size:1.15rem;">OPEN (${openCount})</h2>
-    ${openTableHtml}
+    ${openListHtml}
     <h2 style="margin:20px 0 12px;font-size:1.15rem;">CLOSED (${closedCount})</h2>
-    ${closedTableHtml}
+    ${closedListHtml}
     <script>
     (function() {
       document.addEventListener("click", function(e) {
