@@ -293,7 +293,6 @@ function renderMetricsUi(metrics) {
         <p><span style="color:#6b7280;">fetched:</span> <strong>${metrics.lastTotalFetched}</strong></p>
         <p><span style="color:#6b7280;">savedTarget:</span> <strong>${metrics.savedTarget}</strong></p>
         <p><span style="color:#6b7280;">savedActual:</span> <strong>${metrics.savedActual}</strong></p>
-        <p><span style="color:#6b7280;">saved:</span> <strong>${metrics.lastSavedCount}</strong></p>
         <p><span style="color:#6b7280;">watchlist:</span> <strong>${metrics.lastWatchlistCount}</strong></p>
         <p><span style="color:#6b7280;">signals:</span> <strong>${metrics.lastSignalsCount}</strong></p>
         <p><span style="color:#6b7280;">final candidates:</span> <strong>${metrics.lastInterestingCount}</strong></p>
