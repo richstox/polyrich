@@ -1054,7 +1054,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
       </div>
       <div class="status-item">
         <label class="status-label" for="risk-pct-input">Risk per trade (%) <span id="risk-badge" style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:0.7rem;font-weight:700;vertical-align:middle;margin-left:4px;background:#dcfce7;color:#166534;">Conservative (default)</span></label>
-        <input id="risk-pct-input" type="number" min="0" max="100" step="0.1" placeholder="1"
+        <input id="risk-pct-input" type="number" min="0.1" max="100" step="0.1" placeholder="1"
           style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
         <span style="display:block;font-size:0.68rem;color:#6b7280;margin-top:2px;">Default is 1.00%. Aggressive starts at 1.50%.</span>
       </div>
@@ -1255,8 +1255,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
         else localStorage.removeItem(KEY_BR);
 
         var riskPctNum = parseFloat(riskInput.value);
-        if (isNaN(riskPctNum) || riskPctNum < 0) riskPctNum = 1;
-        if (riskPctNum > 100) riskPctNum = 100;
+        riskPctNum = Math.max(0.1, Math.min(100, isNaN(riskPctNum) ? 1 : riskPctNum));
         var riskDec = riskPctNum / 100;
         localStorage.setItem(KEY_RISK, String(riskPctNum));
 
