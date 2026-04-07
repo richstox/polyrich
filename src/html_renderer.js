@@ -759,7 +759,8 @@ const STOP_MULTIPLIER = 0.92;            // stop loss at -8%
 const PRICE_CEILING = 0.99;
 const PRICE_FLOOR = 0.01;
 const RISK_PCT_DEFAULT = 0.01;         // 1% of bankroll per trade
-const MAX_TRADE_CAP_USD = 50;          // absolute max position cap (matches SIZE_CAP)
+const MAX_TRADE_CAP_USD_DEFAULT = 50;  // absolute max position cap (matches SIZE_CAP)
+const MIN_LIMIT_ORDER_USD = 5;         // minimum limit order size
 const MIN_ABS_MOVE_FOR_EXEC = 0.003;   // min |absMove| for direction confidence
 const MIN_VOL_FOR_EXEC = 0.002;        // min volatility for direction confidence
 
@@ -859,7 +860,7 @@ function inferSize(item) {
   if (item.liquidity < 500 || item.volume24hr < 50) return null;
   const fromLiq = item.liquidity * SIZE_LIQUIDITY_PCT;
   const fromVol = item.volume24hr * SIZE_VOLUME_PCT;
-  const raw = Math.min(fromLiq, fromVol, MAX_TRADE_CAP_USD);
+  const raw = Math.min(fromLiq, fromVol, MAX_TRADE_CAP_USD_DEFAULT);
   if (raw < 1) return null;
   return Math.floor(raw);
 }
@@ -1044,6 +1045,19 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
         <input id="bankroll-input" type="number" min="0" step="1" placeholder="e.g. 1000"
           style="width:100px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
       </div>
+      <div class="status-item">
+        <label class="status-label" for="risk-pct-input">Risk per trade (%) <span id="risk-badge" style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:0.7rem;font-weight:700;vertical-align:middle;margin-left:4px;background:#dcfce7;color:#166534;">Conservative (recommended)</span></label>
+        <input id="risk-pct-input" type="number" min="0.1" step="0.1" placeholder="1"
+          style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
+      </div>
+      <div class="status-item">
+        <label class="status-label" for="max-cap-input">Max trade cap (USD)</label>
+        <input id="max-cap-input" type="number" min="1" step="1" placeholder="50"
+          style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
+      </div>
+      <div class="status-item" style="align-self:center;">
+        <span id="deviation-msg" style="font-size:0.75rem;font-weight:600;color:#166534;">Safer than default.</span>
+      </div>
       <a href="/scan" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
   `;
@@ -1067,20 +1081,75 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
     ${cardsHtml}
     <script>
     (function() {
-      var RISK_PCT = ${RISK_PCT_DEFAULT};
-      var MAX_CAP = ${MAX_TRADE_CAP_USD};
-      var KEY = 'polyrich_bankroll_usd';
-      var input = document.getElementById('bankroll-input');
-      if (!input) return;
+      var RISK_PCT_DEF = ${RISK_PCT_DEFAULT};
+      var MAX_CAP_DEF = ${MAX_TRADE_CAP_USD_DEFAULT};
+      var MIN_ORDER = ${MIN_LIMIT_ORDER_USD};
+      var KEY_BR = 'polyrich_bankroll_usd';
+      var KEY_RISK = 'polyrich_risk_pct';
+      var KEY_CAP = 'polyrich_max_trade_cap_usd';
 
-      var saved = localStorage.getItem(KEY);
-      if (saved) input.value = saved;
+      var brInput = document.getElementById('bankroll-input');
+      var riskInput = document.getElementById('risk-pct-input');
+      var capInput = document.getElementById('max-cap-input');
+      var badge = document.getElementById('risk-badge');
+      var devMsg = document.getElementById('deviation-msg');
+      if (!brInput || !riskInput || !capInput) return;
+
+      // Restore saved values
+      var sBr = localStorage.getItem(KEY_BR);
+      if (sBr) brInput.value = sBr;
+      var sRisk = localStorage.getItem(KEY_RISK);
+      riskInput.value = sRisk || '1';
+      var sCap = localStorage.getItem(KEY_CAP);
+      capInput.value = sCap || '50';
+
+      function fmtPct(val, denom) {
+        var p = val / denom * 100;
+        return p.toFixed(2);
+      }
+
+      function updateBadge(riskDec) {
+        if (!badge) return;
+        if (riskDec <= 0.01) {
+          badge.textContent = 'Conservative (recommended)';
+          badge.style.background = '#dcfce7'; badge.style.color = '#166534';
+        } else if (riskDec <= 0.05) {
+          badge.textContent = 'Aggressive';
+          badge.style.background = '#fef9c3'; badge.style.color = '#854d0e';
+        } else {
+          badge.textContent = 'Very aggressive \\u2014 high risk';
+          badge.style.background = '#fee2e2'; badge.style.color = '#991b1b';
+        }
+      }
+
+      function updateDeviation(riskDec, capUsd) {
+        if (!devMsg) return;
+        if (riskDec > 0.01 || capUsd > 50) {
+          devMsg.textContent = 'You are above Polyrich defaults.';
+          devMsg.style.color = '#b45309';
+        } else {
+          devMsg.textContent = 'Safer than default.';
+          devMsg.style.color = '#166534';
+        }
+      }
 
       function updateCards() {
-        var bankroll = parseFloat(input.value);
+        var bankroll = parseFloat(brInput.value);
         var hasBankroll = !isNaN(bankroll) && bankroll > 0;
-        if (hasBankroll) localStorage.setItem(KEY, String(bankroll));
-        else localStorage.removeItem(KEY);
+        if (hasBankroll) localStorage.setItem(KEY_BR, String(bankroll));
+        else localStorage.removeItem(KEY_BR);
+
+        var riskPctNum = parseFloat(riskInput.value);
+        if (isNaN(riskPctNum) || riskPctNum <= 0) riskPctNum = 1;
+        var riskDec = riskPctNum / 100;
+        localStorage.setItem(KEY_RISK, String(riskPctNum));
+
+        var capUsd = parseFloat(capInput.value);
+        if (isNaN(capUsd) || capUsd <= 0) capUsd = MAX_CAP_DEF;
+        localStorage.setItem(KEY_CAP, String(capUsd));
+
+        updateBadge(riskDec);
+        updateDeviation(riskDec, capUsd);
 
         var cards = document.querySelectorAll('[data-execute="1"]');
         for (var i = 0; i < cards.length; i++) {
@@ -1093,24 +1162,76 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var act = card.getAttribute('data-action') || '';
           if (isNaN(hMax) || isNaN(entry) || entry <= 0) continue;
 
-          var maxSize, sizeNote;
+          var maxSizeRaw;
           if (hasBankroll) {
-            var riskBudget = bankroll * RISK_PCT;
-            maxSize = Math.floor(Math.min(MAX_CAP, riskBudget, hMax));
-            var pct = (maxSize / bankroll * 100).toFixed(1);
-            sizeNote = '(' + pct + '% of bankroll)';
+            var riskBudget = bankroll * riskDec;
+            maxSizeRaw = Math.min(capUsd, riskBudget, hMax);
           } else {
-            maxSize = hMax;
+            maxSizeRaw = Math.min(capUsd, hMax);
+          }
+          var maxSizeDisplay = Math.round(maxSizeRaw * 100) / 100;
+
+          // Min $5 gating — downgrade to WATCH per-card (uses raw, not rounded)
+          if (maxSizeRaw < MIN_ORDER) {
+            var pillEl = card.querySelector('.action-pill');
+            if (pillEl) {
+              pillEl.className = 'action-pill pill-watch';
+              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH';
+            }
+            var planGrid = card.querySelector('.trade-plan-grid');
+            if (planGrid) planGrid.style.display = 'none';
+            var whyBlock = card.querySelector('.min-order-watch');
+            if (!whyBlock) {
+              whyBlock = document.createElement('div');
+              whyBlock.className = 'min-order-watch';
+              whyBlock.style.padding = '8px 0';
+              var planGrid2 = card.querySelector('.trade-plan-grid');
+              var ref = planGrid2 || card.querySelector('.action-pill');
+              if (ref && ref.nextSibling) ref.parentNode.insertBefore(whyBlock, ref.nextSibling);
+              else card.appendChild(whyBlock);
+            }
+            whyBlock.style.display = 'block';
+            whyBlock.innerHTML = '<p style="margin:0 0 6px;font-size:0.88rem;"><strong>WHY WATCH:</strong> Max size $' + maxSizeDisplay.toFixed(2) + ' is below $' + MIN_ORDER + ' minimum limit order</p>' +
+              '<p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> Increase risk% or cap, or increase bankroll</p>';
+            var noteEl = card.querySelector('.bankroll-note');
+            if (noteEl) noteEl.style.display = 'none';
+            // Clear copy ticket to watch plan
+            var copyBtn = card.querySelector('.copy-ticket');
+            if (copyBtn) {
+              copyBtn.setAttribute('data-copy-plan', 'ACTION: WATCH\\nMARKET: ' + market + '\\nWHY WATCH: Max size $' + maxSizeDisplay.toFixed(2) + ' is below $' + MIN_ORDER + ' minimum limit order\\nNEXT: Increase risk% or cap, or increase bankroll');
+              copyBtn.textContent = 'Copy plan';
+            }
+            continue;
+          }
+
+          // Restore EXECUTE state if previously downgraded
+          var pillEl2 = card.querySelector('.action-pill');
+          if (pillEl2 && pillEl2.className.indexOf('pill-watch') !== -1) {
+            pillEl2.className = 'action-pill pill-buy-yes';
+            pillEl2.innerHTML = '\\u26A1 EXECUTE \\u00B7 ' + act;
+          }
+          var planGrid3 = card.querySelector('.trade-plan-grid');
+          if (planGrid3) planGrid3.style.display = '';
+          var whyBlock2 = card.querySelector('.min-order-watch');
+          if (whyBlock2) whyBlock2.style.display = 'none';
+          var copyBtn2 = card.querySelector('.copy-ticket');
+          if (copyBtn2) copyBtn2.textContent = 'Copy ticket';
+
+          var sizeNote;
+          if (hasBankroll) {
+            var pctStr = fmtPct(maxSizeRaw, bankroll);
+            sizeNote = '(' + pctStr + '% of bankroll)';
+          } else {
             sizeNote = '(bankroll not set)';
           }
 
           var sizeEl = card.querySelector('.trade-size');
-          if (sizeEl) sizeEl.innerHTML = '$' + maxSize + ' <span class="size-note">' + sizeNote + '</span>';
+          if (sizeEl) sizeEl.innerHTML = '$' + maxSizeDisplay.toFixed(2) + ' <span class="size-note">' + sizeNote + '</span>';
 
           if (!isNaN(tp) && !isNaN(stop)) {
-            var pTpU = maxSize * (tp - entry) / entry;
+            var pTpU = maxSizeDisplay * (tp - entry) / entry;
             var pTpP = (tp - entry) / entry * 100;
-            var pSlU = maxSize * (stop - entry) / entry;
+            var pSlU = maxSizeDisplay * (stop - entry) / entry;
             var pSlP = (stop - entry) / entry * 100;
             var tpEl = card.querySelector('.trade-pnl-tp');
             if (tpEl) tpEl.textContent = '+$' + pTpU.toFixed(2) + ' (+' + pTpP.toFixed(1) + '% of stake)';
@@ -1118,33 +1239,35 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             if (slEl) slEl.textContent = '-$' + Math.abs(pSlU).toFixed(2) + ' (' + pSlP.toFixed(1) + '% of stake)';
           }
 
-          var copyBtn = card.querySelector('.copy-ticket');
-          if (copyBtn) {
+          var copyBtn3 = card.querySelector('.copy-ticket');
+          if (copyBtn3) {
             var lines = [
               'ACTION: ' + act,
               'MARKET: ' + market,
               'ENTRY LIMIT: $' + entry.toFixed(2),
-              'MAX SIZE: $' + maxSize,
+              'MAX SIZE: $' + maxSizeDisplay.toFixed(2),
               'TAKE PROFIT: $' + tp.toFixed(2),
               'STOP-LOSS: $' + stop.toFixed(2)
             ];
             if (!isNaN(tp) && !isNaN(stop)) {
-              var ptu = maxSize * (tp - entry) / entry;
+              var ptu = maxSizeDisplay * (tp - entry) / entry;
               var ptp = (tp - entry) / entry * 100;
-              var psu = maxSize * (stop - entry) / entry;
+              var psu = maxSizeDisplay * (stop - entry) / entry;
               var psp = (stop - entry) / entry * 100;
               lines.push('EST PnL @ TP: +$' + ptu.toFixed(2) + ' (+' + ptp.toFixed(1) + '% of stake)');
               lines.push('EST PnL @ SL: -$' + Math.abs(psu).toFixed(2) + ' (' + psp.toFixed(1) + '% of stake)');
             }
-            copyBtn.setAttribute('data-copy-plan', lines.join('\\n'));
+            copyBtn3.setAttribute('data-copy-plan', lines.join('\\n'));
           }
 
-          var noteEl = card.querySelector('.bankroll-note');
-          if (noteEl) noteEl.style.display = hasBankroll ? 'none' : 'block';
+          var noteEl2 = card.querySelector('.bankroll-note');
+          if (noteEl2) noteEl2.style.display = hasBankroll ? 'none' : 'block';
         }
       }
 
-      input.addEventListener('input', updateCards);
+      brInput.addEventListener('input', updateCards);
+      riskInput.addEventListener('input', updateCards);
+      capInput.addEventListener('input', updateCards);
       updateCards();
     })();
     </script>
