@@ -66,6 +66,7 @@ let scanStatus = {
   lastScanId: null,
   lastSavedCount: 0,
   lastTotalFetched: 0,
+  lastSavedTarget: 0,
   lastEventsFetched: 0,
   lastMarketsFlattened: 0,
   lastPagesFetched: 0,
@@ -132,10 +133,11 @@ async function runScan() {
 
     // Dynamic saving: save more snapshots when fetched count is large
     let saveLimit = config.SAVED_PER_SCAN;
-    if (candidates.length > config.SAVED_DYNAMIC_THRESHOLD) {
-      const pctBased = Math.ceil(candidates.length * config.SAVED_PER_SCAN_PCT);
+    if (data.length > config.SAVED_DYNAMIC_THRESHOLD) {
+      const pctBased = Math.ceil(data.length * config.SAVED_PER_SCAN_PCT);
       saveLimit = Math.min(Math.max(config.SAVED_PER_SCAN_MIN, pctBased), config.SAVED_PER_SCAN_CAP);
     }
+    const savedTarget = saveLimit;
     candidates = candidates.slice(0, saveLimit);
 
     const previousScanId = scanStatus.lastScanId || null;
@@ -151,6 +153,7 @@ async function runScan() {
     scanStatus.nextScanAt = next;
     scanStatus.lastSavedCount = candidates.length;
     scanStatus.lastTotalFetched = data.length;
+    scanStatus.lastSavedTarget = savedTarget;
     scanStatus.lastEventsFetched = fetchStats.eventsFetched;
     scanStatus.lastMarketsFlattened = fetchStats.marketsFlattened;
     scanStatus.lastPagesFetched = fetchStats.pagesFetched;
@@ -314,6 +317,8 @@ const server = http.createServer(async (req, res) => {
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
       lastScanId: scanStatus.lastScanId,
       lastTotalFetched: scanStatus.lastTotalFetched,
+      savedTarget: scanStatus.lastSavedTarget,
+      savedActual: scanStatus.lastSavedCount,
       lastSavedCount: scanStatus.lastSavedCount,
       lastDurationMs: scanStatus.lastDurationMs,
       eventsFetched: scanStatus.lastEventsFetched,
@@ -592,6 +597,8 @@ const server = http.createServer(async (req, res) => {
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
       lastScanId: scanStatus.lastScanId,
       lastTotalFetched: scanStatus.lastTotalFetched,
+      savedTarget: scanStatus.lastSavedTarget,
+      savedActual: scanStatus.lastSavedCount,
       lastSavedCount: scanStatus.lastSavedCount,
       lastDurationMs: scanStatus.lastDurationMs,
       eventsFetched: scanStatus.lastEventsFetched,

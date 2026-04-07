@@ -318,11 +318,11 @@ console.log("\ndynamic saving config");
   assert(cfg.SAVED_PER_SCAN_PCT === 0.05, "SAVED_PER_SCAN_PCT default is 0.05");
   assert(cfg.SAVED_DYNAMIC_THRESHOLD === 5000, "SAVED_DYNAMIC_THRESHOLD default is 5000");
 
-  // Simulate dynamic save calculation
-  function computeSaveLimit(candidateCount) {
+  // Simulate dynamic save calculation — threshold is based on fetchedCount (data.length)
+  function computeSaveLimit(fetchedCount) {
     let saveLimit = cfg.SAVED_PER_SCAN;
-    if (candidateCount > cfg.SAVED_DYNAMIC_THRESHOLD) {
-      const pctBased = Math.ceil(candidateCount * cfg.SAVED_PER_SCAN_PCT);
+    if (fetchedCount > cfg.SAVED_DYNAMIC_THRESHOLD) {
+      const pctBased = Math.ceil(fetchedCount * cfg.SAVED_PER_SCAN_PCT);
       saveLimit = Math.min(Math.max(cfg.SAVED_PER_SCAN_MIN, pctBased), cfg.SAVED_PER_SCAN_CAP);
     }
     return saveLimit;
@@ -334,6 +334,43 @@ console.log("\ndynamic saving config");
   assert(computeSaveLimit(43000) <= 5000, "43k fetched → at most 5000 saved");
   assertClose(computeSaveLimit(43000), 2150, "43k fetched → 5% = 2150", 1);
   assert(computeSaveLimit(200000) === 5000, "200k fetched → capped at 5000");
+}
+
+// ---------------------------------------------------------------------------
+// computeTradeability
+// ---------------------------------------------------------------------------
+console.log("\ncomputeTradeability");
+
+{
+  const { computeTradeability } = require("../src/html_renderer");
+
+  // Long-dated market (944 days = 22656 hours) must be Watch, not Tradeable
+  const longDated = { hoursLeft: 22656, spreadPct: 0.05, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(longDated).label === "Watch", "944 days → Watch (not Tradeable)");
+
+  // Market >10 days (e.g. 300 hours) must be Watch
+  const tenDayPlus = { hoursLeft: 300, spreadPct: 0.05, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(tenDayPlus).label === "Watch", ">240h (>10 days) → Watch");
+
+  // Market exactly at 240h boundary → Tradeable today
+  const atBoundary = { hoursLeft: 240, spreadPct: 0.05, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(atBoundary).label === "Tradeable today", "240h → Tradeable today");
+
+  // Intraday market (<=48h) can still be Tradeable
+  const intraday = { hoursLeft: 24, spreadPct: 0.05, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(intraday).label === "Tradeable today", "intraday 24h → Tradeable today");
+
+  // Wide spread (>0.15) must be Watch
+  const wideSpread = { hoursLeft: 48, spreadPct: 0.20, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(wideSpread).label === "Watch", "spreadPct 0.20 → Watch");
+
+  // Expired market → Excluded
+  const expired = { hoursLeft: -1, spreadPct: 0.05, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(expired).label === "Excluded", "expired → Excluded");
+
+  // Filtered market → Excluded
+  const filtered = { hoursLeft: 48, spreadPct: 0.05, liquidity: 10000, volume24hr: 5000, _filtered: true };
+  assert(computeTradeability(filtered).label === "Excluded", "filtered → Excluded");
 }
 
 // ---------------------------------------------------------------------------

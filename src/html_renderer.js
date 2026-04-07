@@ -59,7 +59,8 @@ function computeTradeability(item) {
     return { icon: "❌", label: "Excluded", cls: "tradeability-excluded" };
   }
   if (
-    item.spreadPct > 0.25 ||
+    (item.hoursLeft !== null && item.hoursLeft > 240) ||
+    item.spreadPct > 0.15 ||
     item.liquidity < 500 ||
     item.volume24hr < 50 ||
     (item.hoursLeft !== null && item.hoursLeft < 2)
@@ -290,7 +291,8 @@ function renderMetricsUi(metrics) {
       <h2 style="margin-top:0;">Funnel Counts</h2>
       <div class="grid-2">
         <p><span style="color:#6b7280;">fetched:</span> <strong>${metrics.lastTotalFetched}</strong></p>
-        <p><span style="color:#6b7280;">saved:</span> <strong>${metrics.lastSavedCount}</strong></p>
+        <p><span style="color:#6b7280;">savedTarget:</span> <strong>${metrics.savedTarget}</strong></p>
+        <p><span style="color:#6b7280;">savedActual:</span> <strong>${metrics.savedActual}</strong></p>
         <p><span style="color:#6b7280;">watchlist:</span> <strong>${metrics.lastWatchlistCount}</strong></p>
         <p><span style="color:#6b7280;">signals:</span> <strong>${metrics.lastSignalsCount}</strong></p>
         <p><span style="color:#6b7280;">final candidates:</span> <strong>${metrics.lastInterestingCount}</strong></p>
