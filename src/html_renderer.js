@@ -1870,8 +1870,8 @@ function renderTicketsPage(tickets, highlightId) {
         var el = document.getElementById("ticket-" + hl);
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
-          el.style.transition = "background 1.5s ease";
-          setTimeout(function() { el.style.background = ""; }, 2500);
+          el.style.transition = "background 2s ease";
+          setTimeout(function() { el.style.background = ""; }, 2000);
         }
       }
     })();
