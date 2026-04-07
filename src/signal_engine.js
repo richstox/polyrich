@@ -647,7 +647,11 @@ function finalizeItem(item, inconsistencyThreshold, peerZThreshold) {
       item.peerZScore >= peerZThreshold);
   const mispricing = rawMispricing && (item.absMove >= MOMENTUM_FLOOR || item.volatility >= BREAKOUT_VOL_FLOOR);
 
-  const mispricingTerm = (item.eventInconsistencyScore || 0) * 1.0 + (item.peerZScore || 0) * 20;
+  const timeLeftHours = typeof item.hoursLeft === "number" ? item.hoursLeft : 0;
+
+  let mispricingTerm = (item.eventInconsistencyScore || 0) * 1.0 + (item.peerZScore || 0) * 20;
+  mispricingTerm = Math.min(mispricingTerm, 500);
+  if (timeLeftHours > 168) mispricingTerm = 0;
   const orderbookTerm =
     (item.bestBidNum > 0 && item.bestAskNum > 0 ? 50 : -200) -
     item.spreadPct * 500 -
@@ -686,7 +690,7 @@ function finalizeItem(item, inconsistencyThreshold, peerZThreshold) {
   if (item.reversal) reasonCodes.push("reversal");
   if (mispricing) reasonCodes.push("mispricing");
   if (item.noveltyBonus > 0) reasonCodes.push("novel");
-  if (item.timeBonus > 0) reasonCodes.push("near-expiry");
+  if (item.timeBonus > 0 && timeLeftHours <= 72) reasonCodes.push("near-expiry");
   if (item._filtered) reasonCodes.push("filtered");
 
   return {
@@ -701,4 +705,4 @@ function finalizeItem(item, inconsistencyThreshold, peerZThreshold) {
   };
 }
 
-module.exports = { buildIdeas, marketKey, classifyBucket, passesBucketGate, bucketTimeBonus };
+module.exports = { buildIdeas, marketKey, classifyBucket, passesBucketGate, bucketTimeBonus, finalizeItem };
