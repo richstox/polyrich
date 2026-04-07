@@ -17,6 +17,7 @@ const {
   getCachedTagData,
   setCachedTagData,
 } = require("./src/persistence");
+const TradeTicket = require("./models/TradeTicket");
 const { buildIdeas } = require("./src/signal_engine");
 const {
   renderCandidate,
@@ -30,6 +31,7 @@ const {
   renderTradePage,
   renderExplorePage,
   renderSystemPage,
+  renderTicketsPage,
   pageShell,
   inferDirection,
   inferEntry,
@@ -798,6 +800,123 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(pageShell("Metrics", "/metrics-ui", body));
     return;
+  }
+
+  // ── POST /api/tickets ────────────────────────────────────────────────
+  if (url.pathname === "/api/tickets" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", async () => {
+      try {
+        const data = JSON.parse(body);
+        // Validate required
+        if (!data.marketId || !data.question || !data.tradeability || !data.action) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Missing required fields: marketId, question, tradeability, action" }));
+          return;
+        }
+        // WATCH snapshot rule
+        if (data.tradeability === "WATCH") {
+          data.planTbd = true;
+          const numericPlanFields = [
+            "entryLimit", "takeProfit", "riskExitLimit", "maxSizeUsd",
+            "bankrollUsd", "riskPct", "maxTradeCapUsd",
+            "pnlTpUsd", "pnlTpPct", "pnlExitUsd", "pnlExitPct",
+          ];
+          for (const f of numericPlanFields) data[f] = null;
+        }
+        const ticket = await TradeTicket.create(data);
+        res.writeHead(201, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(ticket));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // ── GET /api/tickets ─────────────────────────────────────────────────
+  if (url.pathname === "/api/tickets" && req.method === "GET") {
+    try {
+      const statusFilter = url.searchParams.get("status");
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "200", 10) || 200, 1000);
+      const query = {};
+      if (statusFilter === "OPEN" || statusFilter === "CLOSED") query.status = String(statusFilter);
+      const tickets = await TradeTicket.find(query).sort({ createdAt: -1 }).limit(limit).lean();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(tickets));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // ── POST /api/tickets/close ──────────────────────────────────────────
+  if (url.pathname === "/api/tickets/close" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", async () => {
+      try {
+        const data = JSON.parse(body);
+        if (!data.ticketId || data.closePrice === undefined || data.closePrice === null) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Missing ticketId or closePrice" }));
+          return;
+        }
+        // Validate ticketId is a valid Mongo ObjectId
+        if (!mongoose.Types.ObjectId.isValid(data.ticketId)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid ticketId format" }));
+          return;
+        }
+        const ticket = await TradeTicket.findById(String(data.ticketId));
+        if (!ticket) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Ticket not found" }));
+          return;
+        }
+        if (ticket.status !== "OPEN") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Ticket is not OPEN" }));
+          return;
+        }
+        ticket.status = "CLOSED";
+        ticket.closedAt = new Date();
+        ticket.closePrice = Number(data.closePrice);
+        // Compute approximate realized PnL if possible
+        if (typeof ticket.entryLimit === "number" && ticket.entryLimit > 0 &&
+            typeof ticket.maxSizeUsd === "number" && ticket.maxSizeUsd > 0) {
+          const shares = ticket.maxSizeUsd / ticket.entryLimit;
+          const valueExit = shares * ticket.closePrice;
+          ticket.realizedPnlUsd = valueExit - ticket.maxSizeUsd;
+          ticket.realizedPnlPct = ticket.realizedPnlUsd / ticket.maxSizeUsd;
+        }
+        await ticket.save();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(ticket));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // ── /tickets ───────────────────────────────────────────────────────────
+  if (url.pathname === "/tickets") {
+    try {
+      const tickets = await TradeTicket.find().sort({ createdAt: -1 }).limit(500).lean();
+      const body = renderTicketsPage(tickets);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(pageShell("Tickets", "/tickets", body));
+      return;
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(`tickets error: ${err.message}`);
+      return;
+    }
   }
 
   res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
