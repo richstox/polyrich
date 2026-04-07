@@ -678,8 +678,24 @@ function pageShell(title, activeNav, bodyHtml) {
         body: payload,
       }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.error) { saveBtn.textContent = "Error"; }
-        else { saveBtn.textContent = "Saved ✓"; saveBtn.style.background = "#dcfce7"; saveBtn.style.color = "#166534"; saveBtn.style.borderColor = "#bbf7d0"; }
+        else {
+          saveBtn.textContent = "Saved ✓";
+          saveBtn.style.background = "#dcfce7";
+          saveBtn.style.color = "#166534";
+          saveBtn.style.borderColor = "#bbf7d0";
+          saveBtn.style.cursor = "pointer";
+          saveBtn.disabled = false;
+          saveBtn.removeAttribute("data-save-ticket");
+          saveBtn.setAttribute("data-goto-ticket", d._id);
+        }
       }).catch(function() { saveBtn.textContent = "Error"; saveBtn.disabled = false; });
+      return;
+    }
+    // Navigate to tickets page on "Saved" click
+    var gotoBtn = e.target.closest("[data-goto-ticket]");
+    if (gotoBtn) {
+      var tid = gotoBtn.getAttribute("data-goto-ticket");
+      window.location.href = "/tickets?highlight=" + encodeURIComponent(tid);
       return;
     }
   });
@@ -1724,7 +1740,7 @@ function renderSystemPage(healthData, metrics) {
 }
 
 /** Render the /tickets page body. */
-function renderTicketsPage(tickets) {
+function renderTicketsPage(tickets, highlightId) {
   const openTickets = tickets.filter((t) => t.status === "OPEN");
   const closedTickets = tickets.filter((t) => t.status === "CLOSED");
   const openCount = openTickets.length;
@@ -1756,11 +1772,25 @@ function renderTicketsPage(tickets) {
     </div>
   `;
 
-  function ticketRow(t, showClose) {
+  function ticketRow(t, showClose, highlightId) {
     const tradeLabel = t.tradeability === "EXECUTE" ? "⚡ EXECUTE" : "👁 WATCH";
     const actionLabel = t.action || "—";
     const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "—";
     const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "—";
+    const tp = typeof t.takeProfit === "number" ? "$" + t.takeProfit.toFixed(2) : "—";
+    const sl = typeof t.riskExitLimit === "number" ? "$" + t.riskExitLimit.toFixed(2) : "—";
+    const tags = Array.isArray(t.reasonCodes) && t.reasonCodes.length > 0
+      ? t.reasonCodes.map((c) => `<span style="display:inline-block;background:#f3f4f6;border-radius:4px;padding:1px 5px;font-size:0.75rem;margin:1px 2px;">${escHtml(c)}</span>`).join("")
+      : "—";
+    const polyUrl = t.eventSlug
+      ? `https://polymarket.com/event/${encodeURIComponent(t.eventSlug)}`
+      : t.marketUrl || null;
+    const linksHtml = [
+      polyUrl ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="font-size:0.78rem;">Polymarket ↗</a>` : "",
+      `<a href="/trade" style="font-size:0.78rem;">Polyrich ↗</a>`,
+    ].filter(Boolean).join(" ");
+    const isHighlighted = highlightId && String(t._id) === highlightId;
+    const rowStyle = isHighlighted ? ' style="background:#fef9c3;"' : "";
     const closeHtml = showClose ? `
       <td style="white-space:nowrap;">
         <input type="number" step="0.01" min="0" max="1" placeholder="price" class="close-price-input" data-ticket-id="${escHtml(String(t._id))}" aria-label="Close price" style="width:70px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.82rem;">
@@ -1772,13 +1802,17 @@ function renderTicketsPage(tickets) {
         ${typeof t.realizedPnlPct === "number" ? " (" + (t.realizedPnlPct * 100).toFixed(1) + "%)" : ""}
       </td>
     `;
-    return `<tr>
+    return `<tr id="ticket-${escHtml(String(t._id))}"${rowStyle}>
       <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(t.question)}">${escHtml(t.question)}</td>
       <td>${tradeLabel}</td>
       <td>${escHtml(actionLabel)}</td>
       <td>${entry}</td>
+      <td>${tp}</td>
+      <td>${sl}</td>
       <td>${size}</td>
-      <td>${fmtDate(t.createdAt)}</td>
+      <td style="white-space:nowrap;">${linksHtml}</td>
+      <td style="max-width:140px;">${tags}</td>
+      <td>${fmtDate(showClose ? t.createdAt : t.closedAt)}</td>
       ${closeHtml}
     </tr>`;
   }
@@ -1788,9 +1822,9 @@ function renderTicketsPage(tickets) {
     : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
         <thead><tr style="background:#f9fafb;text-align:left;">
           <th style="padding:6px 8px;">Question</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Action</th>
-          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Created</th><th style="padding:6px 8px;">Close</th>
+          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">TP</th><th style="padding:6px 8px;">Exit (risk)</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Links</th><th style="padding:6px 8px;">Signals</th><th style="padding:6px 8px;">Created</th><th style="padding:6px 8px;">Close</th>
         </tr></thead>
-        <tbody>${openTickets.map((t) => ticketRow(t, true)).join("")}</tbody>
+        <tbody>${openTickets.map((t) => ticketRow(t, true, highlightId)).join("")}</tbody>
       </table></div>`;
 
   const closedTableHtml = closedTickets.length === 0
@@ -1798,25 +1832,9 @@ function renderTicketsPage(tickets) {
     : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
         <thead><tr style="background:#f9fafb;text-align:left;">
           <th style="padding:6px 8px;">Question</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Action</th>
-          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Closed</th><th style="padding:6px 8px;">Realized PnL</th>
+          <th style="padding:6px 8px;">Entry</th><th style="padding:6px 8px;">TP</th><th style="padding:6px 8px;">Exit (risk)</th><th style="padding:6px 8px;">Size</th><th style="padding:6px 8px;">Links</th><th style="padding:6px 8px;">Signals</th><th style="padding:6px 8px;">Closed</th><th style="padding:6px 8px;">Realized PnL</th>
         </tr></thead>
-        <tbody>${closedTickets.map((t) => {
-          const tradeLabel = t.tradeability === "EXECUTE" ? "⚡ EXECUTE" : "👁 WATCH";
-          const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "—";
-          const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "—";
-          return `<tr>
-            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(t.question)}">${escHtml(t.question)}</td>
-            <td>${tradeLabel}</td>
-            <td>${escHtml(t.action || "—")}</td>
-            <td>${entry}</td>
-            <td>${size}</td>
-            <td>${fmtDate(t.closedAt)}</td>
-            <td style="color:${pnlColor(t.realizedPnlUsd)};">
-              ${typeof t.realizedPnlUsd === "number" ? (t.realizedPnlUsd >= 0 ? "+" : "") + "$" + t.realizedPnlUsd.toFixed(2) : "—"}
-              ${typeof t.realizedPnlPct === "number" ? " (" + (t.realizedPnlPct * 100).toFixed(1) + "%)" : ""}
-            </td>
-          </tr>`;
-        }).join("")}</tbody>
+        <tbody>${closedTickets.map((t) => ticketRow(t, false, highlightId)).join("")}</tbody>
       </table></div>`;
 
   return `
@@ -1847,6 +1865,17 @@ function renderTicketsPage(tickets) {
           else { location.reload(); }
         }).catch(function() { btn.textContent = "Error"; btn.disabled = false; });
       });
+      // Scroll to highlighted ticket
+      var params = new URLSearchParams(window.location.search);
+      var hl = params.get("highlight");
+      if (hl) {
+        var el = document.getElementById("ticket-" + hl);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          el.style.transition = "background 2s ease";
+          setTimeout(function() { el.style.background = ""; }, 2000);
+        }
+      }
     })();
     </script>
   `;

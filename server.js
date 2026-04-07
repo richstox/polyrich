@@ -18,6 +18,7 @@ const {
   setCachedTagData,
 } = require("./src/persistence");
 const TradeTicket = require("./models/TradeTicket");
+const crypto = require("crypto");
 const { buildIdeas } = require("./src/signal_engine");
 const {
   renderCandidate,
@@ -56,6 +57,30 @@ const {
 /** Read a numeric DB field, falling back to the legacy string alias. */
 function numField(item, numKey, strKey) {
   return typeof item[numKey] === "number" ? item[numKey] : asNumber(item[strKey], 0);
+}
+
+/**
+ * Compute a snapshot-level deduplication key.
+ * sha1(marketId|tradeability|action|entryLimit|takeProfit|riskExitLimit|maxSizeUsd|scanId)
+ * Canonicalization: null/undefined → "null"; numbers → Number(x).toString(); strings → trimmed.
+ */
+function computeDedupeKey(data) {
+  function canon(v) {
+    if (v === null || v === undefined) return "null";
+    if (typeof v === "number") return Number(v).toString();
+    return String(v).trim();
+  }
+  const parts = [
+    canon(data.marketId),
+    canon(data.tradeability),
+    canon(data.action),
+    canon(data.entryLimit),
+    canon(data.takeProfit),
+    canon(data.riskExitLimit),
+    canon(data.maxSizeUsd),
+    canon(data.scanId),
+  ].join("|");
+  return crypto.createHash("sha1").update(parts).digest("hex");
 }
 
 // ---------------------------------------------------------------------------
@@ -825,6 +850,15 @@ const server = http.createServer(async (req, res) => {
           ];
           for (const f of numericPlanFields) data[f] = null;
         }
+        // Snapshot-level idempotency via dedupeKey
+        const dedupeKey = computeDedupeKey(data);
+        data.dedupeKey = dedupeKey;
+        const existing = await TradeTicket.findOne({ dedupeKey }).lean();
+        if (existing) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(existing));
+          return;
+        }
         const ticket = await TradeTicket.create(data);
         res.writeHead(201, { "Content-Type": "application/json" });
         res.end(JSON.stringify(ticket));
@@ -908,7 +942,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/tickets") {
     try {
       const tickets = await TradeTicket.find().sort({ createdAt: -1 }).limit(500).lean();
-      const body = renderTicketsPage(tickets);
+      const highlightId = url.searchParams.get("highlight") || null;
+      const body = renderTicketsPage(tickets, highlightId);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(pageShell("Tickets", "/tickets", body));
       return;

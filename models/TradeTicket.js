@@ -37,6 +37,9 @@ const tradeTicketSchema = new mongoose.Schema(
     pnlExitUsd: { type: Number, default: null },
     pnlExitPct: { type: Number, default: null },
 
+    // Deduplication
+    dedupeKey: { type: String },
+
     // Outcome evaluation
     status: { type: String, enum: ["OPEN", "CLOSED"], default: "OPEN" },
     closedAt: { type: Date, default: null },
@@ -51,5 +54,7 @@ const tradeTicketSchema = new mongoose.Schema(
 tradeTicketSchema.index({ createdAt: -1 });
 tradeTicketSchema.index({ marketId: 1 });
 tradeTicketSchema.index({ status: 1 });
+// Snapshot-level deduplication: same card snapshot cannot be saved twice
+tradeTicketSchema.index({ dedupeKey: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model("TradeTicket", tradeTicketSchema);
