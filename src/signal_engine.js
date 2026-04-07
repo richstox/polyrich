@@ -647,6 +647,7 @@ function finalizeItem(item, inconsistencyThreshold, peerZThreshold) {
       item.peerZScore >= peerZThreshold);
   const mispricing = rawMispricing && (item.absMove >= MOMENTUM_FLOOR || item.volatility >= BREAKOUT_VOL_FLOOR);
 
+  // item.hoursLeft is always in hours (number|null) — set by getHoursLeft() in normalizer.js
   const timeLeftHours = typeof item.hoursLeft === "number" ? item.hoursLeft : 0;
 
   let mispricingTerm = (item.eventInconsistencyScore || 0) * 1.0 + (item.peerZScore || 0) * 20;
