@@ -27,6 +27,9 @@ const {
   renderMetricsUi,
   renderFilterBar,
   renderBucketSection,
+  renderTradePage,
+  renderExplorePage,
+  renderSystemPage,
   pageShell,
 } = require("./src/html_renderer");
 
@@ -264,19 +267,163 @@ const server = http.createServer(async (req, res) => {
 
   // ── / ──────────────────────────────────────────────────────────────────
   if (url.pathname === "/") {
-    const body = `
-      <h1>Polyrich</h1>
-      <p style="color:#6b7280;margin-bottom:20px;">Scanner prediction markets. Vyberte sekci:</p>
-      <div class="nav-grid">
-        <a class="nav-card" href="/ideas"><span class="icon">📊</span> Dashboard</a>
-        <a class="nav-card" href="/scan"><span class="icon">🔄</span> Spustit scan</a>
-        <a class="nav-card" href="/snapshots"><span class="icon">📸</span> Snapshoty</a>
-        <a class="nav-card" href="/health-ui"><span class="icon">💚</span> Health</a>
-        <a class="nav-card" href="/metrics-ui"><span class="icon">📈</span> Metrics</a>
-      </div>
-    `;
+    res.writeHead(302, { Location: "/trade" });
+    res.end();
+    return;
+  }
+
+  // ── /trade ─────────────────────────────────────────────────────────────
+  if (url.pathname === "/trade") {
+    try {
+      const {
+        tradeCandidates: rawCandidates, relaxedMode,
+      } = await buildIdeas(scanStatus, {});
+
+      if (scanStatus.lastScanId && rawCandidates.length > 0) {
+        await persistShownCandidates(scanStatus.lastScanId, rawCandidates).catch(() => {});
+      }
+
+      scanStatus.lastInterestingCount = rawCandidates.length;
+
+      const body = renderTradePage(scanStatus, rawCandidates, relaxedMode);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(pageShell("Trade", "/trade", body));
+      return;
+    } catch (err) {
+      scanStatus.lastError = err.message;
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(`trade error: ${err.message}`);
+      return;
+    }
+  }
+
+  // ── /explore ───────────────────────────────────────────────────────────
+  if (url.pathname === "/explore") {
+    try {
+      const forceRelaxed = url.searchParams.get("forceRelaxed") === "1";
+      const filterCatRaw = url.searchParams.get("cat") || "";
+      const filterSubRaw = url.searchParams.get("sub") || "";
+      const filterTagRaw = url.searchParams.get("tag") || "";
+      const filterCat = filterCatRaw.toLowerCase();
+      const filterSub = filterSubRaw.toLowerCase();
+      const filterTag = filterTagRaw.toLowerCase();
+
+      const {
+        tradeCandidates: rawCandidates, movers: rawMovers, mispricing: rawMispricing, funnel,
+        watchlistCount, signalsCount, mispricingCount,
+        filteredOutByGuardrails, eligibleForMispricing,
+        relaxedMode, thresholds, closestToThreshold,
+        buckets,
+      } = await buildIdeas(scanStatus, { forceRelaxed });
+
+      function matchesFilter(item) {
+        if (filterCat && (item.category || "").toLowerCase() !== filterCat) return false;
+        if (filterSub && (item.subcategory || "").toLowerCase() !== filterSub) return false;
+        if (filterTag && !(item.tagSlugs || []).some((t) => t.toLowerCase() === filterTag)) return false;
+        return true;
+      }
+
+      const tradeCandidates = rawCandidates.filter(matchesFilter);
+      const movers = rawMovers.filter(matchesFilter);
+      const mispricing = rawMispricing.filter(matchesFilter);
+
+      if (scanStatus.lastScanId && rawCandidates.length > 0) {
+        await persistShownCandidates(scanStatus.lastScanId, rawCandidates).catch(() => {});
+      }
+
+      scanStatus.lastWatchlistCount = watchlistCount || 0;
+      scanStatus.lastSignalsCount = signalsCount || 0;
+      scanStatus.lastInterestingCount = rawCandidates.length;
+      scanStatus.lastMoverCount = rawMovers.length;
+      scanStatus.lastMispricingCount = mispricingCount || 0;
+      scanStatus.lastFilteredOutByGuardrails = filteredOutByGuardrails || 0;
+      scanStatus.lastEligibleForMispricing = eligibleForMispricing || 0;
+
+      const allItems = [...rawCandidates, ...rawMovers, ...rawMispricing];
+      const categories = [...new Set(allItems.map((x) => x.category).filter(Boolean))].sort();
+      const subcategories = [...new Set(allItems.map((x) => x.subcategory).filter(Boolean))].sort();
+      const tagSlugsAll = [...new Set(allItems.flatMap((x) => x.tagSlugs || []).filter(Boolean))].sort();
+
+      const filteredBuckets = {
+        INTRADAY: (buckets ? buckets.INTRADAY : []).filter(matchesFilter),
+        THIS_WEEK: (buckets ? buckets.THIS_WEEK : []).filter(matchesFilter),
+        WATCH: (buckets ? buckets.WATCH : []).filter(matchesFilter),
+      };
+
+      const body = renderExplorePage({
+        categories, subcategories, tagSlugsAll,
+        filterActive: { cat: filterCatRaw, sub: filterSubRaw, tag: filterTagRaw },
+        tradeCandidates, movers, mispricing,
+        buckets, filteredBuckets,
+        thresholds, closestToThreshold,
+      });
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(pageShell("Explore", "/explore", body));
+      return;
+    } catch (err) {
+      scanStatus.lastError = err.message;
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(`explore error: ${err.message}`);
+      return;
+    }
+  }
+
+  // ── /system ────────────────────────────────────────────────────────────
+  if (url.pathname === "/system") {
+    const mongoOk = mongoose.connection.readyState === 1;
+    const healthData = {
+      ok: mongoOk,
+      mongoConnected: mongoOk,
+      lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
+      scanRunning,
+      ts: new Date().toISOString(),
+    };
+
+    let dbSnapshotCount = null;
+    let dbScanCount = null;
+    let recentScans = [];
+    try {
+      [dbSnapshotCount, dbScanCount, recentScans] = await Promise.all([
+        MarketSnapshot.estimatedDocumentCount(),
+        Scan.estimatedDocumentCount(),
+        Scan.find().sort({ startedAt: -1 }).limit(3).lean(),
+      ]);
+    } catch (_) {}
+
+    const last3Scans = (recentScans || []).map((s) => ({
+      scanId: s.scanId,
+      durationMs: s.durationMs ?? null,
+    }));
+
+    const metrics = {
+      lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
+      lastScanId: scanStatus.lastScanId,
+      lastTotalFetched: scanStatus.lastTotalFetched,
+      savedTarget: scanStatus.lastSavedTarget,
+      savedActual: scanStatus.lastSavedCount,
+      lastSavedCount: scanStatus.lastSavedCount,
+      lastDurationMs: scanStatus.lastDurationMs,
+      eventsFetched: scanStatus.lastEventsFetched,
+      marketsFlattened: scanStatus.lastMarketsFlattened,
+      pagesFetched: scanStatus.lastPagesFetched,
+      lastWatchlistCount: scanStatus.lastWatchlistCount,
+      lastSignalsCount: scanStatus.lastSignalsCount,
+      lastInterestingCount: scanStatus.lastInterestingCount,
+      lastMoverCount: scanStatus.lastMoverCount,
+      lastMispricingCount: scanStatus.lastMispricingCount,
+      filteredOutByGuardrails: scanStatus.lastFilteredOutByGuardrails,
+      eligibleForMispricing: scanStatus.lastEligibleForMispricing,
+      lastError: scanStatus.lastError,
+      scanRunning,
+      dbSnapshotCount,
+      dbScanCount,
+      last3Scans,
+      ts: new Date().toISOString(),
+    };
+
+    const body = renderSystemPage(healthData, metrics);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(pageShell("Domů", "/", body));
+    res.end(pageShell("System", "/system", body));
     return;
   }
 
