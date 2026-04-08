@@ -2399,7 +2399,7 @@ function renderTicketsPage(tickets, highlightId) {
     const actionLabel = t.action || "\u2014";
     const ticketOutcome = (t.groupItemTitle || "").trim();
     // Normalize stored BUY_YES/BUY_NO back to BUY YES/BUY NO for display
-    const actionNorm = actionLabel.replace("_", " ");
+    const actionNorm = actionLabel.replace(/_/g, " ");
     const { displayLabel: tkDispLabel, displayAction: tkDispAction } = formatOutcomeAction(ticketOutcome, actionNorm);
     const actionDisplay = tkDispLabel
       ? tkDispLabel + " " + tkDispAction
