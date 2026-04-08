@@ -308,34 +308,31 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── /trade ─────────────────────────────────────────────────────────────
-  if (url.pathname === "/trade") {
-    try {
-      const [
-        { tradeCandidates: rawCandidates, relaxedMode },
-        tradeSettings,
-      ] = await Promise.all([
-        buildIdeas(scanStatus, {}),
-        SystemSetting.getSettings(),
-      ]);
+if (url.pathname === "/trade") {
+  try {
+    const [{ tradeCandidates: rawCandidates, relaxedMode }, systemSettings] = await Promise.all([
+      buildIdeas(scanStatus, {}),
+      SystemSetting.getSettings(),
+    ]);
 
-      if (scanStatus.lastScanId && rawCandidates.length > 0) {
-        await persistShownCandidates(scanStatus.lastScanId, rawCandidates).catch(() => {});
-      }
-
-      scanStatus.lastInterestingCount = rawCandidates.length;
-
-      const body = renderTradePage(scanStatus, rawCandidates, relaxedMode, tradeSettings);
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(pageShell("Trade", "/trade", body));
-      return;
-    } catch (err) {
-      scanStatus.lastError = err.message;
-      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
-      res.end(`trade error: ${err.message}`);
-      return;
+    if (scanStatus.lastScanId && rawCandidates.length > 0) {
+      await persistShownCandidates(scanStatus.lastScanId, rawCandidates).catch(() => {});
     }
-  }
 
+    scanStatus.lastInterestingCount = rawCandidates.length;
+
+    const body = renderTradePage(scanStatus, rawCandidates, relaxedMode, systemSettings);
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(pageShell("Trade", "/trade", body));
+    return;
+  } catch (err) {
+    scanStatus.lastError = err.message;
+    res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end(`trade error: ${err.message}`);
+    return;
+  }
+}
+  
   // ── /explore ───────────────────────────────────────────────────────────
   if (url.pathname === "/explore") {
     try {

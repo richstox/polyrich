@@ -1063,14 +1063,13 @@ function pageShell(title, activeNav, bodyHtml) {
     // Save ticket button
     var saveBtn = e.target.closest("[data-save-ticket]");
     if (saveBtn) {
-      var payloadRaw = saveBtn.getAttribute("data-save-ticket");
-      // Inject defaultAutoCloseEnabled from trade page setting if available
-      var acEl = document.getElementById("default-autoclose-toggle");
-      if (acEl) {
+      var payload = saveBtn.getAttribute("data-save-ticket");
+      // Inject defaultAutoCloseEnabled from trade page setting
+      if (typeof window.__polyrich_defaultAutoClose === "boolean") {
         try {
-          var parsed = JSON.parse(payloadRaw);
-          parsed.autoCloseEnabled = acEl.checked;
-          payloadRaw = JSON.stringify(parsed);
+          var pObj = JSON.parse(payload);
+          pObj.autoCloseEnabled = window.__polyrich_defaultAutoClose;
+          payload = JSON.stringify(pObj);
         } catch (_) {}
       }
       saveBtn.disabled = true;
@@ -1078,7 +1077,7 @@ function pageShell(title, activeNav, bodyHtml) {
       fetch("/api/tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: payloadRaw,
+        body: payload,
       }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.error) { saveBtn.textContent = "Error"; }
         else {
@@ -1628,6 +1627,13 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
         </label>
       </div>
 
+      <div class="status-item">
+        <span class="status-label">Default Auto-Close</span>
+        <button id="default-autoclose-toggle"
+          style="padding:3px 12px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:pointer;border:1px solid ${dacEnabled ? "#166534" : "#d1d5db"};background:${dacEnabled ? "#dcfce7" : "#f3f4f6"};color:${dacEnabled ? "#166534" : "#6b7280"};"
+        >${dacEnabled ? "ON" : "OFF"}</button>
+      </div>
+
       <a href="/scan?returnTo=/trade" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
     <div id="limit-order-warning" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#991b1b;">
@@ -1708,6 +1714,24 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
       var KEY_RISK = 'polyrich_risk_pct';
       var KEY_CAP = 'polyrich_max_trade_cap_usd';
       var KEY_PROFILE = 'polyrich_risk_profile';
+      var DEFAULT_AUTOCLOSE = ${dacEnabled};
+      window.__polyrich_defaultAutoClose = DEFAULT_AUTOCLOSE;
+
+      // Default Auto-Close toggle
+      var dacToggle = document.getElementById('default-autoclose-toggle');
+      if (dacToggle) {
+        dacToggle.addEventListener('click', function() {
+          var newVal = dacToggle.textContent.trim() === 'OFF';
+          dacToggle.disabled = true;
+          dacToggle.textContent = '...';
+          fetch('/api/system/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ defaultAutoCloseEnabled: newVal })
+          }).then(function() { window.location.reload(); })
+            .catch(function() { dacToggle.textContent = 'Error'; dacToggle.disabled = false; });
+        });
+      }
 
       function escH(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
