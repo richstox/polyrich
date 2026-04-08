@@ -134,6 +134,21 @@ function safeQuestion(item) {
   return "Market (unknown question)";
 }
 
+/**
+ * Determine the canonical headline and optional subtext for a card.
+ * When an eventTitle exists and differs from the market question, the event title
+ * is used as the headline (it matches the Polymarket page the URL leads to) and
+ * the market question is demoted to muted subtext.
+ */
+function cardHeadline(item) {
+  const eventTitle = (item.eventTitle || "").trim();
+  const question = safeQuestion(item);
+  if (eventTitle && eventTitle !== question) {
+    return { headline: eventTitle, subtext: question };
+  }
+  return { headline: question, subtext: "" };
+}
+
 /** Compact "Top Pick" card for micro-trade action list */
 function renderTopPick(item) {
   const link = polymarketUrl(item);
@@ -776,6 +791,59 @@ function sharedStyles() {
   .tk-chart-msg { color: var(--tk-muted); font-size: 0.88rem; padding: 8px 0; }
   /* Misc */
   .tk-empty { color: var(--tk-muted); font-size: 0.88rem; }
+  /* ── Watchlist page ────────────────────────────────────────────── */
+  .wl-page {
+    --wl-bg: #0b1120; --wl-surface: #141c2e; --wl-border: #1e293b;
+    --wl-text: #e2e8f0; --wl-muted: #64748b; --wl-accent: #3b82f6;
+    --wl-green: #22c55e; --wl-mono: 'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;
+    color: var(--wl-text); padding-bottom: 32px;
+  }
+  .wl-explainer {
+    background: var(--wl-surface); border: 1px solid var(--wl-border);
+    border-radius: 12px; padding: 14px 18px; margin-bottom: 16px;
+    font-size: 0.88rem; color: var(--wl-muted); line-height: 1.5;
+  }
+  .wl-explainer strong { color: var(--wl-text); }
+  .wl-section-hdr {
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em;
+    color: var(--wl-muted); margin: 20px 0 10px; text-transform: uppercase;
+  }
+  .wl-badge {
+    display: inline-block; background: var(--wl-accent); color: #fff;
+    font-size: 0.68rem; border-radius: 8px; padding: 2px 8px;
+    margin-left: 6px; vertical-align: middle;
+  }
+  .wl-card {
+    background: var(--wl-surface); border: 1px solid var(--wl-border);
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 10px;
+  }
+  .wl-card.wl-highlight { border-color: var(--wl-accent); }
+  .wl-title { margin-bottom: 8px; }
+  .wl-title-link {
+    color: var(--wl-text); text-decoration: none; font-weight: 600;
+    font-size: 0.95rem; line-height: 1.35;
+  }
+  .wl-title-link:hover { text-decoration: underline; }
+  a.wl-title-link { color: var(--wl-accent); }
+  .wl-meta {
+    font-size: 0.78rem; color: var(--wl-muted); margin-bottom: 6px;
+  }
+  .wl-tag {
+    display: inline-block; background: rgba(59,130,246,.12); color: var(--wl-accent);
+    font-size: 0.7rem; border-radius: 4px; padding: 1px 6px; margin-right: 4px;
+  }
+  .wl-time { font-size: 0.75rem; color: var(--wl-muted); margin-bottom: 6px; }
+  .wl-why {
+    font-size: 0.82rem; color: var(--wl-text); margin-bottom: 10px;
+    line-height: 1.4;
+  }
+  .wl-open-btn {
+    display: inline-block; padding: 9px 18px; border-radius: 8px;
+    background: var(--wl-accent); color: #fff; font-size: 0.85rem;
+    font-weight: 700; text-decoration: none; cursor: pointer;
+    transition: background .15s;
+  }
+  .wl-open-btn:hover { background: #2563eb; }
 </style>`;
 }
 
@@ -784,6 +852,7 @@ function renderNav(active) {
   const links = [
     { href: "/trade", label: "Trade" },
     { href: "/explore", label: "Explore" },
+    { href: "/watchlist", label: "Watchlist" },
     { href: "/tickets", label: "Tickets" },
     { href: "/system", label: "System" },
   ];
@@ -867,6 +936,7 @@ function pageShell(title, activeNav, bodyHtml) {
           saveBtn.disabled = false;
           saveBtn.removeAttribute("data-save-ticket");
           saveBtn.setAttribute("data-goto-ticket", d._id);
+          if (d.tradeability === "WATCH") saveBtn.setAttribute("data-goto-watchlist", "1");
         }
       }).catch(function() { saveBtn.textContent = "Error"; saveBtn.disabled = false; });
       return;
@@ -875,7 +945,8 @@ function pageShell(title, activeNav, bodyHtml) {
     var gotoBtn = e.target.closest("[data-goto-ticket]");
     if (gotoBtn) {
       var tid = gotoBtn.getAttribute("data-goto-ticket");
-      window.location.href = "/tickets?highlight=" + encodeURIComponent(tid);
+      var dest = gotoBtn.hasAttribute("data-goto-watchlist") ? "/watchlist" : "/tickets";
+      window.location.href = dest + "?highlight=" + encodeURIComponent(tid);
       return;
     }
   });
@@ -1130,10 +1201,12 @@ function renderTradeCard(item) {
   const whyNow = whyNowSummary(item);
   const link = polymarketUrl(item);
   const safeLink = link ? escHtml(link) : "";
+  const { headline, subtext } = cardHeadline(item);
   const qText = safeQuestion(item);
+  const subtextHtml = subtext ? `<div style="font-size:0.78rem;color:#6b7280;margin-top:2px;">${escHtml(subtext)}</div>` : "";
   const questionHtml = link
-    ? `<a href="${safeLink}" target="_blank" rel="noopener" class="trade-card-title">${escHtml(qText)}</a>`
-    : `<span class="trade-card-title">${escHtml(qText)}</span>`;
+    ? `<a href="${safeLink}" target="_blank" rel="noopener" class="trade-card-title">${escHtml(headline)}</a>${subtextHtml}`
+    : `<span class="trade-card-title">${escHtml(headline)}</span>${subtextHtml}`;
 
   let entryNum = null, sizeNum = null, tpNum = null, stopNum = null;
 
@@ -1202,6 +1275,7 @@ function renderTradeCard(item) {
       source: "TRADE_PAGE",
       marketId: item.conditionId || item.marketSlug || item.question,
       eventSlug: item.eventSlug || null,
+      eventTitle: item.eventTitle || null,
       marketUrl: link || null,
       question: qText,
       tradeability: "EXECUTE",
@@ -1254,6 +1328,7 @@ function renderTradeCard(item) {
     source: "TRADE_PAGE",
     marketId: item.conditionId || item.marketSlug || item.question,
     eventSlug: item.eventSlug || null,
+    eventTitle: item.eventTitle || null,
     marketUrl: link || null,
     question: qText,
     tradeability: "WATCH",
@@ -1669,6 +1744,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       // ── Saved-state persistence ──────────────────────────────────
       // Fetch open tickets and mark cards whose dedupeKey already exists
       var openDedupeKeys = {};  // dedupeKey → ticketId
+      var openWatchIds = {};    // ticketId → true for WATCH items
 
       function canon(v) {
         if (v === null || v === undefined) return 'null';
@@ -1714,6 +1790,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var key = keys[m];
           if (openDedupeKeys[key]) {
             var b = items[m].btn;
+            var ticketId = openDedupeKeys[key];
             b.textContent = 'Saved \u2713';
             b.style.background = '#dcfce7';
             b.style.color = '#166534';
@@ -1721,7 +1798,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             b.style.cursor = 'pointer';
             b.disabled = false;
             b.removeAttribute('data-save-ticket');
-            b.setAttribute('data-goto-ticket', openDedupeKeys[key]);
+            b.setAttribute('data-goto-ticket', ticketId);
+            if (openWatchIds[ticketId]) b.setAttribute('data-goto-watchlist', '1');
           }
         }
       }
@@ -1737,6 +1815,9 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
         for (var t = 0; t < tickets.length; t++) {
           if (tickets[t].dedupeKey) {
             openDedupeKeys[tickets[t].dedupeKey] = String(tickets[t]._id);
+            if (tickets[t].tradeability === 'WATCH') {
+              openWatchIds[String(tickets[t]._id)] = true;
+            }
           }
         }
         markSavedCards();
@@ -1944,6 +2025,90 @@ function renderSystemPage(healthData, metrics) {
   `;
 }
 
+/** Render the /watchlist page body. */
+function renderWatchlistPage(items, highlightId) {
+  const extIcon = '<svg style="width:12px;height:12px;vertical-align:middle;margin-left:4px;" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3"/><path d="M9 1h6v6"/><path d="M15 1L7 9"/></svg>';
+
+  function watchCard(t) {
+    const polyUrl = t.marketUrl || (t.eventSlug
+      ? `https://polymarket.com/event/${encodeURIComponent(t.eventSlug)}`
+      : null);
+    const { headline, subtext } = cardHeadline(t);
+    const subtextEl = subtext ? `<div style="font-size:0.78rem;color:#64748b;margin-top:2px;">${escHtml(subtext)}</div>` : "";
+    const titleHtml = polyUrl
+      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" class="wl-title-link">${escHtml(headline)} ${extIcon}</a>${subtextEl}`
+      : `<span class="wl-title-link">${escHtml(headline)}</span>${subtextEl}`;
+
+    // Metadata: category / subcategory / tags
+    const metaParts = [];
+    if (t.category) metaParts.push(escHtml(t.category));
+    if (t.subcategory) metaParts.push(escHtml(t.subcategory));
+    if (Array.isArray(t.reasonCodes) && t.reasonCodes.length) {
+      metaParts.push(t.reasonCodes.map((r) => `<span class="wl-tag">${escHtml(r)}</span>`).join(" "));
+    }
+    const metaHtml = metaParts.length > 0
+      ? `<div class="wl-meta">${metaParts.join(" · ")}</div>`
+      : "";
+
+    // Time left / created date
+    const timeHtml = `<div class="wl-time">\u{1F552} Added ${utcSpan(t.createdAt)}</div>`;
+
+    // Why watch
+    const whyWatchText = t.whyWatch || t.nextStep || "";
+    const whyHtml = whyWatchText
+      ? `<div class="wl-why"><strong>WHY WATCH:</strong> ${escHtml(whyWatchText)}</div>`
+      : "";
+
+    // Open on Polymarket button
+    const polyBtn = polyUrl
+      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" class="wl-open-btn">Open on Polymarket ${extIcon}</a>`
+      : "";
+
+    const isHighlighted = highlightId && String(t._id) === highlightId;
+    const hlCls = isHighlighted ? " wl-highlight" : "";
+
+    return `
+      <div class="wl-card${hlCls}" id="ticket-${escHtml(String(t._id))}">
+        <div class="wl-title">${titleHtml}</div>
+        ${metaHtml}
+        ${timeHtml}
+        ${whyHtml}
+        ${polyBtn}
+      </div>
+    `;
+  }
+
+  const listHtml = items.length === 0
+    ? '<p style="color:#64748b;text-align:center;padding:32px 0;">No watchlist items yet. Save a WATCH from the Trade page.</p>'
+    : items.map((t) => watchCard(t)).join("");
+
+  return `
+    <div class="wl-page">
+      <div class="wl-explainer">
+        <p>\uD83D\uDC41 <strong>Watchlist</strong> is a shortlist of markets to monitor. It\u2019s not a trade journal.</p>
+      </div>
+      <div class="wl-section-hdr">WATCHLIST <span class="wl-badge">${items.length}</span></div>
+      ${listHtml}
+    </div>
+    <script>
+    (function() {
+      var params = new URLSearchParams(window.location.search);
+      var hl = params.get("highlight");
+      if (hl) {
+        var el = document.getElementById("ticket-" + hl);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          el.style.borderColor = "#3b82f6";
+          el.style.transition = "border-color 2s ease";
+          setTimeout(function() { el.style.borderColor = ""; }, 3000);
+        }
+      }
+      document.body.style.background = "#0b1120";
+    })();
+    </script>
+  `;
+}
+
 /** Render the /tickets page body. */
 function renderTicketsPage(tickets, highlightId) {
   const openTickets = tickets.filter((t) => t.status === "OPEN");
@@ -2077,10 +2242,11 @@ function renderTicketsPage(tickets, highlightId) {
     const polyUrl = t.marketUrl || (t.eventSlug
       ? `https://polymarket.com/event/${encodeURIComponent(t.eventSlug)}`
       : null);
-    const ticketQuestion = (t.question && t.question.trim()) ? t.question : "Market (unknown question)";
+    const { headline: ticketHeadline, subtext: ticketSubtext } = cardHeadline(t);
+    const subtextEl = ticketSubtext ? `<div style="font-size:0.78rem;color:#64748b;margin-top:2px;">${escHtml(ticketSubtext)}</div>` : "";
     const questionLink = polyUrl
-      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" class="tk-q-link">${escHtml(ticketQuestion)} ${extIcon}</a>`
-      : `<span class="tk-q-link">${escHtml(ticketQuestion)}</span>`;
+      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" class="tk-q-link">${escHtml(ticketHeadline)} ${extIcon}</a>${subtextEl}`
+      : `<span class="tk-q-link">${escHtml(ticketHeadline)}</span>${subtextEl}`;
     const isHighlighted = highlightId && String(t._id) === highlightId;
     const hlCls = isHighlighted ? " tk-highlight" : "";
 
@@ -2211,6 +2377,7 @@ module.exports = {
   renderExplorePage,
   renderSystemPage,
   renderTicketsPage,
+  renderWatchlistPage,
   pageShell,
   inferDirection,
   inferEntry,
@@ -2218,4 +2385,5 @@ module.exports = {
   inferExit,
   polymarketUrl,
   safeQuestion,
+  cardHeadline,
 };
