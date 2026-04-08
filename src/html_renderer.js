@@ -2727,7 +2727,7 @@ function renderTicketsPage(tickets, highlightId) {
     }
 
     return `
-      <div class="tk-ticket${hlCls}" id="ticket-${escHtml(String(t._id))}" style="position:relative;" data-end-date="${escHtml(t.endDate || "")}" data-created-at="${escHtml(t.createdAt || "")}">
+      <div class="tk-ticket${hlCls}" id="ticket-${escHtml(String(t._id))}" style="position:relative;" data-end-date="${escHtml(t.endDate || "")}" data-created-at="${escHtml(t.createdAt || "")}" data-autoclose="${showClose && isExec ? (t.autoCloseEnabled ? "1" : "0") : ""}">
         <div style="margin-bottom:6px;padding-right:${pnlBadgeHtml ? "80px" : "0"};">${questionLink}</div>
         ${pnlBadgeHtml}
         ${simBadgeHtml}
@@ -2765,7 +2765,12 @@ function renderTicketsPage(tickets, highlightId) {
         <span class="tk-sort-row">
           <button class="tk-sort-btn tk-sort-active" data-sort="end" data-section="open" title="Sort by end date">End ↑</button>
           <button class="tk-sort-btn" data-sort="saved" data-section="open" title="Sort by date saved">Saved ↑</button>
+          <button class="tk-sort-btn" data-sort="autoclose" data-section="open" title="Sort by AutoClose status">AutoClose</button>
         </span>
+      </div>
+      <div style="margin-bottom:10px;text-align:right;padding:0 4px;">
+        <button id="tk-autoclose-all-btn" style="background:#166534;color:#fff;border:none;padding:5px 14px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;margin-right:6px;" data-value="true" title="Enable AutoClose for all open tickets">Enable All AutoClose</button>
+        <button id="tk-autoclose-none-btn" style="background:#7f1d1d;color:#fff;border:none;padding:5px 14px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;" data-value="false" title="Disable AutoClose for all open tickets">Disable All AutoClose</button>
       </div>
       <div id="tk-open-list">${openListHtml}</div>
       <div class="tk-section-hdr">CLOSED <span class="tk-badge">${closedCount}</span>
@@ -2810,7 +2815,7 @@ function renderTicketsPage(tickets, highlightId) {
         window.scrollTo(0, parseInt(savedY, 10));
       }
 
-      // --- Auto-close per-ticket toggle ---
+      // --- Auto-close per-ticket toggle (in-place, no reload to preserve sort) ---
       document.addEventListener("click", function(e) {
         var btn = e.target.closest(".autoclose-toggle-btn");
         if (!btn) return;
@@ -2823,13 +2828,70 @@ function renderTicketsPage(tickets, highlightId) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ticketId: ticketId, autoCloseEnabled: value }),
         }).then(function(r) { return r.json(); }).then(function(d) {
-          if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); }
-          else {
-            sessionStorage.setItem("tk_scrollY", String(window.scrollY));
-            location.reload();
+          if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); return; }
+          // Update DOM in-place instead of reloading
+          var card = document.getElementById("ticket-" + ticketId);
+          if (card) card.setAttribute("data-autoclose", value ? "1" : "0");
+          var row = btn.closest("div");
+          var badgeSpan = row.querySelector("span > span");
+          if (value) {
+            if (badgeSpan) { badgeSpan.style.background = "#166534"; badgeSpan.style.color = "#bbf7d0"; badgeSpan.textContent = "ON"; }
+            btn.setAttribute("data-value", "false");
+            btn.textContent = "Disable";
+            btn.style.background = "#7f1d1d";
+          } else {
+            if (badgeSpan) { badgeSpan.style.background = "#374151"; badgeSpan.style.color = "#9ca3af"; badgeSpan.textContent = "OFF"; }
+            btn.setAttribute("data-value", "true");
+            btn.textContent = "Enable";
+            btn.style.background = "#166534";
           }
+          btn.disabled = false;
         }).catch(function() { btn.textContent = "Error"; btn.disabled = false; });
       });
+
+      // --- Bulk Enable/Disable All AutoClose ---
+      function handleBulkAutoClose(value) {
+        return function(e) {
+          var btn = e.target;
+          btn.disabled = true;
+          btn.textContent = "Saving…";
+          fetch("/api/tickets/autoclose-all", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ autoCloseEnabled: value }),
+          }).then(function(r) { return r.json(); }).then(function(d) {
+            if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); return; }
+            // Update all open ticket cards in-place
+            var container = document.getElementById("tk-open-list");
+            if (container) {
+              var toggleBtns = container.querySelectorAll(".autoclose-toggle-btn");
+              toggleBtns.forEach(function(tb) {
+                var card = tb.closest(".tk-ticket");
+                if (card) card.setAttribute("data-autoclose", value ? "1" : "0");
+                var row = tb.closest("div");
+                var badgeSpan = row.querySelector("span > span");
+                if (value) {
+                  if (badgeSpan) { badgeSpan.style.background = "#166534"; badgeSpan.style.color = "#bbf7d0"; badgeSpan.textContent = "ON"; }
+                  tb.setAttribute("data-value", "false");
+                  tb.textContent = "Disable";
+                  tb.style.background = "#7f1d1d";
+                } else {
+                  if (badgeSpan) { badgeSpan.style.background = "#374151"; badgeSpan.style.color = "#9ca3af"; badgeSpan.textContent = "OFF"; }
+                  tb.setAttribute("data-value", "true");
+                  tb.textContent = "Enable";
+                  tb.style.background = "#166534";
+                }
+              });
+            }
+            btn.disabled = false;
+            btn.textContent = value ? "Enable All AutoClose" : "Disable All AutoClose";
+          }).catch(function() { btn.textContent = "Error"; btn.disabled = false; });
+        };
+      }
+      var enableAllBtn = document.getElementById("tk-autoclose-all-btn");
+      var disableAllBtn = document.getElementById("tk-autoclose-none-btn");
+      if (enableAllBtn) enableAllBtn.addEventListener("click", handleBulkAutoClose(true));
+      if (disableAllBtn) disableAllBtn.addEventListener("click", handleBulkAutoClose(false));
 
       // --- Sort toggle ---
       function sortContainer(containerId, sortKey, ascending) {
@@ -2842,6 +2904,9 @@ function renderTicketsPage(tickets, highlightId) {
           if (sortKey === "end") {
             va = a.getAttribute("data-end-date") ? new Date(a.getAttribute("data-end-date")).getTime() : Infinity;
             vb = b.getAttribute("data-end-date") ? new Date(b.getAttribute("data-end-date")).getTime() : Infinity;
+          } else if (sortKey === "autoclose") {
+            va = a.getAttribute("data-autoclose") === "1" ? 1 : 0;
+            vb = b.getAttribute("data-autoclose") === "1" ? 1 : 0;
           } else {
             va = a.getAttribute("data-created-at") ? new Date(a.getAttribute("data-created-at")).getTime() : 0;
             vb = b.getAttribute("data-created-at") ? new Date(b.getAttribute("data-created-at")).getTime() : 0;
@@ -2865,7 +2930,7 @@ function renderTicketsPage(tickets, highlightId) {
           state.asc = !state.asc;
         } else {
           state.key = key;
-          state.asc = key === "end";
+          state.asc = key === "end";  // end=ascending, saved/autoclose=descending
         }
         sortContainer(containerId, state.key, state.asc);
         // Update button labels
@@ -2874,7 +2939,7 @@ function renderTicketsPage(tickets, highlightId) {
         btns.forEach(function(b) {
           b.classList.remove("tk-sort-active");
           var bKey = b.getAttribute("data-sort");
-          var label = bKey === "end" ? "End" : "Saved";
+          var label = bKey === "end" ? "End" : bKey === "autoclose" ? "AutoClose" : "Saved";
           if (bKey === state.key) {
             b.classList.add("tk-sort-active");
             b.textContent = label + (state.asc ? " \u2191" : " \u2193");
