@@ -1630,8 +1630,8 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
       <div class="status-item">
         <span class="status-label">Default Auto-Close</span>
         <button id="default-autoclose-toggle"
-          style="padding:3px 12px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:pointer;border:1px solid ${dacEnabled ? "#166534" : "#d1d5db"};background:${dacEnabled ? "#dcfce7" : "#f3f4f6"};color:${dacEnabled ? "#166534" : "#6b7280"};"
-        >${dacEnabled ? "ON" : "OFF"}</button>
+          style="padding:3px 12px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:pointer;border:1px solid ${defaultAutoClose ? "#166534" : "#d1d5db"};background:${defaultAutoClose ? "#dcfce7" : "#f3f4f6"};color:${defaultAutoClose ? "#166534" : "#6b7280"};"
+        >${defaultAutoClose ? "ON" : "OFF"}</button>
       </div>
 
       <a href="/scan?returnTo=/trade" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
@@ -1714,7 +1714,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
       var KEY_RISK = 'polyrich_risk_pct';
       var KEY_CAP = 'polyrich_max_trade_cap_usd';
       var KEY_PROFILE = 'polyrich_risk_profile';
-      var DEFAULT_AUTOCLOSE = ${dacEnabled};
+      var DEFAULT_AUTOCLOSE = ${defaultAutoClose};
       window.__polyrich_defaultAutoClose = DEFAULT_AUTOCLOSE;
 
       // Default Auto-Close toggle
