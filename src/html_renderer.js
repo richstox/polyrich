@@ -1501,7 +1501,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
           style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
       </div>
 
-      <a href="/scan" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
+      <a href="/scan?returnTo=/trade" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
     <div id="limit-order-warning" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#991b1b;">
       ⚠️ Max trade cap must be at least $5 for limit orders.
