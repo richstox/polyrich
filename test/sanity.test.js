@@ -1054,10 +1054,34 @@ console.log("\nfinal selection: mispricing quota");
     }, overrides);
   }
 
-  // 1) Multi-outcome: groupItemTitle present → pill must contain it
-  const sportsCard = renderTradeCard(makeTradeItem({ groupItemTitle: "Blue Jackets" }));
-  assert(sportsCard.includes("Blue Jackets BUY YES"),
-    "multi-outcome sports: pill contains 'Blue Jackets BUY YES'");
+  // 1) Multi-outcome with outcomes array: uses outcomes[0] for Buy action, keeps groupItemTitle as label
+  const sportsCard = renderTradeCard(makeTradeItem({
+    groupItemTitle: "Blue Jackets",
+    outcomes: ["CBJ", "BUF"],
+  }));
+  assert(sportsCard.includes("Blue Jackets Buy CBJ"),
+    "multi-outcome sports with outcomes: pill contains 'Blue Jackets Buy CBJ' (groupItemTitle + button label)");
+  assert(!sportsCard.includes("Buy Blue Jackets"),
+    "multi-outcome sports with outcomes: pill does NOT use groupItemTitle 'Buy Blue Jackets'");
+
+  // 1b) Multi-outcome WITHOUT outcomes array: falls back to groupItemTitle
+  const sportsCardNoOC = renderTradeCard(makeTradeItem({ groupItemTitle: "Blue Jackets" }));
+  assert(sportsCardNoOC.includes("Buy Blue Jackets"),
+    "multi-outcome sports without outcomes: pill falls back to 'Buy Blue Jackets'");
+  assert(!sportsCardNoOC.includes("Blue Jackets BUY YES"),
+    "multi-outcome sports without outcomes: pill does NOT contain 'Blue Jackets BUY YES'");
+
+  // 1c) NHL-style: groupItemTitle "Wild", outcomes ["MIN", "DAL"]
+  const nhlCard = renderTradeCard(makeTradeItem({
+    question: "Wild vs. Stars",
+    eventTitle: "Wild vs. Stars",
+    groupItemTitle: "Wild",
+    outcomes: ["MIN", "DAL"],
+  }));
+  assert(nhlCard.includes("Wild Buy MIN"),
+    "NHL sports: pill contains 'Wild Buy MIN' (groupItemTitle + button label)");
+  assert(!nhlCard.includes("Buy Wild"),
+    "NHL sports: pill does NOT use groupItemTitle 'Buy Wild'");
 
   // 2) Multi-outcome date: groupItemTitle = "April 15"
   const dateCard = renderTradeCard(makeTradeItem({
@@ -1065,8 +1089,10 @@ console.log("\nfinal selection: mispricing quota");
     eventTitle: "Trump announces end of military operations against Iran by ...?",
     groupItemTitle: "April 15",
   }));
-  assert(dateCard.includes("April 15 BUY YES"),
-    "multi-outcome date: pill contains 'April 15 BUY YES'");
+  assert(dateCard.includes("Buy April 15"),
+    "multi-outcome date: pill contains 'Buy April 15'");
+  assert(!dateCard.includes("April 15 BUY YES"),
+    "multi-outcome date: pill does NOT contain 'April 15 BUY YES'");
 
   // 3) Multi-outcome range: groupItemTitle = "130+"
   const rangeCard = renderTradeCard(makeTradeItem({
@@ -1074,8 +1100,10 @@ console.log("\nfinal selection: mispricing quota");
     eventTitle: "# of seats won by TISZA in Hungary parliamentary election?",
     groupItemTitle: "130+",
   }));
-  assert(rangeCard.includes("130+ BUY YES"),
-    "multi-outcome range: pill contains '130+ BUY YES'");
+  assert(rangeCard.includes("Buy 130+"),
+    "multi-outcome range: pill contains 'Buy 130+'");
+  assert(!rangeCard.includes("130+ BUY YES"),
+    "multi-outcome range: pill does NOT contain '130+ BUY YES'");
 
   // 4) Single-outcome: no groupItemTitle → pill must NOT have double space before BUY
   const singleCard = renderTradeCard(makeTradeItem({ groupItemTitle: "" }));
@@ -1124,10 +1152,34 @@ console.log("\nfinal selection: mispricing quota");
   assert(r3.displayLabel === "Over/Under 2.5", "O/U 2.5 + WATCH → displayLabel 'Over/Under 2.5'");
   assert(r3.displayAction === "WATCH", "O/U 2.5 + WATCH → displayAction unchanged");
 
-  // Non-O/U label passes through
+  // Non-O/U label with BUY YES → "Buy {label}" (no outcomes, fallback)
   const r4 = formatOutcomeAction("Blue Jackets", "BUY YES");
-  assert(r4.displayLabel === "Blue Jackets", "non-O/U: displayLabel unchanged");
-  assert(r4.displayAction === "BUY YES", "non-O/U: displayAction unchanged");
+  assert(r4.displayLabel === "", "non-O/U BUY YES: displayLabel empty (folded into action)");
+  assert(r4.displayAction === "Buy Blue Jackets", "non-O/U BUY YES no outcomes: displayAction 'Buy Blue Jackets'");
+
+  // Non-O/U label with BUY YES + outcomes array → prefer outcomes[0], keep groupItemTitle as label
+  const r4x = formatOutcomeAction("Wild", "BUY YES", ["MIN", "DAL"]);
+  assert(r4x.displayLabel === "Wild", "non-O/U BUY YES+outcomes: displayLabel is groupItemTitle 'Wild'");
+  assert(r4x.displayAction === "Buy MIN", "non-O/U BUY YES+outcomes: displayAction 'Buy MIN'");
+
+  // Non-O/U label with BUY NO + outcomes array → prefer outcomes[1], keep groupItemTitle as label
+  const r4y = formatOutcomeAction("Wild", "BUY NO", ["MIN", "DAL"]);
+  assert(r4y.displayLabel === "Wild", "non-O/U BUY NO+outcomes: displayLabel is groupItemTitle 'Wild'");
+  assert(r4y.displayAction === "Fade DAL", "non-O/U BUY NO+outcomes: displayAction 'Fade DAL'");
+
+  // Non-O/U label with generic outcomes ["Yes","No"] → fallback to groupItemTitle
+  const r4z = formatOutcomeAction("Blue Jackets", "BUY YES", ["Yes", "No"]);
+  assert(r4z.displayAction === "Buy Blue Jackets", "generic outcomes fallback: displayAction 'Buy Blue Jackets'");
+
+  // Non-O/U label with BUY NO → "Fade {label}" (no outcomes)
+  const r4b = formatOutcomeAction("Blue Jackets", "BUY NO");
+  assert(r4b.displayLabel === "", "non-O/U BUY NO: displayLabel empty");
+  assert(r4b.displayAction === "Fade Blue Jackets", "non-O/U BUY NO: displayAction 'Fade Blue Jackets'");
+
+  // Non-O/U label with WATCH → passes through unchanged
+  const r4c = formatOutcomeAction("Blue Jackets", "WATCH");
+  assert(r4c.displayLabel === "Blue Jackets", "non-O/U WATCH: displayLabel unchanged");
+  assert(r4c.displayAction === "WATCH", "non-O/U WATCH: displayAction unchanged");
 
   // Empty label passes through
   const r5 = formatOutcomeAction("", "BUY YES");

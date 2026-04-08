@@ -1306,23 +1306,50 @@ function whyNowSummary(item) {
  * rewrite the display so the action pill reads clearly:
  *   "Over 2.5 Buy Over @ $0.43"  instead of  "O/U 2.5 BUY YES @ $0.43"
  *
+ * For other multi-outcome markets, use the Polymarket button label from the
+ * outcomes array (e.g. "MIN" for Minnesota Wild) so the pill matches what the
+ * user clicks on Polymarket.  Falls back to groupItemTitle when outcomes is
+ * absent or generic ("Yes"/"No").
+ *
  * Returns { displayLabel, displayAction } — the human-readable outcome label and
- * action text.  For non-O/U markets the values pass through unchanged.
+ * action text.  For binary markets the values pass through unchanged.
  */
 const OU_PATTERN = /^O\/U\s+(.+)$/i;
+const GENERIC_OUTCOMES = new Set(["yes", "no"]);
 
-function formatOutcomeAction(rawLabel, rawAction) {
+function formatOutcomeAction(rawLabel, rawAction, outcomes) {
   const m = OU_PATTERN.exec(rawLabel);
-  if (!m) return { displayLabel: rawLabel, displayAction: rawAction };
-  const line = m[1]; // e.g. "2.5"
-  if (rawAction === "BUY YES") {
-    return { displayLabel: `Over ${line}`, displayAction: "Buy Over" };
+  if (m) {
+    const line = m[1]; // e.g. "2.5"
+    if (rawAction === "BUY YES") {
+      return { displayLabel: `Over ${line}`, displayAction: "Buy Over" };
+    }
+    if (rawAction === "BUY NO") {
+      return { displayLabel: `Under ${line}`, displayAction: "Buy Under" };
+    }
+    // WATCH — keep descriptive label but expand abbreviation
+    return { displayLabel: `Over/Under ${line}`, displayAction: rawAction };
   }
-  if (rawAction === "BUY NO") {
-    return { displayLabel: `Under ${line}`, displayAction: "Buy Under" };
+
+  // Non-O/U multi-outcome: fold outcome name into the action so the pill
+  // reads "Buy {buttonName}" matching the Polymarket buy button.
+  // Prefer outcomes[0] (the Polymarket button label, e.g. "MIN") over
+  // groupItemTitle (the full name, e.g. "Wild").
+  // When the button label differs from groupItemTitle, keep groupItemTitle as
+  // displayLabel so the pill shows both: "Wild Buy MIN @ $0.45".
+  if (rawLabel) {
+    const arr = Array.isArray(outcomes) ? outcomes : [];
+    const yesName = arr[0] && !GENERIC_OUTCOMES.has(arr[0].toLowerCase()) ? arr[0] : rawLabel;
+    const noName  = arr[1] && !GENERIC_OUTCOMES.has(arr[1].toLowerCase()) ? arr[1] : rawLabel;
+    if (rawAction === "BUY YES") {
+      return { displayLabel: yesName !== rawLabel ? rawLabel : "", displayAction: `Buy ${yesName}` };
+    }
+    if (rawAction === "BUY NO") {
+      return { displayLabel: noName !== rawLabel ? rawLabel : "", displayAction: `Fade ${noName}` };
+    }
   }
-  // WATCH — keep descriptive label but expand abbreviation
-  return { displayLabel: `Over/Under ${line}`, displayAction: rawAction };
+
+  return { displayLabel: rawLabel, displayAction: rawAction };
 }
 
 /** Render a single trade card for the /trade page. */
@@ -1336,6 +1363,7 @@ function renderTradeCard(item) {
   // For multi-outcome grouped markets, prefix the action with the outcome label
   // so the customer knows exactly which outcome to act on (e.g. "Over 2.5 Buy Over")
   const outcomeLabel = (item.groupItemTitle || "").trim();
+  const outcomes = item.outcomes || [];
   const subtextHtml = subtext ? `<div style="font-size:0.78rem;color:#6b7280;margin-top:2px;">${escHtml(subtext)}</div>` : "";
   const questionHtml = link
     ? `<a href="${safeLink}" target="_blank" rel="noopener" class="trade-card-title">${escHtml(headline)}</a>${subtextHtml}`
@@ -1371,7 +1399,7 @@ function renderTradeCard(item) {
   const isExecute = action !== "WATCH";
 
   // Rewrite abbreviated O/U labels into clear Over/Under text
-  const { displayLabel, displayAction } = formatOutcomeAction(outcomeLabel, action);
+  const { displayLabel, displayAction } = formatOutcomeAction(outcomeLabel, action, outcomes);
 
   // Debug section (shared between EXECUTE and WATCH)
   const debugHtml = `
@@ -1436,7 +1464,7 @@ function renderTradeCard(item) {
     });
 
     return `
-      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}" data-end-date="${escHtml(item.endDate || "")}">
+      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}" data-outcomes="${escHtml(JSON.stringify(outcomes))}" data-end-date="${escHtml(item.endDate || "")}">
         <div class="trade-card-header">${questionHtml}</div>
         <div class="action-pill ${actionCls}">\u26A1 ${displayLabel ? escHtml(displayLabel) + " " : ""}${escHtml(displayAction)} @ $${entryNum.toFixed(2)}</div>
         <div class="trade-size-row trade-plan-item" style="margin-bottom:6px;"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
@@ -1621,13 +1649,25 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
 
       // Client-side O/U → Over/Under rewrite (mirrors server-side formatOutcomeAction)
       var OU_RE = /^O\\/U\\s+(.+)$/i;
-      function fmtOA(label, act) {
+      var GENERIC_OC = { yes: 1, no: 1 };
+      function fmtOA(label, act, outcomes) {
         var m = OU_RE.exec(label);
-        if (!m) return { dl: label, da: act };
-        var line = m[1];
-        if (act === 'BUY YES') return { dl: 'Over ' + line, da: 'Buy Over' };
-        if (act === 'BUY NO') return { dl: 'Under ' + line, da: 'Buy Under' };
-        return { dl: 'Over/Under ' + line, da: act };
+        if (m) {
+          var line = m[1];
+          if (act === 'BUY YES') return { dl: 'Over ' + line, da: 'Buy Over' };
+          if (act === 'BUY NO') return { dl: 'Under ' + line, da: 'Buy Under' };
+          return { dl: 'Over/Under ' + line, da: act };
+        }
+        // Non-O/U multi-outcome: prefer Polymarket button label from outcomes
+        // Keep groupItemTitle as dl when it differs from the button label
+        if (label) {
+          var arr = Array.isArray(outcomes) ? outcomes : [];
+          var yn = arr[0] && !GENERIC_OC[arr[0].toLowerCase()] ? arr[0] : label;
+          var nn = arr[1] && !GENERIC_OC[arr[1].toLowerCase()] ? arr[1] : label;
+          if (act === 'BUY YES') return { dl: yn !== label ? label : '', da: 'Buy ' + yn };
+          if (act === 'BUY NO') return { dl: nn !== label ? label : '', da: 'Fade ' + nn };
+        }
+        return { dl: label, da: act };
       }
 
       var PRESETS = {
@@ -1744,6 +1784,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var market = card.getAttribute('data-market') || '';
           var act = card.getAttribute('data-action') || '';
           var outcome = card.getAttribute('data-outcome') || '';
+          var outcomesRaw = card.getAttribute('data-outcomes') || '[]';
+          var outcomesArr; try { outcomesArr = JSON.parse(outcomesRaw); } catch(_) { outcomesArr = []; }
           if (isNaN(hMax) || isNaN(entry) || entry <= 0) continue;
 
           var maxSizeRaw;
@@ -1760,7 +1802,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             var pillEl = card.querySelector('.action-pill');
             if (pillEl) {
               pillEl.className = 'action-pill pill-watch';
-              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH' + (outcome ? ' \\u00B7 ' + escH(fmtOA(outcome, act).dl || outcome) : '');
+              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH' + (outcome ? ' \\u00B7 ' + escH(fmtOA(outcome, act, outcomesArr).dl || outcome) : '');
             }
             var planGrid = card.querySelector('.trade-plan-grid');
             if (planGrid) planGrid.style.display = 'none';
@@ -1809,7 +1851,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var pillEl2 = card.querySelector('.action-pill');
           if (pillEl2 && pillEl2.className.indexOf('pill-watch') !== -1) {
             pillEl2.className = 'action-pill pill-buy-yes';
-            var oa = fmtOA(outcome, act);
+            var oa = fmtOA(outcome, act, outcomesArr);
             pillEl2.innerHTML = '\\u26A1 ' + (oa.dl ? escH(oa.dl) + ' ' : '') + escH(oa.da) + ' @ $' + entry.toFixed(2);
           }
           var planGrid3 = card.querySelector('.trade-plan-grid');
@@ -2400,7 +2442,7 @@ function renderTicketsPage(tickets, highlightId) {
     const ticketOutcome = (t.groupItemTitle || "").trim();
     // Normalize stored BUY_YES/BUY_NO back to BUY YES/BUY NO for display
     const actionNorm = actionLabel.replace(/_/g, " ");
-    const { displayLabel: tkDispLabel, displayAction: tkDispAction } = formatOutcomeAction(ticketOutcome, actionNorm);
+    const { displayLabel: tkDispLabel, displayAction: tkDispAction } = formatOutcomeAction(ticketOutcome, actionNorm, t.outcomes);
     const actionDisplay = tkDispLabel
       ? tkDispLabel + " " + tkDispAction
       : tkDispAction;

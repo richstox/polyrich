@@ -100,9 +100,17 @@ function normalizeMarket(item) {
     }));
   }
 
+  // Preserve the outcomes array (e.g. ["MIN", "DAL"]) — these are the short
+  // names shown on Polymarket buy buttons and may differ from groupItemTitle.
+  const rawOutcomes = item.outcomes;
+  const outcomes = Array.isArray(rawOutcomes)
+    ? rawOutcomes.map((o) => (typeof o === "string" ? o : (o && o.title) || "")).filter(Boolean)
+    : [];
+
   return {
     question,
     groupItemTitle: item.groupItemTitle || "",
+    outcomes,
     eventTitle: item.eventTitle || "",
     category: item.category || "",
     subcategory: item.subcategory || "",
