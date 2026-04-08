@@ -310,9 +310,10 @@ const server = http.createServer(async (req, res) => {
   // ── /trade ─────────────────────────────────────────────────────────────
   if (url.pathname === "/trade") {
     try {
-      const {
-        tradeCandidates: rawCandidates, relaxedMode,
-      } = await buildIdeas(scanStatus, {});
+      const [{ tradeCandidates: rawCandidates, relaxedMode }, systemSettings] = await Promise.all([
+        buildIdeas(scanStatus, {}),
+        SystemSetting.getSettings(),
+      ]);
 
       if (scanStatus.lastScanId && rawCandidates.length > 0) {
         await persistShownCandidates(scanStatus.lastScanId, rawCandidates).catch(() => {});
@@ -320,7 +321,7 @@ const server = http.createServer(async (req, res) => {
 
       scanStatus.lastInterestingCount = rawCandidates.length;
 
-      const body = renderTradePage(scanStatus, rawCandidates, relaxedMode);
+      const body = renderTradePage(scanStatus, rawCandidates, relaxedMode, systemSettings);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(pageShell("Trade", "/trade", body));
       return;
@@ -861,9 +862,10 @@ const server = http.createServer(async (req, res) => {
         const update = {};
         if (typeof data.autoModeEnabled === "boolean") update.autoModeEnabled = data.autoModeEnabled;
         if (typeof data.paperCloseEnabled === "boolean") update.paperCloseEnabled = data.paperCloseEnabled;
+        if (typeof data.defaultAutoCloseEnabled === "boolean") update.defaultAutoCloseEnabled = data.defaultAutoCloseEnabled;
         if (Object.keys(update).length === 0) {
           res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Provide at least one boolean field: autoModeEnabled, paperCloseEnabled" }));
+          res.end(JSON.stringify({ error: "Provide at least one boolean field: autoModeEnabled, paperCloseEnabled, defaultAutoCloseEnabled" }));
           return;
         }
         const doc = await SystemSetting.findOneAndUpdate(

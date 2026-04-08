@@ -7,6 +7,7 @@ const systemSettingSchema = new mongoose.Schema(
     _id: { type: String, default: "system" },
     autoModeEnabled: { type: Boolean, default: false },
     paperCloseEnabled: { type: Boolean, default: false },
+    defaultAutoCloseEnabled: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
@@ -17,7 +18,7 @@ const systemSettingSchema = new mongoose.Schema(
 systemSettingSchema.statics.getSettings = async function () {
   return this.findOneAndUpdate(
     { _id: "system" },
-    { $setOnInsert: { autoModeEnabled: false, paperCloseEnabled: false } },
+    { $setOnInsert: { autoModeEnabled: false, paperCloseEnabled: false, defaultAutoCloseEnabled: false } },
     { upsert: true, new: true, lean: true }
   );
 };
