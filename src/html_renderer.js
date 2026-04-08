@@ -836,6 +836,23 @@ function sharedStyles() {
   }
   .tk-type-exec { background: rgba(34,197,94,.15); color: var(--tk-green); }
   .tk-type-watch { background: rgba(100,116,139,.18); color: var(--tk-muted); }
+  .tk-action-pill {
+    display: inline-block; padding: 4px 14px; border-radius: 20px;
+    font-weight: 700; font-size: 0.82rem; letter-spacing: 0.03em;
+    margin-bottom: 4px;
+  }
+  .tk-pill-buy { background: rgba(34,197,94,.15); color: var(--tk-green); }
+  .tk-pill-watch { background: rgba(100,116,139,.18); color: var(--tk-muted); }
+  .tk-sort-row {
+    display: inline-flex; align-items: center; gap: 6px; margin-left: auto;
+  }
+  .tk-sort-btn {
+    background: var(--tk-border); color: var(--tk-text); border: none;
+    border-radius: 6px; padding: 3px 10px; font-size: 0.68rem; font-weight: 600;
+    cursor: pointer; letter-spacing: 0.04em; transition: background .15s;
+  }
+  .tk-sort-btn:hover { background: #334155; }
+  .tk-sort-btn.tk-sort-active { background: var(--tk-accent); color: #fff; }
   .tk-time-left {
     font-size: 0.72rem; color: var(--tk-muted);
   }
@@ -2435,9 +2452,6 @@ function renderTicketsPage(tickets, highlightId) {
   // --- Ticket card renderer ---
   function ticketCard(t, showClose) {
     const isExec = t.tradeability === "EXECUTE";
-    const typeBadge = isExec
-      ? '<span class="tk-type-badge tk-type-exec">\u26A1 EXEC</span>'
-      : '<span class="tk-type-badge tk-type-watch">\uD83D\uDC41 WATCH</span>';
     const actionLabel = t.action || "\u2014";
     const ticketOutcome = (t.groupItemTitle || "").trim();
     // Normalize stored BUY_YES/BUY_NO back to BUY YES/BUY NO for display
@@ -2450,6 +2464,11 @@ function renderTicketsPage(tickets, highlightId) {
     const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "\u2014";
     const tp = typeof t.takeProfit === "number" ? "$" + t.takeProfit.toFixed(2) : "\u2014";
     const sl = typeof t.riskExitLimit === "number" ? "$" + t.riskExitLimit.toFixed(2) : "\u2014";
+    // Action pill matching trade-card style (⚡ Buy 240-259 @ $0.40)
+    const entryAtPrice = typeof t.entryLimit === "number" ? ` @ $${t.entryLimit.toFixed(2)}` : "";
+    const pillIcon = isExec ? "\u26A1" : "\uD83D\uDC41";
+    const pillCls = isExec ? "tk-pill-buy" : "tk-pill-watch";
+    const actionPillHtml = `<div class="tk-action-pill ${pillCls}">${pillIcon} ${escHtml(actionDisplay)}${entryAtPrice}</div>`;
     const polyUrl = t.marketUrl || (t.eventSlug
       ? `https://polymarket.com/event/${encodeURIComponent(t.eventSlug)}`
       : null);
@@ -2506,12 +2525,11 @@ function renderTicketsPage(tickets, highlightId) {
     }
 
     return `
-      <div class="tk-ticket${hlCls}" id="ticket-${escHtml(String(t._id))}" style="position:relative;">
+      <div class="tk-ticket${hlCls}" id="ticket-${escHtml(String(t._id))}" style="position:relative;" data-end-date="${escHtml(t.endDate || "")}" data-created-at="${escHtml(t.createdAt || "")}">
         <div style="margin-bottom:6px;padding-right:${pnlBadgeHtml ? "80px" : "0"};">${questionLink}</div>
         ${pnlBadgeHtml}
+        ${actionPillHtml}
         <div class="tk-meta-row">
-          ${typeBadge}
-          <span>${escHtml(actionDisplay)}</span>
           <span>\u{1F552} ${utcSpan(t.createdAt)}</span>
           ${timeLeftHtml}
         </div>
@@ -2539,13 +2557,24 @@ function renderTicketsPage(tickets, highlightId) {
     <div class="tk-page">
       ${summaryHtml}
       ${equityChartHtml}
-      <div class="tk-section-hdr">OPEN <span class="tk-badge">${openCount}</span></div>
-      ${openListHtml}
-      <div class="tk-section-hdr">CLOSED <span class="tk-badge">${closedCount}</span></div>
-      ${closedListHtml}
+      <div class="tk-section-hdr">OPEN <span class="tk-badge">${openCount}</span>
+        <span class="tk-sort-row">
+          <button class="tk-sort-btn tk-sort-active" data-sort="end" data-section="open" title="Sort by end date">End ↑</button>
+          <button class="tk-sort-btn" data-sort="saved" data-section="open" title="Sort by date saved">Saved ↑</button>
+        </span>
+      </div>
+      <div id="tk-open-list">${openListHtml}</div>
+      <div class="tk-section-hdr">CLOSED <span class="tk-badge">${closedCount}</span>
+        <span class="tk-sort-row">
+          <button class="tk-sort-btn tk-sort-active" data-sort="saved" data-section="closed" title="Sort by date saved">Saved ↓</button>
+          <button class="tk-sort-btn" data-sort="end" data-section="closed" title="Sort by end date">End ↓</button>
+        </span>
+      </div>
+      <div id="tk-closed-list">${closedListHtml}</div>
     </div>
     <script>
     (function() {
+      // --- Close ticket (preserve scroll position) ---
       document.addEventListener("click", function(e) {
         var btn = e.target.closest(".close-ticket-btn");
         if (!btn) return;
@@ -2562,8 +2591,72 @@ function renderTicketsPage(tickets, highlightId) {
           body: JSON.stringify({ ticketId: ticketId, closePrice: closePrice }),
         }).then(function(r) { return r.json(); }).then(function(d) {
           if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); }
-          else { location.reload(); }
+          else {
+            // Preserve scroll position across reload
+            sessionStorage.setItem("tk_scrollY", String(window.scrollY));
+            location.reload();
+          }
         }).catch(function() { btn.textContent = "Error"; btn.disabled = false; });
+      });
+
+      // Restore scroll position after close-triggered reload
+      var savedY = sessionStorage.getItem("tk_scrollY");
+      if (savedY !== null) {
+        sessionStorage.removeItem("tk_scrollY");
+        window.scrollTo(0, parseInt(savedY, 10));
+      }
+
+      // --- Sort toggle ---
+      function sortContainer(containerId, sortKey, ascending) {
+        var container = document.getElementById(containerId);
+        if (!container) return;
+        var cards = Array.prototype.slice.call(container.querySelectorAll(".tk-ticket"));
+        if (cards.length === 0) return;
+        cards.sort(function(a, b) {
+          var va, vb;
+          if (sortKey === "end") {
+            va = a.getAttribute("data-end-date") ? new Date(a.getAttribute("data-end-date")).getTime() : Infinity;
+            vb = b.getAttribute("data-end-date") ? new Date(b.getAttribute("data-end-date")).getTime() : Infinity;
+          } else {
+            va = a.getAttribute("data-created-at") ? new Date(a.getAttribute("data-created-at")).getTime() : 0;
+            vb = b.getAttribute("data-created-at") ? new Date(b.getAttribute("data-created-at")).getTime() : 0;
+          }
+          return ascending ? va - vb : vb - va;
+        });
+        cards.forEach(function(c) { container.appendChild(c); });
+      }
+
+      // Track sort state per section
+      var sortState = { open: { key: "end", asc: true }, closed: { key: "saved", asc: false } };
+
+      document.addEventListener("click", function(e) {
+        var sortBtn = e.target.closest(".tk-sort-btn");
+        if (!sortBtn) return;
+        var section = sortBtn.getAttribute("data-section");
+        var key = sortBtn.getAttribute("data-sort");
+        var containerId = section === "open" ? "tk-open-list" : "tk-closed-list";
+        var state = sortState[section];
+        if (state.key === key) {
+          state.asc = !state.asc;
+        } else {
+          state.key = key;
+          state.asc = key === "end";
+        }
+        sortContainer(containerId, state.key, state.asc);
+        // Update button labels
+        var row = sortBtn.parentElement;
+        var btns = row.querySelectorAll(".tk-sort-btn");
+        btns.forEach(function(b) {
+          b.classList.remove("tk-sort-active");
+          var bKey = b.getAttribute("data-sort");
+          var label = bKey === "end" ? "End" : "Saved";
+          if (bKey === state.key) {
+            b.classList.add("tk-sort-active");
+            b.textContent = label + (state.asc ? " \u2191" : " \u2193");
+          } else {
+            b.textContent = label;
+          }
+        });
       });
       // Scroll to highlighted ticket
       var params = new URLSearchParams(window.location.search);
