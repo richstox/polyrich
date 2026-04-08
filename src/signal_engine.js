@@ -604,6 +604,7 @@ function enrichItem(item, historyMap, recentlyShownSet) {
     marketSlug: item.marketSlug || "",
     eventSlug: item.eventSlug || "",
     conditionId: item.conditionId || "",
+    groupItemTitle: item.groupItemTitle || "",
     tagIds: item.tagIds || [],
     tagSlugs: item.tagSlugs || [],
     eventGroup: safeGroupEvent(item),
