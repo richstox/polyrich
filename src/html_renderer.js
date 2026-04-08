@@ -1401,7 +1401,8 @@ function renderTradeCard(item) {
     return `
       <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}">
         <div class="trade-card-header">${questionHtml}</div>
-        <div class="action-pill ${actionCls}">\u26A1 EXECUTE \u00B7 ${outcomeLabel ? escHtml(outcomeLabel) + " " : ""}${escHtml(action)}</div>
+        <div class="action-pill ${actionCls}">\u26A1 ${outcomeLabel ? escHtml(outcomeLabel) + " " : ""}${escHtml(action)} @ $${entryNum.toFixed(2)} \u2014 LIMIT ORDER</div>
+        <p class="exec-instruction" style="margin:0 0 10px;font-size:0.82rem;color:#374151;">\u2192 Place a <strong>LIMIT order</strong> to <strong>${escHtml(action)}</strong>${outcomeLabel ? " on <strong>" + escHtml(outcomeLabel) + "</strong>" : ""} at <strong>$${entryNum.toFixed(2)}</strong> on Polymarket</p>
         <div class="trade-plan-grid">
           <div class="trade-plan-item"><span class="trade-plan-label">ENTRY LIMIT</span><span class="trade-plan-value">$${entryNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
@@ -1714,6 +1715,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             }
             var planGrid = card.querySelector('.trade-plan-grid');
             if (planGrid) planGrid.style.display = 'none';
+            var instrHide = card.querySelector('.exec-instruction');
+            if (instrHide) instrHide.style.display = 'none';
             var whyBlock = card.querySelector('.min-order-watch');
             if (!whyBlock) {
               whyBlock = document.createElement('div');
@@ -1757,8 +1760,11 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var pillEl2 = card.querySelector('.action-pill');
           if (pillEl2 && pillEl2.className.indexOf('pill-watch') !== -1) {
             pillEl2.className = 'action-pill pill-buy-yes';
-            pillEl2.innerHTML = '\\u26A1 EXECUTE \\u00B7 ' + (outcome ? outcome + ' ' : '') + act;
+            pillEl2.innerHTML = '\\u26A1 ' + (outcome ? outcome + ' ' : '') + act + ' @ $' + entry.toFixed(2) + ' \\u2014 LIMIT ORDER';
           }
+          // Restore instruction subtitle if it was hidden
+          var instrEl = card.querySelector('.exec-instruction');
+          if (instrEl) { instrEl.style.display = ''; instrEl.innerHTML = '\\u2192 Place a <strong>LIMIT order</strong> to <strong>' + act + '</strong>' + (outcome ? ' on <strong>' + outcome + '</strong>' : '') + ' at <strong>$' + entry.toFixed(2) + '</strong> on Polymarket'; }
           var planGrid3 = card.querySelector('.trade-plan-grid');
           if (planGrid3) planGrid3.style.display = '';
           var whyBlock2 = card.querySelector('.min-order-watch');
@@ -2029,10 +2035,9 @@ function renderExplorePage(data) {
         const exits = inferExit(entryNum);
         if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
           return `<div style="margin-top:8px;padding:8px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;font-size:0.78rem;">
-            <span style="font-weight:700;color:#166534;">⚡ EXECUTE</span>
-            <span style="margin-left:10px;"><span style="color:#6b7280;">ENTRY LIMIT</span> <strong>$${entryNum.toFixed(2)}</strong></span>
-            <span style="margin-left:10px;"><span style="color:#6b7280;">TAKE PROFIT</span> <strong>$${exits.tp.toFixed(2)}</strong></span>
-            <span style="margin-left:10px;"><span style="color:#6b7280;">RISK EXIT LIMIT</span> <strong>$${exits.stop.toFixed(2)}</strong></span>
+            <span style="font-weight:700;color:#166534;">⚡ ${escHtml(dir.action)} @ $${entryNum.toFixed(2)} — LIMIT ORDER</span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">TP</span> <strong>$${exits.tp.toFixed(2)}</strong></span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">SL</span> <strong>$${exits.stop.toFixed(2)}</strong></span>
           </div>`;
         }
       }
