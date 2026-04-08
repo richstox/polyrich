@@ -42,6 +42,9 @@ const tradeTicketSchema = new mongoose.Schema(
     // Deduplication
     dedupeKey: { type: String },
 
+    // Market end date (for time-remaining display)
+    endDate: { type: String, default: null },
+
     // Outcome evaluation
     status: { type: String, enum: ["OPEN", "CLOSED"], default: "OPEN" },
     closedAt: { type: Date, default: null },

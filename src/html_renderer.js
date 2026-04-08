@@ -833,6 +833,12 @@ function sharedStyles() {
   }
   .tk-type-exec { background: rgba(34,197,94,.15); color: var(--tk-green); }
   .tk-type-watch { background: rgba(100,116,139,.18); color: var(--tk-muted); }
+  .tk-time-left {
+    font-size: 0.72rem; color: var(--tk-muted);
+  }
+  .tk-time-urgent {
+    color: #f59e0b; font-weight: 600;
+  }
   .tk-price-grid {
     display: grid; grid-template-columns: repeat(4, 1fr);
     gap: 4px 8px; margin-bottom: 10px;
@@ -1396,12 +1402,13 @@ function renderTradeCard(item) {
       pnlTpPct: Math.round(pnlTpPct * 10) / 1000,
       pnlExitUsd: Math.round(pnlStopUsd * 100) / 100,
       pnlExitPct: Math.round(pnlStopPct * 10) / 1000,
+      endDate: item.endDate || null,
     });
 
     return `
-      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}">
+      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}" data-end-date="${escHtml(item.endDate || "")}">
         <div class="trade-card-header">${questionHtml}</div>
-        <div class="action-pill ${actionCls}">\u26A1 EXECUTE \u00B7 ${outcomeLabel ? escHtml(outcomeLabel) + " " : ""}${escHtml(action)}</div>
+        <div class="action-pill ${actionCls}">\u26A1 ${outcomeLabel ? escHtml(outcomeLabel) + " " : ""}${escHtml(action)} @ $${entryNum.toFixed(2)}</div>
         <div class="trade-plan-grid">
           <div class="trade-plan-item"><span class="trade-plan-label">ENTRY LIMIT</span><span class="trade-plan-value">$${entryNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
@@ -1443,6 +1450,7 @@ function renderTradeCard(item) {
     riskPct: null,
     maxTradeCapUsd: null,
     minLimitOrderUsd: MIN_LIMIT_ORDER_USD,
+    endDate: item.endDate || null,
   });
 
   return `
@@ -1580,6 +1588,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       var KEY_CAP = 'polyrich_max_trade_cap_usd';
       var KEY_PROFILE = 'polyrich_risk_profile';
 
+      function escH(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
       var PRESETS = {
         'conservative':      { riskPct: 0.5, cap: 10 },
         'default':           { riskPct: 1.0, cap: 50 },
@@ -1710,7 +1720,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             var pillEl = card.querySelector('.action-pill');
             if (pillEl) {
               pillEl.className = 'action-pill pill-watch';
-              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH' + (outcome ? ' \\u00B7 ' + outcome : '');
+              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH' + (outcome ? ' \\u00B7 ' + escH(outcome) : '');
             }
             var planGrid = card.querySelector('.trade-plan-grid');
             if (planGrid) planGrid.style.display = 'none';
@@ -1757,7 +1767,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var pillEl2 = card.querySelector('.action-pill');
           if (pillEl2 && pillEl2.className.indexOf('pill-watch') !== -1) {
             pillEl2.className = 'action-pill pill-buy-yes';
-            pillEl2.innerHTML = '\\u26A1 EXECUTE \\u00B7 ' + (outcome ? outcome + ' ' : '') + act;
+            pillEl2.innerHTML = '\\u26A1 ' + (outcome ? escH(outcome) + ' ' : '') + escH(act) + ' @ $' + entry.toFixed(2);
           }
           var planGrid3 = card.querySelector('.trade-plan-grid');
           if (planGrid3) planGrid3.style.display = '';
@@ -2214,7 +2224,11 @@ function renderWatchlistPage(items, highlightId) {
 
 /** Render the /tickets page body. */
 function renderTicketsPage(tickets, highlightId) {
-  const openTickets = tickets.filter((t) => t.status === "OPEN");
+  const openTickets = tickets.filter((t) => t.status === "OPEN").sort((a, b) => {
+    const ea = a.endDate ? new Date(a.endDate).getTime() : Infinity;
+    const eb = b.endDate ? new Date(b.endDate).getTime() : Infinity;
+    return ea - eb;
+  });
   const closedTickets = tickets.filter((t) => t.status === "CLOSED");
   const openCount = openTickets.length;
   const closedCount = closedTickets.length;
@@ -2354,6 +2368,19 @@ function renderTicketsPage(tickets, highlightId) {
     const questionLink = polyUrl
       ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" class="tk-q-link">${escHtml(ticketHeadline)} ${extIcon}</a>${subtextEl}`
       : `<span class="tk-q-link">${escHtml(ticketHeadline)}</span>${subtextEl}`;
+    // Time remaining
+    const ticketEndDate = t.endDate || "";
+    const ticketHoursLeft = ticketEndDate ? ((new Date(ticketEndDate).getTime() - Date.now()) / (1000 * 60 * 60)) : null;
+    const timeLeftLabel = ticketHoursLeft !== null && Number.isFinite(ticketHoursLeft)
+      ? (ticketHoursLeft <= 0 ? "ended" : formatHoursLeft(ticketHoursLeft))
+      : "";
+    const timeLeftCls = ticketHoursLeft !== null && ticketHoursLeft <= 24 && ticketHoursLeft > 0
+      ? " tk-time-urgent"
+      : "";
+    const timeLeftHtml = timeLeftLabel
+      ? `<span class="tk-time-left${timeLeftCls}">\u23F3 ${escHtml(timeLeftLabel)}${ticketHoursLeft > 0 ? " left" : ""}</span>`
+      : "";
+
     const isHighlighted = highlightId && String(t._id) === highlightId;
     const hlCls = isHighlighted ? " tk-highlight" : "";
 
@@ -2396,6 +2423,7 @@ function renderTicketsPage(tickets, highlightId) {
           ${typeBadge}
           <span>${escHtml(actionDisplay)}</span>
           <span>\u{1F552} ${utcSpan(t.createdAt)}</span>
+          ${timeLeftHtml}
         </div>
         <div class="tk-price-grid">
           <div><span class="tk-price-label">Entry</span><div class="tk-price-val">${entry}</div></div>
