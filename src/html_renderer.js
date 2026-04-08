@@ -1401,8 +1401,7 @@ function renderTradeCard(item) {
     return `
       <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}">
         <div class="trade-card-header">${questionHtml}</div>
-        <div class="action-pill ${actionCls}">\u26A1 ${outcomeLabel ? escHtml(outcomeLabel) + " " : ""}${escHtml(action)} @ $${entryNum.toFixed(2)} \u2014 LIMIT ORDER</div>
-        <p class="exec-instruction" style="margin:0 0 10px;font-size:0.82rem;color:#374151;">\u2192 Place a <strong>LIMIT order</strong> to <strong>${escHtml(action)}</strong>${outcomeLabel ? " on <strong>" + escHtml(outcomeLabel) + "</strong>" : ""} at <strong>$${entryNum.toFixed(2)}</strong> on Polymarket</p>
+        <div class="action-pill ${actionCls}">\u26A1 EXECUTE \u00B7 ${outcomeLabel ? escHtml(outcomeLabel) + " " : ""}${escHtml(action)}</div>
         <div class="trade-plan-grid">
           <div class="trade-plan-item"><span class="trade-plan-label">ENTRY LIMIT</span><span class="trade-plan-value">$${entryNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
@@ -1502,7 +1501,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
           style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
       </div>
 
-      <a href="/scan" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
+      <a href="/scan?returnTo=/trade" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
     <div id="limit-order-warning" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#991b1b;">
       ⚠️ Max trade cap must be at least $5 for limit orders.
@@ -1580,8 +1579,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       var KEY_RISK = 'polyrich_risk_pct';
       var KEY_CAP = 'polyrich_max_trade_cap_usd';
       var KEY_PROFILE = 'polyrich_risk_profile';
-
-      function escH(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
       var PRESETS = {
         'conservative':      { riskPct: 0.5, cap: 10 },
@@ -1713,12 +1710,10 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             var pillEl = card.querySelector('.action-pill');
             if (pillEl) {
               pillEl.className = 'action-pill pill-watch';
-              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH' + (outcome ? ' \\u00B7 ' + escH(outcome) : '');
+              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH' + (outcome ? ' \\u00B7 ' + outcome : '');
             }
             var planGrid = card.querySelector('.trade-plan-grid');
             if (planGrid) planGrid.style.display = 'none';
-            var instrHide = card.querySelector('.exec-instruction');
-            if (instrHide) instrHide.style.display = 'none';
             var whyBlock = card.querySelector('.min-order-watch');
             if (!whyBlock) {
               whyBlock = document.createElement('div');
@@ -1762,11 +1757,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var pillEl2 = card.querySelector('.action-pill');
           if (pillEl2 && pillEl2.className.indexOf('pill-watch') !== -1) {
             pillEl2.className = 'action-pill pill-buy-yes';
-            pillEl2.innerHTML = '\\u26A1 ' + (outcome ? escH(outcome) + ' ' : '') + escH(act) + ' @ $' + entry.toFixed(2) + ' \\u2014 LIMIT ORDER';
+            pillEl2.innerHTML = '\\u26A1 EXECUTE \\u00B7 ' + (outcome ? outcome + ' ' : '') + act;
           }
-          // Restore instruction subtitle if it was hidden
-          var instrEl = card.querySelector('.exec-instruction');
-          if (instrEl) { instrEl.style.display = ''; instrEl.innerHTML = '\\u2192 Place a <strong>LIMIT order</strong> to <strong>' + escH(act) + '</strong>' + (outcome ? ' on <strong>' + escH(outcome) + '</strong>' : '') + ' at <strong>$' + entry.toFixed(2) + '</strong> on Polymarket'; }
           var planGrid3 = card.querySelector('.trade-plan-grid');
           if (planGrid3) planGrid3.style.display = '';
           var whyBlock2 = card.querySelector('.min-order-watch');
@@ -2037,9 +2029,10 @@ function renderExplorePage(data) {
         const exits = inferExit(entryNum);
         if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
           return `<div style="margin-top:8px;padding:8px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;font-size:0.78rem;">
-            <span style="font-weight:700;color:#166534;">⚡ ${escHtml(dir.action)} @ $${entryNum.toFixed(2)} — LIMIT ORDER</span>
-            <span style="margin-left:10px;"><span style="color:#6b7280;">TP</span> <strong>$${exits.tp.toFixed(2)}</strong></span>
-            <span style="margin-left:10px;"><span style="color:#6b7280;">SL</span> <strong>$${exits.stop.toFixed(2)}</strong></span>
+            <span style="font-weight:700;color:#166534;">⚡ EXECUTE</span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">ENTRY LIMIT</span> <strong>$${entryNum.toFixed(2)}</strong></span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">TAKE PROFIT</span> <strong>$${exits.tp.toFixed(2)}</strong></span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">RISK EXIT LIMIT</span> <strong>$${exits.stop.toFixed(2)}</strong></span>
           </div>`;
         }
       }
