@@ -234,17 +234,32 @@ function cardHeadline(item) {
   const ouMatch = OU_PATTERN.exec(groupTitle);
   if (ouMatch) groupTitle = `Over/Under ${ouMatch[1]}`;
 
+  // When groupItemTitle is empty, derive a fallback from the first non-generic
+  // outcome name (e.g. "MIN" for a sports moneyline).  Used only in branches
+  // where the subtext would otherwise be blank.
+  let outcomeFallback = "";
+  if (!groupTitle) {
+    const oc = Array.isArray(item.outcomes) ? item.outcomes : [];
+    const first = (oc[0] || "").trim();
+    if (first && !GENERIC_OUTCOMES.has(first.toLowerCase())) {
+      outcomeFallback = first;
+    }
+  }
+
   if (validEvent && validMkt && eventTitle !== mktLabel) {
     // Event title as headline; use groupItemTitle when available instead of verbose token question
     const sub = groupTitle || mktLabel;
     return { headline: eventTitle, subtext: sub };
   }
   if (validEvent && !validMkt) {
-    // No usable market label — show groupItemTitle if present
-    return { headline: eventTitle, subtext: groupTitle };
+    // No usable market label — show groupItemTitle or outcome fallback
+    return { headline: eventTitle, subtext: groupTitle || outcomeFallback };
   }
   if (validMkt) {
-    return { headline: mktLabel, subtext: validEvent && eventTitle !== mktLabel ? eventTitle : "" };
+    // Use groupTitle / outcome fallback as subtext when headline equals the market label
+    // (e.g. sports moneylines where eventTitle and question both resolve to "Wild vs Stars")
+    const sub = (validEvent && eventTitle !== mktLabel) ? eventTitle : (groupTitle || outcomeFallback);
+    return { headline: mktLabel, subtext: sub };
   }
   return { headline: "Market detail unavailable", subtext: "" };
 }
@@ -1361,16 +1376,17 @@ function formatOutcomeAction(rawLabel, rawAction, outcomes) {
   // groupItemTitle (the full name, e.g. "Wild").
   // When the button label differs from groupItemTitle, keep groupItemTitle as
   // displayLabel so the pill shows both: "Wild Buy MIN @ $0.45".
-  if (rawLabel) {
-    const arr = Array.isArray(outcomes) ? outcomes : [];
-    const yesName = arr[0] && !GENERIC_OUTCOMES.has(arr[0].toLowerCase()) ? arr[0] : rawLabel;
-    const noName  = arr[1] && !GENERIC_OUTCOMES.has(arr[1].toLowerCase()) ? arr[1] : rawLabel;
-    if (rawAction === "BUY YES") {
-      return { displayLabel: yesName !== rawLabel ? rawLabel : "", displayAction: `Buy ${yesName}` };
-    }
-    if (rawAction === "BUY NO") {
-      return { displayLabel: noName !== rawLabel ? rawLabel : "", displayAction: `Fade ${noName}` };
-    }
+  // When groupItemTitle is empty but outcomes have non-generic names (e.g.
+  // sports moneylines with ["MIN","STL"]), still use them so the pill reads
+  // "Buy MIN" instead of the opaque "BUY YES".
+  const arr = Array.isArray(outcomes) ? outcomes : [];
+  const yesName = arr[0] && !GENERIC_OUTCOMES.has(arr[0].toLowerCase()) ? arr[0] : rawLabel;
+  const noName  = arr[1] && !GENERIC_OUTCOMES.has(arr[1].toLowerCase()) ? arr[1] : rawLabel;
+  if (rawAction === "BUY YES" && yesName) {
+    return { displayLabel: yesName !== rawLabel ? rawLabel : "", displayAction: `Buy ${yesName}` };
+  }
+  if (rawAction === "BUY NO" && noName) {
+    return { displayLabel: noName !== rawLabel ? rawLabel : "", displayAction: `Fade ${noName}` };
   }
 
   return { displayLabel: rawLabel, displayAction: rawAction };

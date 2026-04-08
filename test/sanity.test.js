@@ -482,6 +482,40 @@ console.log("\ncardHeadline (event-first)");
     assert(result.headline === "Some Multi-Outcome Event", "headline eventTitle when question invalid + groupItemTitle");
     assert(result.subtext === "Option A", "subtext is groupItemTitle when question invalid");
   }
+
+  // No groupItemTitle + non-generic outcomes → subtext from outcomes[0]
+  // (e.g. sports moneyline "Wild vs. Stars" with outcomes ["MIN","STL"])
+  {
+    const result = cardHeadline({
+      question: "Wild vs. Stars",
+      eventTitle: "Wild vs. Stars",
+      outcomes: ["MIN", "STL"],
+    });
+    assert(result.headline === "Wild vs. Stars", "sports moneyline headline");
+    assert(result.subtext === "MIN", "subtext derived from outcomes[0] when groupItemTitle absent");
+  }
+
+  // No groupItemTitle + generic outcomes → subtext stays empty
+  {
+    const result = cardHeadline({
+      question: "Will rain tomorrow?",
+      eventTitle: "Will rain tomorrow?",
+      outcomes: ["Yes", "No"],
+    });
+    assert(result.headline === "Will rain tomorrow?", "binary market headline");
+    assert(result.subtext === "", "subtext empty for generic outcomes");
+  }
+
+  // No groupItemTitle + non-generic outcomes + different eventTitle → mktLabel used as subtext
+  {
+    const result = cardHeadline({
+      question: "YES",
+      eventTitle: "Minnesota Wild @ St. Louis Blues",
+      outcomes: ["MIN", "STL"],
+    });
+    assert(result.headline === "Minnesota Wild @ St. Louis Blues", "sports event headline from eventTitle");
+    assert(result.subtext === "MIN vs STL", "subtext is mktLabel (outcomes joined) when eventTitle differs");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1221,6 +1255,20 @@ console.log("\nfinal selection: mispricing quota");
   const r5 = formatOutcomeAction("", "BUY YES");
   assert(r5.displayLabel === "", "empty label: displayLabel empty");
   assert(r5.displayAction === "BUY YES", "empty label: displayAction unchanged");
+
+  // Empty groupItemTitle + non-generic outcomes → uses outcomes for action
+  const r5a = formatOutcomeAction("", "BUY YES", ["MIN", "STL"]);
+  assert(r5a.displayLabel === "", "empty label+outcomes: displayLabel empty");
+  assert(r5a.displayAction === "Buy MIN", "empty label+outcomes: displayAction 'Buy MIN'");
+
+  const r5b = formatOutcomeAction("", "BUY NO", ["MIN", "STL"]);
+  assert(r5b.displayLabel === "", "empty label+outcomes BUY NO: displayLabel empty");
+  assert(r5b.displayAction === "Fade STL", "empty label+outcomes BUY NO: displayAction 'Fade STL'");
+
+  // Empty groupItemTitle + generic outcomes → still passes through
+  const r5c = formatOutcomeAction("", "BUY YES", ["Yes", "No"]);
+  assert(r5c.displayLabel === "", "empty label+generic outcomes: displayLabel empty");
+  assert(r5c.displayAction === "BUY YES", "empty label+generic outcomes: displayAction unchanged");
 
   // Case-insensitive O/U matching
   const r6 = formatOutcomeAction("o/u 1.5", "BUY YES");
