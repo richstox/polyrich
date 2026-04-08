@@ -142,8 +142,8 @@ function slugToLabel(slug) {
   if (words.length === 0) return "";
   words[0] = words[0].charAt(0).toUpperCase() + words[0].slice(1);
   let label = words.join(" ");
-  // Add trailing ? for question-like slugs (starts with will/is/does/can/has/was/are/do/should)
-  if (/^(will|is|does|can|has|was|are|do|should)\b/i.test(label) && !label.endsWith("?")) {
+  // Add trailing ? for question-like slugs
+  if (/^(will|is|does|can|has|was|are|do|should|would|could|did|were|may|might)\b/i.test(label) && !label.endsWith("?")) {
     label += "?";
   }
   return label;
@@ -174,6 +174,7 @@ function marketDisplayLabel(mkt) {
     const names = outcomes.map((o) => (typeof o === "string" ? o : (o && o.title) || "")).filter((n) => n.trim());
     if (names.length > 0) {
       const slugLower = slug.toLowerCase();
+      // groupItemTitle is a Polymarket API field used on multi-outcome events
       const isWinner = slugLower.includes("winner") || slugLower.includes("moneyline")
         || (mkt.groupItemTitle || "").toLowerCase().includes("winner");
       if (isWinner) {
