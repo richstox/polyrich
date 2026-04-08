@@ -646,6 +646,136 @@ function sharedStyles() {
   }
   .type-badge-exec { background: #dcfce7; color: #166534; }
   .type-badge-watch { background: #f3f4f6; color: #6b7280; }
+
+  /* ── Tickets page dark theme ────────────────────────────────── */
+  .tk-page {
+    --tk-bg: #0b1120; --tk-surface: #131b2e; --tk-border: #1e293b;
+    --tk-text: #e2e8f0; --tk-muted: #64748b; --tk-accent: #3b82f6;
+    --tk-green: #22c55e; --tk-red: #ef4444;
+    --tk-mono: "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--tk-text);
+  }
+  .tk-page .container { max-width: 520px; }
+  .tk-card {
+    background: var(--tk-surface); border: 1px solid var(--tk-border);
+    border-radius: 12px; padding: 18px 20px; margin-bottom: 14px;
+  }
+  .tk-card-title {
+    font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--tk-text); margin: 0 0 14px;
+  }
+  /* Summary grid */
+  .tk-summary-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px 24px;
+  }
+  .tk-summary-item {}
+  .tk-summary-label {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 0.72rem; color: var(--tk-muted); margin-bottom: 2px;
+  }
+  .tk-summary-value {
+    font-size: 1.35rem; font-weight: 700;
+    font-family: var(--tk-mono); letter-spacing: -0.02em;
+  }
+  .tk-summary-value.pnl-pos { color: var(--tk-green); }
+  .tk-summary-value.pnl-neg { color: var(--tk-red); }
+  .tk-summary-value.pnl-zero { color: var(--tk-muted); }
+  .tk-wr-sub { font-size: 0.78rem; color: var(--tk-muted); font-family: var(--tk-mono); }
+  /* Section headers */
+  .tk-section-hdr {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--tk-text); margin: 22px 0 10px;
+  }
+  .tk-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 22px; height: 22px; border-radius: 11px; padding: 0 7px;
+    background: var(--tk-border); font-size: 0.72rem; font-weight: 700;
+    color: var(--tk-text);
+  }
+  /* Ticket cards */
+  .tk-ticket {
+    background: var(--tk-surface); border: 1px solid var(--tk-border);
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 10px;
+    transition: border-color .2s;
+  }
+  .tk-ticket:hover { border-color: #334155; }
+  .tk-ticket.tk-highlight { border-color: var(--tk-accent); }
+  .tk-q-link {
+    color: var(--tk-text); text-decoration: none; font-weight: 700;
+    font-size: 0.92rem; line-height: 1.4;
+  }
+  .tk-q-link:hover { color: var(--tk-accent); }
+  .tk-ext-icon {
+    display: inline-block; width: 12px; height: 12px; margin-left: 5px;
+    vertical-align: middle; opacity: 0.5;
+  }
+  .tk-meta-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin: 8px 0 12px; font-size: 0.78rem; color: var(--tk-muted);
+  }
+  .tk-type-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 2px 8px; border-radius: 6px;
+    font-size: 0.7rem; font-weight: 700;
+  }
+  .tk-type-exec { background: rgba(34,197,94,.15); color: var(--tk-green); }
+  .tk-type-watch { background: rgba(100,116,139,.18); color: var(--tk-muted); }
+  .tk-price-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 4px 8px; margin-bottom: 10px;
+  }
+  .tk-price-label {
+    font-size: 0.62rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--tk-muted);
+  }
+  .tk-price-val {
+    font-size: 0.95rem; font-weight: 700; font-family: var(--tk-mono);
+    color: var(--tk-text);
+  }
+  /* Close form */
+  .tk-close-form {
+    border-top: 1px solid var(--tk-border); padding-top: 12px; margin-top: 10px;
+  }
+  .tk-close-input {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--tk-border); background: #0f172a; color: var(--tk-text);
+    font-size: 0.92rem; font-family: var(--tk-mono);
+    margin-bottom: 4px;
+  }
+  .tk-close-input::placeholder { color: var(--tk-muted); }
+  .tk-close-input:focus { outline: none; border-color: var(--tk-accent); }
+  .tk-close-helper {
+    font-size: 0.68rem; color: var(--tk-muted); margin: 0 0 8px; line-height: 1.4;
+  }
+  .tk-close-btn {
+    width: 100%; padding: 10px; border-radius: 8px; border: none;
+    background: var(--tk-accent); color: #fff; font-size: 0.88rem;
+    font-weight: 700; cursor: pointer; transition: background .15s;
+  }
+  .tk-close-btn:hover { background: #2563eb; }
+  .tk-close-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  /* Closed footer */
+  .tk-closed-footer {
+    display: flex; justify-content: space-between; align-items: baseline;
+    border-top: 1px solid var(--tk-border); padding-top: 10px; margin-top: 10px;
+    font-size: 0.82rem; color: var(--tk-muted);
+  }
+  .tk-pnl-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 6px;
+    font-size: 0.78rem; font-weight: 700; font-family: var(--tk-mono);
+    position: absolute; top: 16px; right: 18px;
+  }
+  .tk-pnl-pos { background: rgba(34,197,94,.15); color: var(--tk-green); }
+  .tk-pnl-neg { background: rgba(239,68,68,.15); color: var(--tk-red); }
+  .tk-pnl-zero { background: rgba(100,116,139,.18); color: var(--tk-muted); }
+  .tk-pnl-pct { font-weight: 700; font-family: var(--tk-mono); }
+  .tk-pnl-pct.pnl-pos { color: var(--tk-green); }
+  .tk-pnl-pct.pnl-neg { color: var(--tk-red); }
+  /* Equity chart */
+  .tk-chart-msg { color: var(--tk-muted); font-size: 0.88rem; padding: 8px 0; }
+  /* Misc */
+  .tk-empty { color: var(--tk-muted); font-size: 0.88rem; }
 </style>`;
 }
 
@@ -1825,71 +1955,120 @@ function renderTicketsPage(tickets, highlightId) {
   const wins = closedWithPnl.filter((t) => t.realizedPnlUsd > 0).length;
   const winRate = closedWithPnl.length > 0 ? (wins / closedWithPnl.length * 100) : 0;
 
-  function fmtDate(d) {
-    return utcSpan(d);
+  function pnlCls(val) {
+    if (typeof val !== "number") return "pnl-zero";
+    return val > 0 ? "pnl-pos" : val < 0 ? "pnl-neg" : "pnl-zero";
   }
 
-  function pnlColor(val) {
-    if (typeof val !== "number") return "#6b7280";
-    return val > 0 ? "#166534" : val < 0 ? "#dc2626" : "#6b7280";
-  }
+  const extIcon = '<svg class="tk-ext-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3"/><path d="M9 1h6v6"/><path d="M15 1L7 9"/></svg>';
 
   // --- Equity chart ---
+  const MIN_CLOSED_FOR_CHART = 2;
   let equityChartHtml;
-  if (closedWithPnl.length < 2) {
-    equityChartHtml = '<p style="color:#6b7280;font-size:0.92rem;padding:12px 0;">Equity curve will appear after at least 2 tickets are closed.</p>';
+  if (closedWithPnl.length < MIN_CLOSED_FOR_CHART) {
+    equityChartHtml = `<div class="tk-card">
+      <p class="tk-card-title">Equity Curve</p>
+      <p class="tk-chart-msg">Equity curve will appear after at least 2 tickets are closed.</p>
+    </div>`;
   } else {
     const sorted = closedWithPnl.slice().sort((a, b) => new Date(a.closedAt) - new Date(b.closedAt));
     let cumPnl = 0;
-    const points = sorted.map((t) => {
+    const points = [{ rawDate: sorted[0].closedAt, pnl: 0 }];
+    sorted.forEach((t) => {
       cumPnl += t.realizedPnlUsd;
-      return { rawDate: t.closedAt, pnl: Math.round(cumPnl * 100) / 100 };
+      points.push({ rawDate: t.closedAt, pnl: Math.round(cumPnl * 100) / 100 });
     });
     const maxVal = Math.max(...points.map((p) => p.pnl));
-    const minVal = Math.min(...points.map((p) => p.pnl));
+    const minVal = Math.min(...points.map((p) => p.pnl), 0);
     const range = maxVal - minVal || 1;
-    const chartW = 100;
-    const chartH = 60;
-    const svgPoints = points.map((p, i) => {
-      const x = (i / (points.length - 1)) * chartW;
-      const y = chartH - ((p.pnl - minVal) / range) * (chartH - 10) - 5;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(" ");
-    const lineColor = cumPnl >= 0 ? "#166534" : "#dc2626";
-    const zeroY = chartH - ((0 - minVal) / range) * (chartH - 10) - 5;
-    equityChartHtml = `
-      <div style="background:#fff;border-radius:10px;padding:12px 16px;box-shadow:0 1px 3px rgba(0,0,0,.06);margin-bottom:16px;">
-        <p style="font-size:0.82rem;font-weight:600;margin:0 0 8px;color:#374151;">Equity Curve</p>
-        <svg viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="none" style="width:100%;height:80px;display:block;">
-          <line x1="0" y1="${zeroY}" x2="${chartW}" y2="${zeroY}" stroke="#e5e7eb" stroke-width="0.3" stroke-dasharray="2,2" />
-          <polyline points="${svgPoints}" fill="none" stroke="${lineColor}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round" />
-        </svg>
-        <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:#6b7280;margin-top:4px;">
-          ${utcSpan(points[0].rawDate)}
-          <span>Cum. PnL: <strong style="color:${pnlColor(cumPnl)};">${cumPnl >= 0 ? "+" : ""}$${cumPnl.toFixed(2)}</strong></span>
-          ${utcSpan(points[points.length - 1].rawDate)}
-        </div>
-      </div>
-    `;
+    const chartW = 400;
+    const chartH = 160;
+    const padL = 40;
+    const padR = 10;
+    const padT = 10;
+    const padB = 28;
+    const plotW = chartW - padL - padR;
+    const plotH = chartH - padT - padB;
+    const xOf = (i) => padL + (i / (points.length - 1)) * plotW;
+    const yOf = (v) => padT + plotH - ((v - minVal) / range) * plotH;
+    const linePoints = points.map((p, i) => `${xOf(i).toFixed(1)},${yOf(p.pnl).toFixed(1)}`).join(" ");
+    const areaPoints = linePoints + ` ${xOf(points.length - 1).toFixed(1)},${yOf(0).toFixed(1)} ${xOf(0).toFixed(1)},${yOf(0).toFixed(1)}`;
+    const strokeColor = cumPnl >= 0 ? "#22c55e" : "#ef4444";
+    const fillColor = cumPnl >= 0 ? "rgba(34,197,94,.12)" : "rgba(239,68,68,.12)";
+
+    // Y-axis ticks (4-5 values)
+    const niceStep = Math.pow(10, Math.floor(Math.log10(range))) || 1;
+    let step = niceStep;
+    if (range / step < 3) step = niceStep / 2;
+    if (range / step > 6) step = niceStep * 2;
+    const yTicks = [];
+    for (let v = Math.floor(minVal / step) * step; v <= maxVal + step * 0.01; v += step) {
+      yTicks.push(Math.round(v * 100) / 100);
+    }
+
+    // X-axis labels
+    const xLabels = [];
+    const labelIdxs = [0, Math.floor(points.length / 3), Math.floor(2 * points.length / 3), points.length - 1];
+    const seen = new Set();
+    labelIdxs.forEach((idx) => { if (!seen.has(idx)) { seen.add(idx); xLabels.push(idx); } });
+
+    const yGridLines = yTicks.map((v) =>
+      `<line x1="${padL}" y1="${yOf(v).toFixed(1)}" x2="${chartW - padR}" y2="${yOf(v).toFixed(1)}" stroke="#1e293b" stroke-width="0.5"/>`
+    ).join("");
+    const yLabels = yTicks.map((v) =>
+      `<text x="${padL - 6}" y="${yOf(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="#64748b" font-size="10" font-family="SF Mono,SFMono-Regular,Menlo,Consolas,monospace">$${v}</text>`
+    ).join("");
+    const xLabelEls = xLabels.map((idx) => {
+      const p = points[idx];
+      const d = p.rawDate ? new Date(p.rawDate) : null;
+      const label = idx === 0 ? "Start" : (d ? `${String(d.getUTCDate()).padStart(2, "0")}.${String(d.getUTCMonth() + 1).padStart(2, "0")}.` : "");
+      return `<text x="${xOf(idx).toFixed(1)}" y="${chartH - 6}" text-anchor="middle" fill="#64748b" font-size="10" font-family="SF Mono,SFMono-Regular,Menlo,Consolas,monospace">${escHtml(label)}</text>`;
+    }).join("");
+
+    equityChartHtml = `<div class="tk-card">
+      <p class="tk-card-title">Equity Curve</p>
+      <svg viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block;">
+        ${yGridLines}
+        ${yLabels}
+        <polygon points="${areaPoints}" fill="${fillColor}" />
+        <polyline points="${linePoints}" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+        ${xLabelEls}
+      </svg>
+    </div>`;
   }
 
+  // --- Summary card ---
+  const pnlSign = realizedPnlSumUsd >= 0 ? "+" : "";
   const summaryHtml = `
-    <div class="card" style="margin-bottom:20px;">
-      <h2 style="margin-top:0;font-size:1.1rem;">Summary</h2>
-      <div style="display:flex;gap:24px;flex-wrap:wrap;font-size:0.92rem;">
-        <div><span style="color:#6b7280;">Open:</span> <strong>${openCount}</strong></div>
-        <div><span style="color:#6b7280;">Closed:</span> <strong>${closedCount}</strong></div>
-        <div><span style="color:#6b7280;">Realized PnL:</span> <strong style="color:${pnlColor(realizedPnlSumUsd)};">${realizedPnlSumUsd >= 0 ? "+" : ""}$${realizedPnlSumUsd.toFixed(2)}</strong></div>
-        <div><span style="color:#6b7280;">Win rate:</span> <strong>${winRate.toFixed(1)}%</strong> <span style="font-size:0.78rem;color:#6b7280;">(${wins}/${closedWithPnl.length})</span></div>
+    <div class="tk-card">
+      <p class="tk-card-title">Portfolio Overview</p>
+      <div class="tk-summary-grid">
+        <div class="tk-summary-item">
+          <div class="tk-summary-label"><span>\u{1F4CA}</span> Open</div>
+          <div class="tk-summary-value">${openCount}</div>
+        </div>
+        <div class="tk-summary-item">
+          <div class="tk-summary-label"><span>\u{2705}</span> Closed</div>
+          <div class="tk-summary-value">${closedCount}</div>
+        </div>
+        <div class="tk-summary-item">
+          <div class="tk-summary-label"><span>\u{1F4C8}</span> Realized PnL</div>
+          <div class="tk-summary-value ${pnlCls(realizedPnlSumUsd)}">${pnlSign}$${realizedPnlSumUsd.toFixed(2)}</div>
+        </div>
+        <div class="tk-summary-item">
+          <div class="tk-summary-label"><span>\u{1F3AF}</span> Win rate</div>
+          <div class="tk-summary-value">${winRate.toFixed(1)}% <span class="tk-wr-sub">(${wins}/${closedWithPnl.length})</span></div>
+        </div>
       </div>
     </div>
   `;
 
-  function ticketCard(t, showClose, highlightId) {
+  // --- Ticket card renderer ---
+  function ticketCard(t, showClose) {
     const isExec = t.tradeability === "EXECUTE";
     const typeBadge = isExec
-      ? '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:700;background:#dcfce7;color:#166534;">\u26A1 EXEC</span>'
-      : '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:700;background:#f3f4f6;color:#6b7280;">\uD83D\uDC41 WATCH</span>';
+      ? '<span class="tk-type-badge tk-type-exec">\u26A1 EXEC</span>'
+      : '<span class="tk-type-badge tk-type-watch">\uD83D\uDC41 WATCH</span>';
     const actionLabel = t.action || "\u2014";
     const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "\u2014";
     const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "\u2014";
@@ -1900,60 +2079,80 @@ function renderTicketsPage(tickets, highlightId) {
       : null);
     const ticketQuestion = (t.question && t.question.trim()) ? t.question : "Market (unknown question)";
     const questionLink = polyUrl
-      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:700;font-size:0.92rem;line-height:1.35;">${escHtml(ticketQuestion)}</a>`
-      : `<span style="font-weight:700;font-size:0.92rem;line-height:1.35;">${escHtml(ticketQuestion)}</span>`;
-    const marketId = t.marketId || "";
-    const actionLink = `<a href="/trade?marketId=${encodeURIComponent(marketId)}" style="color:#2563eb;text-decoration:none;font-size:0.85rem;font-weight:600;">${escHtml(actionLabel)}</a>`;
+      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" class="tk-q-link">${escHtml(ticketQuestion)} ${extIcon}</a>`
+      : `<span class="tk-q-link">${escHtml(ticketQuestion)}</span>`;
     const isHighlighted = highlightId && String(t._id) === highlightId;
-    const hlStyle = isHighlighted ? "background:#fef9c3;" : "";
+    const hlCls = isHighlighted ? " tk-highlight" : "";
+
+    // PnL badge for closed tickets (top-right)
+    let pnlBadgeHtml = "";
+    if (!showClose && typeof t.realizedPnlUsd === "number") {
+      const sign = t.realizedPnlUsd >= 0 ? "+" : "";
+      const cls = t.realizedPnlUsd > 0 ? "tk-pnl-pos" : t.realizedPnlUsd < 0 ? "tk-pnl-neg" : "tk-pnl-zero";
+      pnlBadgeHtml = `<span class="tk-pnl-badge ${cls}">${sign}$${t.realizedPnlUsd.toFixed(2)}</span>`;
+    }
+
     const closeHtml = showClose ? `
-      <div style="display:flex;gap:6px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid #f3f4f6;">
-        <input type="number" step="0.01" min="0" max="1" placeholder="close price" class="close-price-input" data-ticket-id="${escHtml(String(t._id))}" aria-label="Close price" style="width:80px;padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.82rem;">
-        <button class="cta-secondary close-ticket-btn" data-ticket-id="${escHtml(String(t._id))}" style="padding:4px 12px;font-size:0.82rem;">Close</button>
-      </div>
-    ` : "";
-    const pnlHtml = !showClose && typeof t.realizedPnlUsd === "number" ? `
-      <div style="margin-top:6px;font-size:0.88rem;font-weight:700;color:${pnlColor(t.realizedPnlUsd)};">
-        PnL: ${t.realizedPnlUsd >= 0 ? "+" : ""}$${t.realizedPnlUsd.toFixed(2)}${typeof t.realizedPnlPct === "number" ? " (" + (t.realizedPnlPct * 100).toFixed(1) + "%)" : ""}
+      <div class="tk-close-form">
+        <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="Close price" class="tk-close-input close-price-input" data-ticket-id="${escHtml(String(t._id))}" aria-label="Close price">
+        <p class="tk-close-helper">Enter close price (0\u20131 or 0\u2013100 cents). Example: 0.41 or 41.</p>
+        <button class="tk-close-btn close-ticket-btn" data-ticket-id="${escHtml(String(t._id))}">Close</button>
       </div>
     ` : "";
 
+    // Closed footer
+    let closedFooterHtml = "";
+    if (!showClose) {
+      const cpLabel = typeof t.closePrice === "number" ? "$" + t.closePrice.toFixed(2) : "\u2014";
+      const pctLabel = typeof t.realizedPnlPct === "number"
+        ? `<span class="tk-pnl-pct ${pnlCls(t.realizedPnlPct)}">${t.realizedPnlPct >= 0 ? "+" : ""}${(t.realizedPnlPct * 100).toFixed(1)}%</span>`
+        : "";
+      closedFooterHtml = `
+        <div class="tk-closed-footer">
+          <span>Closed: ${cpLabel}</span>
+          ${pctLabel}
+        </div>
+      `;
+    }
+
     return `
-      <div class="ticket-card" id="ticket-${escHtml(String(t._id))}" style="${hlStyle}">
-        <div style="margin-bottom:6px;">${questionLink}</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
+      <div class="tk-ticket${hlCls}" id="ticket-${escHtml(String(t._id))}" style="position:relative;">
+        <div style="margin-bottom:6px;padding-right:${pnlBadgeHtml ? "80px" : "0"};">${questionLink}</div>
+        ${pnlBadgeHtml}
+        <div class="tk-meta-row">
           ${typeBadge}
-          ${actionLink}
+          <span>${escHtml(actionLabel)}</span>
+          <span>\u{1F552} ${utcSpan(t.createdAt)}</span>
         </div>
-        <div class="ticket-meta-grid">
-          <div><span class="ticket-meta-label">Entry</span><span class="ticket-meta-value">${entry}</span></div>
-          <div><span class="ticket-meta-label">TP</span><span class="ticket-meta-value">${tp}</span></div>
-          <div><span class="ticket-meta-label">Exit</span><span class="ticket-meta-value">${sl}</span></div>
-          <div><span class="ticket-meta-label">Size</span><span class="ticket-meta-value">${size}</span></div>
-          <div><span class="ticket-meta-label">${showClose ? "Created" : "Closed"}</span><span class="ticket-meta-value">${fmtDate(showClose ? t.createdAt : t.closedAt)}</span></div>
+        <div class="tk-price-grid">
+          <div><span class="tk-price-label">Entry</span><div class="tk-price-val">${entry}</div></div>
+          <div><span class="tk-price-label">TP</span><div class="tk-price-val">${tp}</div></div>
+          <div><span class="tk-price-label">Exit (risk)</span><div class="tk-price-val">${sl}</div></div>
+          <div><span class="tk-price-label">Size (USD)</span><div class="tk-price-val">${size}</div></div>
         </div>
-        ${pnlHtml}
         ${closeHtml}
+        ${closedFooterHtml}
       </div>
     `;
   }
 
   const openListHtml = openTickets.length === 0
-    ? '<p style="color:#6b7280;font-size:0.92rem;">No open tickets.</p>'
-    : `<div class="ticket-list">${openTickets.map((t) => ticketCard(t, true, highlightId)).join("")}</div>`;
+    ? '<p class="tk-empty">No open tickets.</p>'
+    : openTickets.map((t) => ticketCard(t, true)).join("");
 
   const closedListHtml = closedTickets.length === 0
-    ? '<p style="color:#6b7280;font-size:0.92rem;">No closed tickets yet.</p>'
-    : `<div class="ticket-list">${closedTickets.map((t) => ticketCard(t, false, highlightId)).join("")}</div>`;
+    ? '<p class="tk-empty">No closed tickets yet.</p>'
+    : closedTickets.map((t) => ticketCard(t, false)).join("");
 
   return `
-    <h1>Tickets</h1>
-    ${summaryHtml}
-    ${equityChartHtml}
-    <h2 style="margin:20px 0 12px;font-size:1.15rem;">OPEN (${openCount})</h2>
-    ${openListHtml}
-    <h2 style="margin:20px 0 12px;font-size:1.15rem;">CLOSED (${closedCount})</h2>
-    ${closedListHtml}
+    <div class="tk-page">
+      ${summaryHtml}
+      ${equityChartHtml}
+      <div class="tk-section-hdr">OPEN <span class="tk-badge">${openCount}</span></div>
+      ${openListHtml}
+      <div class="tk-section-hdr">CLOSED <span class="tk-badge">${closedCount}</span></div>
+      ${closedListHtml}
+    </div>
     <script>
     (function() {
       document.addEventListener("click", function(e) {
@@ -1965,7 +2164,7 @@ function renderTicketsPage(tickets, highlightId) {
         var closePrice = parseFloat(input.value);
         if (isNaN(closePrice) || closePrice <= 0) { alert("Enter a valid close price"); return; }
         btn.disabled = true;
-        btn.textContent = "Closing...";
+        btn.textContent = "Closing\u2026";
         fetch("/api/tickets/close", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1982,10 +2181,13 @@ function renderTicketsPage(tickets, highlightId) {
         var el = document.getElementById("ticket-" + hl);
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
-          el.style.transition = "background 2s ease";
-          setTimeout(function() { el.style.background = ""; }, 2000);
+          el.style.borderColor = "#3b82f6";
+          el.style.transition = "border-color 2s ease";
+          setTimeout(function() { el.style.borderColor = ""; }, 3000);
         }
       }
+      // Apply dark bg to body on tickets page
+      document.body.style.background = "#0b1120";
     })();
     </script>
   `;
