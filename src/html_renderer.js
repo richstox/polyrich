@@ -1580,6 +1580,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       var KEY_CAP = 'polyrich_max_trade_cap_usd';
       var KEY_PROFILE = 'polyrich_risk_profile';
 
+      function escH(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
       var PRESETS = {
         'conservative':      { riskPct: 0.5, cap: 10 },
         'default':           { riskPct: 1.0, cap: 50 },
@@ -1710,7 +1712,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             var pillEl = card.querySelector('.action-pill');
             if (pillEl) {
               pillEl.className = 'action-pill pill-watch';
-              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH' + (outcome ? ' \\u00B7 ' + outcome : '');
+              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH' + (outcome ? ' \\u00B7 ' + escH(outcome) : '');
             }
             var planGrid = card.querySelector('.trade-plan-grid');
             if (planGrid) planGrid.style.display = 'none';
@@ -1757,7 +1759,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var pillEl2 = card.querySelector('.action-pill');
           if (pillEl2 && pillEl2.className.indexOf('pill-watch') !== -1) {
             pillEl2.className = 'action-pill pill-buy-yes';
-            pillEl2.innerHTML = '\\u26A1 ' + (outcome ? outcome + ' ' : '') + act + ' @ $' + entry.toFixed(2);
+            pillEl2.innerHTML = '\\u26A1 ' + (outcome ? escH(outcome) + ' ' : '') + escH(act) + ' @ $' + entry.toFixed(2);
           }
           var planGrid3 = card.querySelector('.trade-plan-grid');
           if (planGrid3) planGrid3.style.display = '';
