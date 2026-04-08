@@ -1048,13 +1048,22 @@ function pageShell(title, activeNav, bodyHtml) {
     // Save ticket button
     var saveBtn = e.target.closest("[data-save-ticket]");
     if (saveBtn) {
-      var payload = saveBtn.getAttribute("data-save-ticket");
+      var payloadRaw = saveBtn.getAttribute("data-save-ticket");
+      // Inject defaultAutoCloseEnabled from trade page setting if available
+      var acEl = document.getElementById("default-autoclose-toggle");
+      if (acEl) {
+        try {
+          var parsed = JSON.parse(payloadRaw);
+          parsed.autoCloseEnabled = acEl.checked;
+          payloadRaw = JSON.stringify(parsed);
+        } catch (_) {}
+      }
       saveBtn.disabled = true;
       saveBtn.textContent = "Saving...";
       fetch("/api/tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: payload,
+        body: payloadRaw,
       }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.error) { saveBtn.textContent = "Error"; }
         else {
@@ -1551,11 +1560,17 @@ function renderTradeCard(item) {
 }
 
 /** Render the compact status bar at top of /trade. */
-function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
+function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings) {
   const lastScan = utcSpan(scanStatus.lastScanAt, "not yet");
   const nextScan = utcSpan(scanStatus.nextScanAt, "\u2014");
   const eventsScanned = scanStatus.lastEventsFetched || 0;
   const marketsScanned = scanStatus.lastMarketsFlattened || 0;
+  const defaultAutoClose = (systemSettings && systemSettings.defaultAutoCloseEnabled) || false;
+  const acToggleChecked = defaultAutoClose ? "checked" : "";
+  const acBadgeStyle = defaultAutoClose
+    ? "background:#dcfce7;color:#166534;"
+    : "background:#fee2e2;color:#991b1b;";
+  const acBadgeText = defaultAutoClose ? "ON" : "OFF";
 
   return `
     <div class="status-bar">
@@ -1589,6 +1604,13 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
         <input id="max-cap-input" type="number" min="1" step="1" placeholder="50"
           style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
       </div>
+      <div class="status-item">
+        <label class="status-label">Default Auto-Close <span style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:0.7rem;font-weight:700;vertical-align:middle;margin-left:4px;${acBadgeStyle}">${acBadgeText}</span></label>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-top:2px;">
+          <input id="default-autoclose-toggle" type="checkbox" ${acToggleChecked} style="width:16px;height:16px;cursor:pointer;">
+          <span style="font-size:0.82rem;font-weight:600;">${defaultAutoClose ? "ON" : "OFF"}</span>
+        </label>
+      </div>
 
       <a href="/scan?returnTo=/trade" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
@@ -1600,9 +1622,10 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
 }
 
 /** Render the full /trade page body. */
-function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
+function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSettings) {
   const cards = tradeCandidates.slice(0, 20);
-  const statusBar = renderStatusBar(scanStatus, cards.length, relaxedMode);
+  const statusBar = renderStatusBar(scanStatus, cards.length, relaxedMode, systemSettings);
+  const defaultAutoClose = (systemSettings && systemSettings.defaultAutoCloseEnabled) || false;
 
   // Split cards into EXECUTE vs WATCH at render time (presentation-only)
   const executeCards = [];
@@ -1664,6 +1687,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       var RISK_PCT_DEF = ${RISK_PCT_DEFAULT};
       var MAX_CAP_DEF = ${MAX_TRADE_CAP_USD_DEFAULT};
       var MIN_ORDER = ${MIN_LIMIT_ORDER_USD};
+      var DEFAULT_AUTOCLOSE = ${defaultAutoClose ? "true" : "false"};
       var KEY_BR = 'polyrich_bankroll_usd';
       var KEY_RISK = 'polyrich_risk_pct';
       var KEY_CAP = 'polyrich_max_trade_cap_usd';
@@ -1709,6 +1733,20 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       var limitWarn = document.getElementById('limit-order-warning');
       var setCap5Btn = document.getElementById('set-cap-5-btn');
       if (!brInput || !riskInput || !capInput || !profileSelect) return;
+
+      // Default Auto-Close toggle handler
+      var acToggle = document.getElementById('default-autoclose-toggle');
+      if (acToggle) {
+        acToggle.addEventListener('change', function() {
+          var newVal = acToggle.checked;
+          fetch('/api/system/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ defaultAutoCloseEnabled: newVal })
+          }).then(function() { window.location.reload(); })
+            .catch(function() { acToggle.checked = !newVal; });
+        });
+      }
 
       // Restore saved values
       var sBr = localStorage.getItem(KEY_BR);
