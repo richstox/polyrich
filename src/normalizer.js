@@ -89,12 +89,24 @@ function normalizeMarket(item) {
   const tagIds = eventTags.map((t) => t.id || t).filter(Boolean);
   const tagSlugs = eventTags.map((t) => t.slug || t.label || String(t)).filter(Boolean);
 
+  const question = item.question || "";
+  if (!question) {
+    console.warn(JSON.stringify({
+      stage: "normalizeMarket",
+      msg: "market has no question — fallback label will be used",
+      slug: item.slug || item.marketSlug || "",
+      eventSlug: item.eventSlug || "",
+      ts: new Date().toISOString(),
+    }));
+  }
+
   return {
-    question: item.question || "",
+    question,
     category: item.category || "",
     subcategory: item.subcategory || "",
     marketSlug: item.slug || item.marketSlug || item.question || "",
     eventSlug: item.eventSlug || "",
+    conditionId: item.conditionId || "",
     tagIds,
     tagSlugs,
     priceYes,
