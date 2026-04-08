@@ -132,7 +132,7 @@ console.log("\npolymarketUrl");
 
 {
   // Now exported — use the real function
-  const { polymarketUrl, safeQuestion } = require("../src/html_renderer");
+  const { polymarketUrl, safeQuestion, isInvalidDisplayLabel, slugToLabel, marketDisplayLabel, cardHeadline } = require("../src/html_renderer");
 
   assert(
     polymarketUrl({ eventSlug: "us-election-2024" }) === "https://polymarket.com/event/us-election-2024",
@@ -218,16 +218,208 @@ console.log("\npolymarketUrl");
     "safeQuestion returns question when present"
   );
   assert(
-    safeQuestion({ question: "" }) === "Market (unknown question)",
+    safeQuestion({ question: "" }) === "Market detail unavailable",
     "safeQuestion returns fallback for empty question"
   );
   assert(
-    safeQuestion({}) === "Market (unknown question)",
+    safeQuestion({}) === "Market detail unavailable",
     "safeQuestion returns fallback for missing question"
   );
   assert(
-    safeQuestion({ question: "   " }) === "Market (unknown question)",
+    safeQuestion({ question: "   " }) === "Market detail unavailable",
     "safeQuestion returns fallback for whitespace-only question"
+  );
+}
+
+// ---------------------------------------------------------------------------
+// isInvalidDisplayLabel
+// ---------------------------------------------------------------------------
+console.log("\nisInvalidDisplayLabel");
+
+{
+  const { isInvalidDisplayLabel } = require("../src/html_renderer");
+
+  assert(isInvalidDisplayLabel("YES") === true, "YES is invalid label");
+  assert(isInvalidDisplayLabel("No") === true, "No is invalid label");
+  assert(isInvalidDisplayLabel("yes") === true, "yes (lowercase) is invalid");
+  assert(isInvalidDisplayLabel("") === true, "empty string is invalid");
+  assert(isInvalidDisplayLabel(null) === true, "null is invalid");
+  assert(isInvalidDisplayLabel(undefined) === true, "undefined is invalid");
+  assert(isInvalidDisplayLabel("   ") === true, "whitespace-only is invalid");
+  assert(isInvalidDisplayLabel("ab") === true, "2-char string is invalid (too short)");
+  assert(isInvalidDisplayLabel("abc") === true, "3-char string is invalid (too short)");
+  assert(isInvalidDisplayLabel("Market") === true, "Market is invalid placeholder");
+  assert(isInvalidDisplayLabel("Unknown") === true, "Unknown is invalid placeholder");
+  assert(isInvalidDisplayLabel("Option") === true, "Option is invalid placeholder");
+  assert(isInvalidDisplayLabel("Outcome") === true, "Outcome is invalid placeholder");
+  assert(isInvalidDisplayLabel("Will X happen?") === false, "normal question is valid");
+  assert(isInvalidDisplayLabel("Curtis Blaydes vs Josh Hokit") === false, "event title is valid");
+  assert(isInvalidDisplayLabel("abcd") === false, "4-char string is valid");
+}
+
+// ---------------------------------------------------------------------------
+// slugToLabel
+// ---------------------------------------------------------------------------
+console.log("\nslugToLabel");
+
+{
+  const { slugToLabel } = require("../src/html_renderer");
+
+  assert(slugToLabel("will-fight-go-the-distance") === "Will fight go the distance?", "slug → question with ?");
+  assert(slugToLabel("is-it-a-draw") === "Is it a draw?", "is-slug gets ?");
+  assert(slugToLabel("ko-tko-finish") === "Ko tko finish", "non-question slug, no ?");
+  assert(slugToLabel("") === "", "empty slug returns empty");
+  assert(slugToLabel(null) === "", "null slug returns empty");
+  assert(slugToLabel("single") === "Single", "single word slug capitalized");
+}
+
+// ---------------------------------------------------------------------------
+// marketDisplayLabel
+// ---------------------------------------------------------------------------
+console.log("\nmarketDisplayLabel");
+
+{
+  const { marketDisplayLabel } = require("../src/html_renderer");
+
+  // 1. Valid question — use it directly
+  assert(
+    marketDisplayLabel({ question: "Will the fight go the distance?" }) === "Will the fight go the distance?",
+    "marketDisplayLabel uses question when valid"
+  );
+
+  // 2. Question is YES → fall through to slug
+  assert(
+    marketDisplayLabel({ question: "YES", marketSlug: "will-fight-go-the-distance" }) === "Will fight go the distance?",
+    "marketDisplayLabel falls through YES to slug"
+  );
+
+  // 3. Question is NO → fall through to slug
+  assert(
+    marketDisplayLabel({ question: "NO", marketSlug: "ko-tko-finish" }) === "Ko tko finish",
+    "marketDisplayLabel falls through NO to slug"
+  );
+
+  // 4. Question empty, no slug → fallback
+  assert(
+    marketDisplayLabel({ question: "" }) === "Market detail unavailable",
+    "marketDisplayLabel fallback for empty question and no slug"
+  );
+
+  // 5. Outcomes-based label (moneyline/winner)
+  assert(
+    marketDisplayLabel({ question: "YES", marketSlug: "moneyline-winner", outcomes: ["Curtis Blaydes", "Josh Hokit"] })
+      === "Moneyline (Winner): Curtis Blaydes",
+    "marketDisplayLabel builds moneyline winner label from outcomes"
+  );
+
+  // 6. Outcomes-based label (non-winner)
+  assert(
+    marketDisplayLabel({ question: "YES", marketSlug: "some-short", outcomes: ["Fighter A", "Fighter B"] })
+      === "Fighter A vs Fighter B",
+    "marketDisplayLabel builds vs label from outcomes"
+  );
+
+  // 7. Null mkt
+  assert(
+    marketDisplayLabel(null) === "Market detail unavailable",
+    "marketDisplayLabel handles null"
+  );
+
+  // 8. slugToLabel fallback when question is short
+  assert(
+    marketDisplayLabel({ question: "ab", slug: "will-team-a-win" }) === "Will team a win?",
+    "marketDisplayLabel uses slug when question too short"
+  );
+}
+
+// ---------------------------------------------------------------------------
+// cardHeadline (updated for event-first structure)
+// ---------------------------------------------------------------------------
+console.log("\ncardHeadline (event-first)");
+
+{
+  const { cardHeadline } = require("../src/html_renderer");
+
+  // UFC-style: eventTitle + YES question → eventTitle as headline, market label as subtext
+  {
+    const result = cardHeadline({
+      question: "YES",
+      eventTitle: "Curtis Blaydes vs Josh Hokit",
+      marketSlug: "will-fight-go-the-distance",
+    });
+    assert(result.headline === "Curtis Blaydes vs Josh Hokit", "UFC card headline is eventTitle");
+    assert(result.subtext === "Will fight go the distance?", "UFC card subtext is market label from slug");
+  }
+
+  // Normal case: valid question + eventTitle
+  {
+    const result = cardHeadline({
+      question: "Will Team A win the championship?",
+      eventTitle: "Team A vs Team B",
+    });
+    assert(result.headline === "Team A vs Team B", "headline is eventTitle when both valid and different");
+    assert(result.subtext === "Will Team A win the championship?", "subtext is market question");
+  }
+
+  // Only valid question, no eventTitle
+  {
+    const result = cardHeadline({
+      question: "Will X happen?",
+    });
+    assert(result.headline === "Will X happen?", "headline is question when no eventTitle");
+    assert(result.subtext === "", "subtext empty when no eventTitle");
+  }
+
+  // Both invalid
+  {
+    const result = cardHeadline({ question: "", eventTitle: "" });
+    assert(result.headline === "Market detail unavailable", "fallback headline when both invalid");
+  }
+
+  // eventTitle valid, question YES → eventTitle headline, slug-derived subtext
+  {
+    const result = cardHeadline({
+      question: "YES",
+      eventTitle: "Big Event",
+      marketSlug: "moneyline-winner",
+      outcomes: ["Player A", "Player B"],
+    });
+    assert(result.headline === "Big Event", "eventTitle headline when question is YES");
+    assert(result.subtext === "Moneyline (Winner): Player A", "subtext from outcomes");
+  }
+
+  // Same eventTitle and question — no duplication
+  {
+    const result = cardHeadline({
+      question: "Will rain tomorrow?",
+      eventTitle: "Will rain tomorrow?",
+    });
+    assert(result.headline === "Will rain tomorrow?", "no duplication when same");
+    assert(result.subtext === "", "subtext empty when same as headline");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// safeQuestion — additional invalid label tests
+// ---------------------------------------------------------------------------
+console.log("\nsafeQuestion (invalid label rejection)");
+
+{
+  const { safeQuestion } = require("../src/html_renderer");
+
+  assert(safeQuestion({ question: "YES" }) === "Market detail unavailable", "safeQuestion rejects YES");
+  assert(safeQuestion({ question: "NO" }) === "Market detail unavailable", "safeQuestion rejects NO");
+  assert(safeQuestion({ question: "Yes" }) === "Market detail unavailable", "safeQuestion rejects Yes (case)");
+  assert(safeQuestion({ question: "no" }) === "Market detail unavailable", "safeQuestion rejects no (case)");
+  assert(safeQuestion({ question: "ab" }) === "Market detail unavailable", "safeQuestion rejects 2-char");
+  assert(safeQuestion({ question: "Market" }) === "Market detail unavailable", "safeQuestion rejects placeholder Market");
+  assert(
+    safeQuestion({ question: "YES", marketSlug: "will-it-rain" }) === "Will it rain?",
+    "safeQuestion falls through YES to slug label"
+  );
+  assert(
+    safeQuestion({ question: "YES", marketSlug: "moneyline-winner", outcomes: ["Alice", "Bob"] }) === "Moneyline (Winner): Alice",
+    "safeQuestion falls through YES to winner label from outcomes"
   );
 }
 

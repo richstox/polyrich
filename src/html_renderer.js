@@ -119,11 +119,87 @@ function polymarketUrl(item) {
 }
 
 /**
- * Safe question text: returns the market question or a safe fallback label.
- * Never returns an empty string — prevents rendering a misleading title.
+ * Returns true when a label is meaningless for display — YES, NO, empty,
+ * too-short, or a generic placeholder.  Used to prevent confusing card titles.
+ */
+const INVALID_LABEL_SET = new Set(["yes", "no", "market", "unknown", "option", "outcome"]);
+
+function isInvalidDisplayLabel(text) {
+  if (!text || typeof text !== "string") return true;
+  const trimmed = text.trim();
+  if (trimmed.length < 4) return true;
+  if (INVALID_LABEL_SET.has(trimmed.toLowerCase())) return true;
+  return false;
+}
+
+/**
+ * Convert a marketSlug (dash-separated) into a human-readable label.
+ * e.g. "will-fight-go-the-distance" → "Will fight go the distance?"
+ */
+function slugToLabel(slug) {
+  if (!slug || typeof slug !== "string") return "";
+  const words = slug.split("-").filter(Boolean);
+  if (words.length === 0) return "";
+  words[0] = words[0].charAt(0).toUpperCase() + words[0].slice(1);
+  let label = words.join(" ");
+  // Add trailing ? for question-like slugs (starts with will/is/does/can/has/was/are/do/should)
+  if (/^(will|is|does|can|has|was|are|do|should)\b/i.test(label) && !label.endsWith("?")) {
+    label += "?";
+  }
+  return label;
+}
+
+/**
+ * Derive a meaningful display label for a market object.
+ *
+ * Preference order:
+ *   1. mkt.question / canonical title — if valid
+ *   2. outcomes / winner metadata — build a descriptive label
+ *   3. mkt.marketSlug converted to readable text — if valid
+ *   4. Safe fallback: "Market detail unavailable"
+ */
+function marketDisplayLabel(mkt) {
+  if (!mkt || typeof mkt !== "object") return "Market detail unavailable";
+
+  // 1. question / title
+  const question = (mkt.question || "").trim();
+  if (!isInvalidDisplayLabel(question)) return question;
+
+  const slug = (mkt.slug || mkt.marketSlug || "").trim();
+
+  // 2. outcomes / winner metadata — checked before generic slug conversion
+  //    so that rich labels like "Moneyline (Winner): Name" beat plain slug text
+  const outcomes = mkt.outcomes;
+  if (Array.isArray(outcomes) && outcomes.length > 0) {
+    const names = outcomes.map((o) => (typeof o === "string" ? o : (o && o.title) || "")).filter((n) => n.trim());
+    if (names.length > 0) {
+      const slugLower = slug.toLowerCase();
+      const isWinner = slugLower.includes("winner") || slugLower.includes("moneyline")
+        || (mkt.groupItemTitle || "").toLowerCase().includes("winner");
+      if (isWinner) {
+        return `Moneyline (Winner): ${names[0]}`;
+      }
+      return names.join(" vs ");
+    }
+  }
+
+  // 3. marketSlug → human-readable
+  if (slug && slug !== mkt.question) {
+    const fromSlug = slugToLabel(slug);
+    if (!isInvalidDisplayLabel(fromSlug)) return fromSlug;
+  }
+
+  // 4. Safe fallback
+  return "Market detail unavailable";
+}
+
+/**
+ * Safe question text: returns a valid market question or a safe fallback label.
+ * Never returns an empty, YES/NO, or misleading string as the display title.
  */
 function safeQuestion(item) {
-  if (item.question && item.question.trim()) return item.question;
+  const label = marketDisplayLabel(item);
+  if (label !== "Market detail unavailable") return label;
   console.warn(JSON.stringify({
     stage: "safeQuestion",
     msg: "missing market question — using fallback label",
@@ -131,22 +207,36 @@ function safeQuestion(item) {
     eventSlug: item.eventSlug || "",
     ts: new Date().toISOString(),
   }));
-  return "Market (unknown question)";
+  return "Market detail unavailable";
 }
 
 /**
  * Determine the canonical headline and optional subtext for a card.
- * The market question is always the headline — it is the canonical title
- * that corresponds to the marketUrl the card links to.
- * If an eventTitle exists and differs, it is shown as optional muted subtext.
+ *
+ * When eventTitle is present and differs from the market label, use it as the
+ * headline (e.g. "Curtis Blaydes vs Josh Hokit") and put the market-specific
+ * label as the subtext (e.g. "Moneyline (Winner): Curtis Blaydes").
+ *
+ * This prevents showing a confusing "YES" as the main title for multi-market
+ * sports events.
  */
 function cardHeadline(item) {
   const eventTitle = (item.eventTitle || "").trim();
-  const question = safeQuestion(item);
-  if (eventTitle && eventTitle !== question) {
-    return { headline: question, subtext: eventTitle };
+  const mktLabel = marketDisplayLabel(item);
+  const validEvent = !isInvalidDisplayLabel(eventTitle);
+  const validMkt = mktLabel !== "Market detail unavailable";
+
+  if (validEvent && validMkt && eventTitle !== mktLabel) {
+    // Event title as headline, market label as subtext
+    return { headline: eventTitle, subtext: mktLabel };
   }
-  return { headline: question, subtext: "" };
+  if (validEvent && !validMkt) {
+    return { headline: eventTitle, subtext: "" };
+  }
+  if (validMkt) {
+    return { headline: mktLabel, subtext: validEvent && eventTitle !== mktLabel ? eventTitle : "" };
+  }
+  return { headline: "Market detail unavailable", subtext: "" };
 }
 
 /** Compact "Top Pick" card for micro-trade action list */
@@ -2386,4 +2476,7 @@ module.exports = {
   polymarketUrl,
   safeQuestion,
   cardHeadline,
+  isInvalidDisplayLabel,
+  slugToLabel,
+  marketDisplayLabel,
 };
