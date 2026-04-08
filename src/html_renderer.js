@@ -1963,8 +1963,9 @@ function renderTicketsPage(tickets, highlightId) {
   const extIcon = '<svg class="tk-ext-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3"/><path d="M9 1h6v6"/><path d="M15 1L7 9"/></svg>';
 
   // --- Equity chart ---
+  const MIN_CLOSED_FOR_CHART = 2;
   let equityChartHtml;
-  if (closedWithPnl.length < 2) {
+  if (closedWithPnl.length < MIN_CLOSED_FOR_CHART) {
     equityChartHtml = `<div class="tk-card">
       <p class="tk-card-title">Equity Curve</p>
       <p class="tk-chart-msg">Equity curve will appear after at least 2 tickets are closed.</p>
