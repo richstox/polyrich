@@ -1409,9 +1409,8 @@ function renderTradeCard(item) {
       <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}" data-end-date="${escHtml(item.endDate || "")}">
         <div class="trade-card-header">${questionHtml}</div>
         <div class="action-pill ${actionCls}">\u26A1 ${outcomeLabel ? escHtml(outcomeLabel) + " " : ""}${escHtml(action)} @ $${entryNum.toFixed(2)}</div>
+        <div class="trade-size-row trade-plan-item" style="margin-bottom:6px;"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
         <div class="trade-plan-grid">
-          <div class="trade-plan-item"><span class="trade-plan-label">ENTRY LIMIT</span><span class="trade-plan-value">$${entryNum.toFixed(2)}</span></div>
-          <div class="trade-plan-item"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">TAKE PROFIT</span><span class="trade-plan-value">$${tpNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">STOP-LOSS</span><span class="trade-plan-value">$${stopNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">PnL @ TP (approx)</span><span class="trade-plan-value trade-pnl-tp" style="color:#166534;">+$${pnlTpUsd.toFixed(2)} (+${pnlTpPct.toFixed(1)}% of stake)</span></div>
@@ -1724,6 +1723,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             }
             var planGrid = card.querySelector('.trade-plan-grid');
             if (planGrid) planGrid.style.display = 'none';
+            var sizeRow = card.querySelector('.trade-size-row');
+            if (sizeRow) sizeRow.style.display = 'none';
             var whyBlock = card.querySelector('.min-order-watch');
             if (!whyBlock) {
               whyBlock = document.createElement('div');
@@ -1771,6 +1772,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           }
           var planGrid3 = card.querySelector('.trade-plan-grid');
           if (planGrid3) planGrid3.style.display = '';
+          var sizeRow2 = card.querySelector('.trade-size-row');
+          if (sizeRow2) sizeRow2.style.display = '';
           var whyBlock2 = card.querySelector('.min-order-watch');
           if (whyBlock2) whyBlock2.style.display = 'none';
 
