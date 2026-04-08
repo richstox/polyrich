@@ -6,7 +6,7 @@ const closeAttemptSchema = new mongoose.Schema({
   ticketId: { type: mongoose.Schema.Types.ObjectId, ref: "TradeTicket", required: true },
   observedPrice: { type: Number, required: true },
   reason: { type: String, enum: ["TP_HIT", "EXIT_HIT", "ERROR"], required: true },
-  result: { type: String, enum: ["INTENT_RECORDED", "CLOSE_EXECUTED", "FAILED", "IDEMPOTENT_SKIP"], required: true },
+  result: { type: String, enum: ["INTENT_RECORDED", "CLOSE_EXECUTED", "PAPER_CLOSED", "FAILED", "IDEMPOTENT_SKIP"], required: true },
   error: { type: String, default: null },
   createdAt: { type: Date, default: Date.now },
 });

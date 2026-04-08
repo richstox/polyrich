@@ -312,7 +312,11 @@ function markFailed(ticketId) {
 /**
  * Attempt auto-close for a ticket.
  * Always writes a CloseAttempt log.
- * Since no real execution function exists yet, records intent and sets CLOSING.
+ *
+ * When AUTO_MODE_PAPER_CLOSE=true: immediately marks the ticket CLOSED with
+ * closePrice = observedPrice, isSimulated = true (paper close).
+ *
+ * When AUTO_MODE_PAPER_CLOSE=false (default): records intent and sets CLOSING.
  * Does NOT mark CLOSED without real confirmation.
  */
 async function attemptAutoClose(ticket, observedPrice, reason) {
@@ -334,9 +338,6 @@ async function attemptAutoClose(ticket, observedPrice, reason) {
 
   try {
     // Check if a real execution function exists.
-    // Currently, no real close execution is integrated — we record intent only.
-    // When a real execution path is added, call it here and transition to CLOSED
-    // only upon confirmed fill.
     const hasRealExecution = false;
 
     if (hasRealExecution) {
@@ -353,7 +354,48 @@ async function attemptAutoClose(ticket, observedPrice, reason) {
       // return "CLOSE_EXECUTED";
     }
 
-    // No real execution: record intent, set CLOSING
+    // --- Paper close mode ---
+    if (config.AUTO_MODE_PAPER_CLOSE) {
+      // Compute approximate realized PnL if entry data is available
+      let realizedPnlUsd = null;
+      let realizedPnlPct = null;
+      if (typeof ticket.entryLimit === "number" && ticket.entryLimit > 0 &&
+          typeof ticket.maxSizeUsd === "number" && ticket.maxSizeUsd > 0) {
+        const shares = ticket.maxSizeUsd / ticket.entryLimit;
+        const valueExit = shares * observedPrice;
+        realizedPnlUsd = valueExit - ticket.maxSizeUsd;
+        realizedPnlPct = realizedPnlUsd / ticket.maxSizeUsd;
+      }
+
+      await TradeTicket.updateOne(
+        { _id: ticketId, status: { $in: ["OPEN", "CLOSING"] } },
+        {
+          $set: {
+            status: "CLOSED",
+            closeReason: reason,
+            closedAt: new Date(),
+            closePrice: observedPrice,
+            isSimulated: true,
+            lastObservedPrice: observedPrice,
+            ...(realizedPnlUsd !== null ? { realizedPnlUsd, realizedPnlPct } : {}),
+          },
+        }
+      );
+
+      await CloseAttempt.create({
+        ticketId,
+        observedPrice,
+        reason,
+        result: "PAPER_CLOSED",
+      });
+
+      monitorState.closesToday++;
+      // Reset debounce after successful paper close
+      ticketDebounce.delete(String(ticketId));
+      return "PAPER_CLOSED";
+    }
+
+    // --- Default: No real execution, record intent, set CLOSING ---
     await TradeTicket.updateOne(
       { _id: ticketId },
       {
@@ -542,7 +584,7 @@ function stopMonitorLoop() {
 /** Return a snapshot of monitor state for /system observability. */
 function getMonitorStatus() {
   resetDailyCountersIfNeeded();
-  return { ...monitorState };
+  return { ...monitorState, paperCloseEnabled: config.AUTO_MODE_PAPER_CLOSE };
 }
 
 module.exports = {

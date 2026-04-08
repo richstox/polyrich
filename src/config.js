@@ -66,4 +66,6 @@ module.exports = {
   // Lease TTL in ms (60s, renew every 30s)
   AUTO_MODE_LEASE_TTL_MS: parseInt(process.env.AUTO_MODE_LEASE_TTL_MS || "60000", 10),
   AUTO_MODE_LEASE_RENEW_MS: parseInt(process.env.AUTO_MODE_LEASE_RENEW_MS || "30000", 10),
+  // Paper close: when true, auto-mode closes tickets as simulated (no on-chain execution)
+  AUTO_MODE_PAPER_CLOSE: process.env.AUTO_MODE_PAPER_CLOSE === "true",
 };
