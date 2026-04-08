@@ -514,7 +514,6 @@ async function startMonitorLoop() {
       await monitorTick();
       monitorState.lastLoopAt = new Date();
       monitorState.lastLoopDurationMs = Date.now() - tickStart;
-      monitorState.lastError = monitorState.lastError; // preserve any error from tick
     } catch (err) {
       monitorState.lastError = err.message;
       monitorState.lastErrorAt = new Date();
