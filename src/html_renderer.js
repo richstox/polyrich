@@ -1744,7 +1744,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ defaultAutoCloseEnabled: newVal })
           }).then(function() { window.location.reload(); })
-            .catch(function() { acToggle.checked = !newVal; });
+            .catch(function() { acToggle.checked = !newVal; alert('Failed to update Default Auto-Close setting.'); });
         });
       }
 
