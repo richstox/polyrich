@@ -1401,7 +1401,7 @@ function renderTradeCard(item) {
     return `
       <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}">
         <div class="trade-card-header">${questionHtml}</div>
-        <div class="action-pill ${actionCls}">\u26A1 EXECUTE \u00B7 ${outcomeLabel ? escHtml(outcomeLabel) + " " : ""}${escHtml(action)}</div>
+        <div class="action-pill ${actionCls}">\u26A1 ${outcomeLabel ? escHtml(outcomeLabel) + " " : ""}${escHtml(action)} @ $${entryNum.toFixed(2)}</div>
         <div class="trade-plan-grid">
           <div class="trade-plan-item"><span class="trade-plan-label">ENTRY LIMIT</span><span class="trade-plan-value">$${entryNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
@@ -1757,7 +1757,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var pillEl2 = card.querySelector('.action-pill');
           if (pillEl2 && pillEl2.className.indexOf('pill-watch') !== -1) {
             pillEl2.className = 'action-pill pill-buy-yes';
-            pillEl2.innerHTML = '\\u26A1 EXECUTE \\u00B7 ' + (outcome ? outcome + ' ' : '') + act;
+            pillEl2.innerHTML = '\\u26A1 ' + (outcome ? outcome + ' ' : '') + act + ' @ $' + entry.toFixed(2);
           }
           var planGrid3 = card.querySelector('.trade-plan-grid');
           if (planGrid3) planGrid3.style.display = '';
