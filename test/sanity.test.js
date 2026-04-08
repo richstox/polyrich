@@ -1004,6 +1004,93 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// renderTradeCard: outcomeLabel (groupItemTitle) shown in action pill
+// ---------------------------------------------------------------------------
+{
+  console.log("\nrenderTradeCard: outcomeLabel in action pill");
+  const { renderTradeCard } = require("../src/html_renderer");
+
+  // Helper: build a minimal EXECUTE-able item
+  function makeTradeItem(overrides) {
+    return Object.assign({
+      question: "Blue Jackets vs. Sabres",
+      eventTitle: "Blue Jackets vs. Sabres",
+      marketSlug: "blue-jackets-vs-sabres",
+      eventSlug: "blue-jackets-vs-sabres",
+      conditionId: "abc123",
+      groupItemTitle: "",
+      tagIds: [],
+      tagSlugs: [],
+      hoursLeft: 36,
+      latestYes: 0.46,
+      priceYesNum: 0.46,
+      priceNoNum: 0.54,
+      bestBidNum: 0.44,
+      bestAskNum: 0.47,
+      spreadPct: 0.065,
+      liquidity: 5000,
+      volume24hr: 10000,
+      delta1: -0.02,
+      absMove: 0.02,
+      volatility: 0.01,
+      mispricing: true,
+      mispricingTerm: 100,
+      momentum: false,
+      breakout: false,
+      reversal: false,
+      moveTerm: 10,
+      volTerm: 10,
+      activityTerm: 10,
+      orderbookTerm: 10,
+      costPenalty: 0,
+      extremePenalty: 0,
+      timePenalty: 0,
+      timeBonus: 50,
+      noveltyBonus: 0,
+      signalScore2: 100,
+      signalType: "mispricing",
+      reasonCodes: ["mispricing"],
+      endDate: null,
+    }, overrides);
+  }
+
+  // 1) Multi-outcome: groupItemTitle present → pill must contain it
+  const sportsCard = renderTradeCard(makeTradeItem({ groupItemTitle: "Blue Jackets" }));
+  assert(sportsCard.includes("Blue Jackets BUY YES"),
+    "multi-outcome sports: pill contains 'Blue Jackets BUY YES'");
+
+  // 2) Multi-outcome date: groupItemTitle = "April 15"
+  const dateCard = renderTradeCard(makeTradeItem({
+    question: "Trump announces end of military operations against Iran by ...?",
+    eventTitle: "Trump announces end of military operations against Iran by ...?",
+    groupItemTitle: "April 15",
+  }));
+  assert(dateCard.includes("April 15 BUY YES"),
+    "multi-outcome date: pill contains 'April 15 BUY YES'");
+
+  // 3) Multi-outcome range: groupItemTitle = "130+"
+  const rangeCard = renderTradeCard(makeTradeItem({
+    question: "# of seats won by TISZA in Hungary parliamentary election?",
+    eventTitle: "# of seats won by TISZA in Hungary parliamentary election?",
+    groupItemTitle: "130+",
+  }));
+  assert(rangeCard.includes("130+ BUY YES"),
+    "multi-outcome range: pill contains '130+ BUY YES'");
+
+  // 4) Single-outcome: no groupItemTitle → pill must NOT have double space before BUY
+  const singleCard = renderTradeCard(makeTradeItem({ groupItemTitle: "" }));
+  assert(!singleCard.includes("  BUY YES"),
+    "single-outcome: pill does NOT have extra space before BUY YES");
+  assert(singleCard.includes("BUY YES"),
+    "single-outcome: pill still contains 'BUY YES'");
+
+  // 5) Whitespace-only groupItemTitle treated as empty
+  const wsCard = renderTradeCard(makeTradeItem({ groupItemTitle: "   " }));
+  assert(!wsCard.includes("   BUY YES"),
+    "whitespace-only groupItemTitle: no leading whitespace in pill");
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);
