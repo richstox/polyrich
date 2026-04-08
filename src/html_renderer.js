@@ -1580,7 +1580,12 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
   const nextScan = utcSpan(scanStatus.nextScanAt, "\u2014");
   const eventsScanned = scanStatus.lastEventsFetched || 0;
   const marketsScanned = scanStatus.lastMarketsFlattened || 0;
-  const dacEnabled = !!(systemSettings && systemSettings.defaultAutoCloseEnabled);
+  const defaultAutoClose = (systemSettings && systemSettings.defaultAutoCloseEnabled) || false;
+  const acToggleChecked = defaultAutoClose ? "checked" : "";
+  const acBadgeStyle = defaultAutoClose
+    ? "background:#dcfce7;color:#166534;"
+    : "background:#fee2e2;color:#991b1b;";
+  const acBadgeText = defaultAutoClose ? "ON" : "OFF";
 
   return `
     <div class="status-bar">
@@ -1614,6 +1619,13 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
         <input id="max-cap-input" type="number" min="1" step="1" placeholder="50"
           style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
       </div>
+      <div class="status-item">
+        <label class="status-label">Default Auto-Close <span style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:0.7rem;font-weight:700;vertical-align:middle;margin-left:4px;${acBadgeStyle}">${acBadgeText}</span></label>
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-top:2px;">
+          <input id="default-autoclose-toggle" type="checkbox" ${acToggleChecked} style="width:16px;height:16px;cursor:pointer;">
+          <span style="font-size:0.82rem;font-weight:600;">${defaultAutoClose ? "ON" : "OFF"}</span>
+        </label>
+      </div>
 
       <div class="status-item">
         <span class="status-label">Default Auto-Close</span>
@@ -1635,7 +1647,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
 function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSettings) {
   const cards = tradeCandidates.slice(0, 20);
   const statusBar = renderStatusBar(scanStatus, cards.length, relaxedMode, systemSettings);
-  const dacEnabled = !!(systemSettings && systemSettings.defaultAutoCloseEnabled);
+  const defaultAutoClose = (systemSettings && systemSettings.defaultAutoCloseEnabled) || false;
 
   // Split cards into EXECUTE vs WATCH at render time (presentation-only)
   const executeCards = [];
@@ -1697,6 +1709,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
       var RISK_PCT_DEF = ${RISK_PCT_DEFAULT};
       var MAX_CAP_DEF = ${MAX_TRADE_CAP_USD_DEFAULT};
       var MIN_ORDER = ${MIN_LIMIT_ORDER_USD};
+      var DEFAULT_AUTOCLOSE = ${defaultAutoClose ? "true" : "false"};
       var KEY_BR = 'polyrich_bankroll_usd';
       var KEY_RISK = 'polyrich_risk_pct';
       var KEY_CAP = 'polyrich_max_trade_cap_usd';
@@ -1760,6 +1773,20 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
       var limitWarn = document.getElementById('limit-order-warning');
       var setCap5Btn = document.getElementById('set-cap-5-btn');
       if (!brInput || !riskInput || !capInput || !profileSelect) return;
+
+      // Default Auto-Close toggle handler
+      var acToggle = document.getElementById('default-autoclose-toggle');
+      if (acToggle) {
+        acToggle.addEventListener('change', function() {
+          var newVal = acToggle.checked;
+          fetch('/api/system/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ defaultAutoCloseEnabled: newVal })
+          }).then(function() { window.location.reload(); })
+            .catch(function() { acToggle.checked = !newVal; alert('Failed to update Default Auto-Close setting.'); });
+        });
+      }
 
       // Restore saved values
       var sBr = localStorage.getItem(KEY_BR);
