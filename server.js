@@ -33,6 +33,7 @@ const {
   renderExplorePage,
   renderSystemPage,
   renderTicketsPage,
+  renderWatchlistPage,
   pageShell,
   inferDirection,
   inferEntry,
@@ -938,10 +939,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── /watchlist ─────────────────────────────────────────────────────────
+  if (url.pathname === "/watchlist") {
+    try {
+      const items = await TradeTicket.find({ tradeability: "WATCH" }).sort({ createdAt: -1 }).limit(500).lean();
+      const highlightId = url.searchParams.get("highlight") || null;
+      const body = renderWatchlistPage(items, highlightId);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(pageShell("Watchlist", "/watchlist", body));
+      return;
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(`watchlist error: ${err.message}`);
+      return;
+    }
+  }
+
   // ── /tickets ───────────────────────────────────────────────────────────
   if (url.pathname === "/tickets") {
     try {
-      const tickets = await TradeTicket.find().sort({ createdAt: -1 }).limit(500).lean();
+      const tickets = await TradeTicket.find({ tradeability: { $ne: "WATCH" } }).sort({ createdAt: -1 }).limit(500).lean();
       const highlightId = url.searchParams.get("highlight") || null;
       const body = renderTicketsPage(tickets, highlightId);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });

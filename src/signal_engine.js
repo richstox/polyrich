@@ -82,6 +82,7 @@ function marketKey(item) {
 // Projection to minimise DB read payload in buildIdeas
 const SNAPSHOT_PROJECTION = {
   question: 1,
+  eventTitle: 1,
   category: 1,
   subcategory: 1,
   marketSlug: 1,
@@ -596,6 +597,7 @@ function enrichItem(item, historyMap, recentlyShownSet) {
 
   return {
     question: item.question,
+    eventTitle: item.eventTitle || "",
     category: item.category || "",
     subcategory: item.subcategory || "",
     marketSlug: item.marketSlug || "",

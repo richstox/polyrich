@@ -98,9 +98,11 @@ async function fetchPolymarkets() {
     const tags = Array.isArray(event.tags) ? event.tags : [];
     const eventMarkets = Array.isArray(event.markets) ? event.markets : [];
 
+    const eventTitle = event.title || "";
     for (const mkt of eventMarkets) {
       // Attach event-level context onto each market object
       mkt.eventSlug = eventSlug;
+      mkt.eventTitle = eventTitle;
       if (!mkt.category) mkt.category = category;
       mkt.subcategory = subcategory;
       mkt.eventTags = tags;
