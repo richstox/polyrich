@@ -5,6 +5,7 @@ const config = require("./config");
 const TradeTicket = require("../models/TradeTicket");
 const CloseAttempt = require("../models/CloseAttempt");
 const MonitorLease = require("../models/MonitorLease");
+const SystemSetting = require("../models/SystemSetting");
 
 // ---------------------------------------------------------------------------
 // In-memory state (exposed for /system observability)
@@ -316,10 +317,14 @@ function markFailed(ticketId) {
  * When AUTO_MODE_PAPER_CLOSE=true: immediately marks the ticket CLOSED with
  * closePrice = observedPrice, isSimulated = true (paper close).
  *
- * When AUTO_MODE_PAPER_CLOSE=false (default): records intent and sets CLOSING.
+ * When paper close is inactive (default): records intent and sets CLOSING.
  * Does NOT mark CLOSED without real confirmation.
+ *
+ * @param {boolean} [effectivePaperClose] — resolved paper-close state (env && db).
+ *   Falls back to config.AUTO_MODE_PAPER_CLOSE for backward compat.
  */
-async function attemptAutoClose(ticket, observedPrice, reason) {
+async function attemptAutoClose(ticket, observedPrice, reason, effectivePaperClose) {
+  if (typeof effectivePaperClose !== "boolean") effectivePaperClose = config.AUTO_MODE_PAPER_CLOSE;
   const ticketId = ticket._id;
   const idempKey = `${ticketId}:${reason}:${todayDateStr()}`;
 
@@ -355,7 +360,7 @@ async function attemptAutoClose(ticket, observedPrice, reason) {
     }
 
     // --- Paper close mode ---
-    if (config.AUTO_MODE_PAPER_CLOSE) {
+    if (effectivePaperClose) {
       // Compute approximate realized PnL if entry data is available
       let realizedPnlUsd = null;
       let realizedPnlPct = null;
@@ -447,12 +452,26 @@ async function attemptAutoClose(ticket, observedPrice, reason) {
 async function monitorTick() {
   resetDailyCountersIfNeeded();
 
+  // Check DB-level auto-mode toggle — if disabled, skip this tick entirely
+  let dbSettings;
+  try {
+    dbSettings = await SystemSetting.getSettings();
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: "failed to fetch SystemSetting, defaulting to disabled", err: err.message, ts: new Date().toISOString() }));
+    dbSettings = { autoModeEnabled: false, paperCloseEnabled: false };
+  }
+  if (!dbSettings.autoModeEnabled) {
+    monitorState.openMonitored = 0;
+    return;
+  }
+
   const openTickets = await TradeTicket.find({
     status: "OPEN",
     tradeability: "EXECUTE",
     action: { $in: ["BUY_YES", "BUY_NO"] },
     takeProfit: { $ne: null },
     riskExitLimit: { $ne: null },
+    autoCloseEnabled: true,
   })
     .sort({ _id: 1 })
     .lean();
@@ -460,6 +479,9 @@ async function monitorTick() {
   monitorState.openMonitored = openTickets.length;
 
   if (openTickets.length === 0) return;
+
+  // Resolve effective paper-close state: env must allow AND DB must enable
+  const effectivePaperClose = config.AUTO_MODE_PAPER_CLOSE && dbSettings.paperCloseEnabled;
 
   // Round-robin batch
   const batchSize = config.AUTO_MODE_BATCH_SIZE;
@@ -499,7 +521,7 @@ async function monitorTick() {
     const { triggered, reason } = checkTrigger(ticket, priceResult.price);
 
     if (triggered && debounceCheck(ticket._id, true)) {
-      await attemptAutoClose(ticket, priceResult.price, reason);
+      await attemptAutoClose(ticket, priceResult.price, reason, effectivePaperClose);
     } else if (!triggered) {
       debounceCheck(ticket._id, false);
     }
