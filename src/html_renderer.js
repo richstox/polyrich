@@ -85,6 +85,19 @@ function escHtml(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+/**
+ * Emit a <span data-utc="..."> placeholder that the client-side
+ * formatLocalDateTime() will replace with the user's local time.
+ * Accepts Date | ISO string | null.  Returns pre-escaped HTML (safe to embed).
+ * Fallback paths return escHtml()-escaped plain text for null/invalid values.
+ */
+function utcSpan(value, fallback) {
+  if (!value) return escHtml(fallback || "\u2014");
+  const iso = value instanceof Date ? value.toISOString() : String(value);
+  if (isNaN(new Date(iso).getTime())) return escHtml(fallback || "\u2014");
+  return `<span data-utc="${escHtml(iso)}">${escHtml(iso)}</span>`;
+}
+
 function polymarketUrl(item) {
   if (typeof item === "string") {
     // Legacy: called with a slug string
@@ -164,12 +177,8 @@ function renderTodayActions(scanStatus, funnel, signalsCount, relaxedMode) {
     ? `Scanner degraded: ${escHtml(scanStatus.lastError)}`
     : "scanning OK";
 
-  const lastScan = scanStatus.lastScanAt
-    ? scanStatus.lastScanAt.toLocaleString("cs-CZ")
-    : "not yet";
-  const nextScan = scanStatus.nextScanAt
-    ? scanStatus.nextScanAt.toLocaleString("cs-CZ")
-    : "not scheduled";
+  const lastScan = utcSpan(scanStatus.lastScanAt, "not yet");
+  const nextScan = utcSpan(scanStatus.nextScanAt, "not scheduled");
 
   let recommendation;
   if (scanStatus.lastError) {
@@ -258,9 +267,9 @@ function renderHealthUi(healthData) {
       <div class="grid-2">
         <p><span style="color:#6b7280;">Status:</span> <strong style="color:${statusColor};">${healthData.ok ? "OK" : "DEGRADED"}</strong></p>
         <p><span style="color:#6b7280;">MongoDB:</span> <strong>${healthData.mongoConnected ? "connected" : "disconnected"}</strong></p>
-        <p><span style="color:#6b7280;">Last scan:</span> <strong>${healthData.lastScanAt || "never"}</strong></p>
+        <p><span style="color:#6b7280;">Last scan:</span> <strong>${utcSpan(healthData.lastScanAt, "never")}</strong></p>
         <p><span style="color:#6b7280;">Scan running:</span> <strong>${healthData.scanRunning ? "yes" : "no"}</strong></p>
-        <p><span style="color:#6b7280;">Timestamp:</span> <strong>${healthData.ts}</strong></p>
+        <p><span style="color:#6b7280;">Timestamp:</span> <strong>${utcSpan(healthData.ts)}</strong></p>
       </div>
     </div>
     <p style="font-size:0.8rem;color:#6b7280;margin-top:12px;">Raw JSON: <a href="/health" style="color:#2563eb;">/health</a></p>
@@ -281,7 +290,7 @@ function renderMetricsUi(metrics) {
     <div class="card">
       <h2 style="margin-top:0;">Scan Overview</h2>
       <div class="grid-2">
-        <p><span style="color:#6b7280;">Last scan:</span> <strong>${metrics.lastScanAt || "never"}</strong></p>
+        <p><span style="color:#6b7280;">Last scan:</span> <strong>${utcSpan(metrics.lastScanAt, "never")}</strong></p>
         <p><span style="color:#6b7280;">Scan ID:</span> <strong>${metrics.lastScanId || "-"}</strong></p>
         <p><span style="color:#6b7280;">Duration:</span> <strong>${metrics.lastDurationMs != null ? metrics.lastDurationMs + " ms" : "-"}</strong></p>
         <p><span style="color:#6b7280;">Running:</span> <strong>${metrics.scanRunning ? "yes" : "no"}</strong></p>
@@ -726,6 +735,23 @@ function pageShell(title, activeNav, bodyHtml) {
     el.addEventListener("mouseleave", function() { tip.style.display = "none"; });
     el.addEventListener("click", function(ev) { ev.preventDefault(); tip.style.display = tip.style.display === "block" ? "none" : "block"; });
   });
+  // --- Local-timezone formatting for all [data-utc] elements ---
+  (function() {
+    function formatLocalDateTime(value) {
+      if (!value) return "\u2014";
+      var d = (value instanceof Date) ? value : new Date(value);
+      if (isNaN(d.getTime())) return "\u2014";
+      return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(d);
+    }
+    document.querySelectorAll("[data-utc]").forEach(function(el) {
+      el.textContent = formatLocalDateTime(el.getAttribute("data-utc"));
+    });
+    // Show timezone label if placeholder exists
+    var tzEl = document.getElementById("tz-label");
+    if (tzEl) {
+      try { tzEl.textContent = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(_) {}
+    }
+  })();
   </script>
 </body>
 </html>`;
@@ -1107,19 +1133,15 @@ function renderTradeCard(item) {
 
 /** Render the compact status bar at top of /trade. */
 function renderStatusBar(scanStatus, candidateCount, relaxedMode) {
-  const lastScan = scanStatus.lastScanAt
-    ? scanStatus.lastScanAt.toLocaleString("en-GB", { hour12: false, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
-    : "not yet";
-  const nextScan = scanStatus.nextScanAt
-    ? scanStatus.nextScanAt.toLocaleString("en-GB", { hour12: false, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
-    : "—";
+  const lastScan = utcSpan(scanStatus.lastScanAt, "not yet");
+  const nextScan = utcSpan(scanStatus.nextScanAt, "\u2014");
   const eventsScanned = scanStatus.lastEventsFetched || 0;
   const marketsScanned = scanStatus.lastMarketsFlattened || 0;
 
   return `
     <div class="status-bar">
-      <div class="status-item"><span class="status-label">Last scan</span><span class="status-value">${escHtml(lastScan)}</span></div>
-      <div class="status-item"><span class="status-label">Next scan</span><span class="status-value">${escHtml(nextScan)}</span></div>
+      <div class="status-item"><span class="status-label">Last scan</span><span class="status-value">${lastScan}</span></div>
+      <div class="status-item"><span class="status-label">Next scan</span><span class="status-value">${nextScan}</span></div>
       <div class="status-item"><span class="status-label">Universe</span><span class="status-value">${eventsScanned} events / ${marketsScanned} markets</span></div>
       <div class="status-item"><span class="status-label">Ready</span><span class="status-value" style="font-weight:700;">${candidateCount} candidates</span></div>
       <div class="status-item">
@@ -1754,7 +1776,7 @@ function renderExplorePage(data) {
 /** Render the /system page body. */
 function renderSystemPage(healthData, metrics) {
   return `
-    <h1>System</h1>
+    <h1>System <span id="tz-label" style="font-size:0.55em;font-weight:400;color:#6b7280;"></span></h1>
     ${renderHealthUi(healthData)}
     ${renderMetricsUi(metrics)}
     <div class="card">
@@ -1781,8 +1803,7 @@ function renderTicketsPage(tickets, highlightId) {
   const winRate = closedWithPnl.length > 0 ? (wins / closedWithPnl.length * 100) : 0;
 
   function fmtDate(d) {
-    if (!d) return "\u2014";
-    return new Date(d).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+    return utcSpan(d);
   }
 
   function pnlColor(val) {
@@ -1799,7 +1820,7 @@ function renderTicketsPage(tickets, highlightId) {
     let cumPnl = 0;
     const points = sorted.map((t) => {
       cumPnl += t.realizedPnlUsd;
-      return { date: fmtDate(t.closedAt), pnl: Math.round(cumPnl * 100) / 100 };
+      return { rawDate: t.closedAt, pnl: Math.round(cumPnl * 100) / 100 };
     });
     const maxVal = Math.max(...points.map((p) => p.pnl));
     const minVal = Math.min(...points.map((p) => p.pnl));
@@ -1821,9 +1842,9 @@ function renderTicketsPage(tickets, highlightId) {
           <polyline points="${svgPoints}" fill="none" stroke="${lineColor}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round" />
         </svg>
         <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:#6b7280;margin-top:4px;">
-          <span>${escHtml(points[0].date)}</span>
+          ${utcSpan(points[0].rawDate)}
           <span>Cum. PnL: <strong style="color:${pnlColor(cumPnl)};">${cumPnl >= 0 ? "+" : ""}$${cumPnl.toFixed(2)}</strong></span>
-          <span>${escHtml(points[points.length - 1].date)}</span>
+          ${utcSpan(points[points.length - 1].rawDate)}
         </div>
       </div>
     `;
