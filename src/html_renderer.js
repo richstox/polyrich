@@ -2695,8 +2695,8 @@ function renderTicketsPage(tickets, highlightId) {
     if (showClose && isExec) {
       const acEnabled = t.autoCloseEnabled || false;
       const acBadge = acEnabled
-        ? '<span style="background:#166534;color:#bbf7d0;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;">ON</span>'
-        : '<span style="background:#374151;color:#9ca3af;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;">OFF</span>';
+        ? '<span class="ac-badge" style="background:#166534;color:#bbf7d0;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;">ON</span>'
+        : '<span class="ac-badge" style="background:#374151;color:#9ca3af;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;">OFF</span>';
       const acNextVal = acEnabled ? "false" : "true";
       const acBtnLabel = acEnabled ? "Disable" : "Enable";
       const acBtnColor = acEnabled ? "#7f1d1d" : "#166534";
@@ -2815,6 +2815,25 @@ function renderTicketsPage(tickets, highlightId) {
         window.scrollTo(0, parseInt(savedY, 10));
       }
 
+      // --- Shared helper: update autoclose toggle UI for a single button ---
+      function updateAutoCloseUI(toggleBtn, enabled) {
+        var card = toggleBtn.closest(".tk-ticket");
+        if (card) card.setAttribute("data-autoclose", enabled ? "1" : "0");
+        var row = toggleBtn.closest("div");
+        var badge = row.querySelector(".ac-badge");
+        if (enabled) {
+          if (badge) { badge.style.background = "#166534"; badge.style.color = "#bbf7d0"; badge.textContent = "ON"; }
+          toggleBtn.setAttribute("data-value", "false");
+          toggleBtn.textContent = "Disable";
+          toggleBtn.style.background = "#7f1d1d";
+        } else {
+          if (badge) { badge.style.background = "#374151"; badge.style.color = "#9ca3af"; badge.textContent = "OFF"; }
+          toggleBtn.setAttribute("data-value", "true");
+          toggleBtn.textContent = "Enable";
+          toggleBtn.style.background = "#166534";
+        }
+      }
+
       // --- Auto-close per-ticket toggle (in-place, no reload to preserve sort) ---
       document.addEventListener("click", function(e) {
         var btn = e.target.closest(".autoclose-toggle-btn");
@@ -2829,22 +2848,7 @@ function renderTicketsPage(tickets, highlightId) {
           body: JSON.stringify({ ticketId: ticketId, autoCloseEnabled: value }),
         }).then(function(r) { return r.json(); }).then(function(d) {
           if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); return; }
-          // Update DOM in-place instead of reloading
-          var card = document.getElementById("ticket-" + ticketId);
-          if (card) card.setAttribute("data-autoclose", value ? "1" : "0");
-          var row = btn.closest("div");
-          var badgeSpan = row.querySelector("span > span");
-          if (value) {
-            if (badgeSpan) { badgeSpan.style.background = "#166534"; badgeSpan.style.color = "#bbf7d0"; badgeSpan.textContent = "ON"; }
-            btn.setAttribute("data-value", "false");
-            btn.textContent = "Disable";
-            btn.style.background = "#7f1d1d";
-          } else {
-            if (badgeSpan) { badgeSpan.style.background = "#374151"; badgeSpan.style.color = "#9ca3af"; badgeSpan.textContent = "OFF"; }
-            btn.setAttribute("data-value", "true");
-            btn.textContent = "Enable";
-            btn.style.background = "#166534";
-          }
+          updateAutoCloseUI(btn, value);
           btn.disabled = false;
         }).catch(function() { btn.textContent = "Error"; btn.disabled = false; });
       });
@@ -2861,26 +2865,10 @@ function renderTicketsPage(tickets, highlightId) {
             body: JSON.stringify({ autoCloseEnabled: value }),
           }).then(function(r) { return r.json(); }).then(function(d) {
             if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); return; }
-            // Update all open ticket cards in-place
             var container = document.getElementById("tk-open-list");
             if (container) {
-              var toggleBtns = container.querySelectorAll(".autoclose-toggle-btn");
-              toggleBtns.forEach(function(tb) {
-                var card = tb.closest(".tk-ticket");
-                if (card) card.setAttribute("data-autoclose", value ? "1" : "0");
-                var row = tb.closest("div");
-                var badgeSpan = row.querySelector("span > span");
-                if (value) {
-                  if (badgeSpan) { badgeSpan.style.background = "#166534"; badgeSpan.style.color = "#bbf7d0"; badgeSpan.textContent = "ON"; }
-                  tb.setAttribute("data-value", "false");
-                  tb.textContent = "Disable";
-                  tb.style.background = "#7f1d1d";
-                } else {
-                  if (badgeSpan) { badgeSpan.style.background = "#374151"; badgeSpan.style.color = "#9ca3af"; badgeSpan.textContent = "OFF"; }
-                  tb.setAttribute("data-value", "true");
-                  tb.textContent = "Enable";
-                  tb.style.background = "#166534";
-                }
+              container.querySelectorAll(".autoclose-toggle-btn").forEach(function(tb) {
+                updateAutoCloseUI(tb, value);
               });
             }
             btn.disabled = false;
