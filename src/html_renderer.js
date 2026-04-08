@@ -2232,9 +2232,18 @@ function renderExplorePage(data) {
 }
 
 /** Render the /system page body. */
-function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts) {
+function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches) {
   autoModeStatus = autoModeStatus || {};
   recentCloseAttempts = recentCloseAttempts || [];
+  systemSettings = systemSettings || { autoModeEnabled: false, paperCloseEnabled: false };
+  envKillSwitches = envKillSwitches || { autoModeEnv: false, paperCloseEnv: false };
+
+  const envAutoAllows = envKillSwitches.autoModeEnv;
+  const envPaperAllows = envKillSwitches.paperCloseEnv;
+  const dbAutoEnabled = systemSettings.autoModeEnabled || false;
+  const dbPaperEnabled = systemSettings.paperCloseEnabled || false;
+  const effectiveAuto = envAutoAllows && dbAutoEnabled;
+  const effectivePaper = envPaperAllows && dbPaperEnabled;
 
   const autoEnabled = autoModeStatus.enabled || false;
   const statusBadge = autoEnabled
@@ -2258,6 +2267,77 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
   const lastErrLabel = autoModeStatus.lastError
     ? `<span style="color:#ef4444;">${escHtml(autoModeStatus.lastError)}</span>`
     : '<span style="color:#6b7280;">—</span>';
+
+  // --- Operator toggles panel ---
+  function toggleRow(label, fieldName, envAllows, dbEnabled, effective) {
+    const lockedByEnv = !envAllows;
+    const envBadge = envAllows
+      ? '<span style="background:#166534;color:#bbf7d0;padding:2px 8px;border-radius:6px;font-size:0.75rem;font-weight:600;">ENV ✓</span>'
+      : '<span style="background:#7f1d1d;color:#fecaca;padding:2px 8px;border-radius:6px;font-size:0.75rem;font-weight:600;">Locked by env</span>';
+    const dbBadge = dbEnabled
+      ? '<span style="background:#166534;color:#bbf7d0;padding:2px 8px;border-radius:6px;font-size:0.75rem;font-weight:600;">DB ON</span>'
+      : '<span style="background:#374151;color:#9ca3af;padding:2px 8px;border-radius:6px;font-size:0.75rem;font-weight:600;">DB OFF</span>';
+    const effectiveBadge = effective
+      ? '<span style="background:#166534;color:#bbf7d0;padding:2px 8px;border-radius:6px;font-size:0.78rem;font-weight:700;">● ACTIVE</span>'
+      : '<span style="background:#7f1d1d;color:#fecaca;padding:2px 8px;border-radius:6px;font-size:0.78rem;font-weight:700;">● INACTIVE</span>';
+
+    const btnDisabled = lockedByEnv ? "disabled" : "";
+    const btnStyle = lockedByEnv
+      ? "opacity:0.5;cursor:not-allowed;"
+      : "cursor:pointer;";
+    const nextState = dbEnabled ? "false" : "true";
+    const btnLabel = dbEnabled ? "Disable" : "Enable";
+    const btnColor = dbEnabled ? "#7f1d1d" : "#166534";
+
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #1e293b;">
+        <div>
+          <strong style="font-size:0.9rem;">${escHtml(label)}</strong>
+          <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;">
+            ${envBadge} ${dbBadge} ${effectiveBadge}
+          </div>
+        </div>
+        <button class="sys-toggle-btn" data-field="${escHtml(fieldName)}" data-value="${nextState}"
+          ${btnDisabled}
+          style="background:${btnColor};color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:0.82rem;font-weight:600;${btnStyle}">
+          ${lockedByEnv ? "🔒 Locked" : escHtml(btnLabel)}
+        </button>
+      </div>
+    `;
+  }
+
+  const togglesPanel = `
+    <div class="card" style="margin-top:16px;">
+      <h2 style="margin-top:0;">⚙️ Operator Toggles</h2>
+      <p style="font-size:0.8rem;color:#94a3b8;margin:0 0 12px 0;">
+        Settings persist in MongoDB. Env vars are hard kill-switches — if <code>false</code> in env, the feature cannot be enabled here.
+      </p>
+      ${toggleRow("Auto Mode", "autoModeEnabled", envAutoAllows, dbAutoEnabled, effectiveAuto)}
+      ${toggleRow("Paper Close (SIM)", "paperCloseEnabled", envPaperAllows, dbPaperEnabled, effectivePaper)}
+    </div>
+    <script>
+    (function() {
+      document.addEventListener("click", function(e) {
+        var btn = e.target.closest(".sys-toggle-btn");
+        if (!btn || btn.disabled) return;
+        var field = btn.getAttribute("data-field");
+        var value = btn.getAttribute("data-value") === "true";
+        btn.disabled = true;
+        btn.textContent = "Saving…";
+        var payload = {};
+        payload[field] = value;
+        fetch("/api/system/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }).then(function(r) { return r.json(); }).then(function(d) {
+          if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); }
+          else { location.reload(); }
+        }).catch(function() { btn.textContent = "Error"; btn.disabled = false; });
+      });
+    })();
+    </script>
+  `;
 
   const attemptRows = recentCloseAttempts.map((a) => {
     const resultCls = a.result === "INTENT_RECORDED" ? "color:#22c55e"
@@ -2324,6 +2404,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
     <h1>System <span id="tz-label" style="font-size:0.55em;font-weight:400;color:#6b7280;"></span></h1>
     ${renderHealthUi(healthData)}
     ${renderMetricsUi(metrics)}
+    ${togglesPanel}
     ${autoModePanel}
     <div class="card">
       <h2 style="margin-top:0;">Quick Links</h2>
@@ -2609,6 +2690,27 @@ function renderTicketsPage(tickets, highlightId) {
       </div>
     ` : "";
 
+    // Per-ticket auto-close toggle (only for open EXECUTE tickets)
+    let autoCloseToggleHtml = "";
+    if (showClose && isExec) {
+      const acEnabled = t.autoCloseEnabled || false;
+      const acBadge = acEnabled
+        ? '<span style="background:#166534;color:#bbf7d0;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;">ON</span>'
+        : '<span style="background:#374151;color:#9ca3af;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;">OFF</span>';
+      const acNextVal = acEnabled ? "false" : "true";
+      const acBtnLabel = acEnabled ? "Disable" : "Enable";
+      const acBtnColor = acEnabled ? "#7f1d1d" : "#166534";
+      autoCloseToggleHtml = `
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1e293b;display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:0.78rem;color:#94a3b8;">🤖 Auto Close ${acBadge}</span>
+          <button class="autoclose-toggle-btn" data-ticket-id="${escHtml(String(t._id))}" data-value="${acNextVal}"
+            style="background:${acBtnColor};color:#fff;border:none;padding:4px 12px;border-radius:4px;font-size:0.75rem;font-weight:600;cursor:pointer;">
+            ${escHtml(acBtnLabel)}
+          </button>
+        </div>
+      `;
+    }
+
     // Closed footer
     let closedFooterHtml = "";
     if (!showClose) {
@@ -2641,6 +2743,7 @@ function renderTicketsPage(tickets, highlightId) {
           <div><span class="tk-price-label">Size (USD)</span><div class="tk-price-val">${size}</div></div>
         </div>
         ${closeHtml}
+        ${autoCloseToggleHtml}
         ${closedFooterHtml}
       </div>
     `;
@@ -2706,6 +2809,27 @@ function renderTicketsPage(tickets, highlightId) {
         sessionStorage.removeItem("tk_scrollY");
         window.scrollTo(0, parseInt(savedY, 10));
       }
+
+      // --- Auto-close per-ticket toggle ---
+      document.addEventListener("click", function(e) {
+        var btn = e.target.closest(".autoclose-toggle-btn");
+        if (!btn) return;
+        var ticketId = btn.getAttribute("data-ticket-id");
+        var value = btn.getAttribute("data-value") === "true";
+        btn.disabled = true;
+        btn.textContent = "Saving…";
+        fetch("/api/tickets/autoclose", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ticketId: ticketId, autoCloseEnabled: value }),
+        }).then(function(r) { return r.json(); }).then(function(d) {
+          if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); }
+          else {
+            sessionStorage.setItem("tk_scrollY", String(window.scrollY));
+            location.reload();
+          }
+        }).catch(function() { btn.textContent = "Error"; btn.disabled = false; });
+      });
 
       // --- Sort toggle ---
       function sortContainer(containerId, sortKey, ascending) {

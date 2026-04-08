@@ -19,6 +19,7 @@ const {
 } = require("./src/persistence");
 const TradeTicket = require("./models/TradeTicket");
 const CloseAttempt = require("./models/CloseAttempt");
+const SystemSetting = require("./models/SystemSetting");
 const crypto = require("crypto");
 const { buildIdeas } = require("./src/signal_engine");
 const {
@@ -442,12 +443,14 @@ const server = http.createServer(async (req, res) => {
     let dbScanCount = null;
     let recentScans = [];
     let recentCloseAttempts = [];
+    let systemSettings = { autoModeEnabled: false, paperCloseEnabled: false };
     try {
-      [dbSnapshotCount, dbScanCount, recentScans, recentCloseAttempts] = await Promise.all([
+      [dbSnapshotCount, dbScanCount, recentScans, recentCloseAttempts, systemSettings] = await Promise.all([
         MarketSnapshot.estimatedDocumentCount(),
         Scan.estimatedDocumentCount(),
         Scan.find().sort({ startedAt: -1 }).limit(3).lean(),
         CloseAttempt.find().sort({ createdAt: -1 }).limit(10).lean(),
+        SystemSetting.getSettings(),
       ]);
     } catch (_) {}
 
@@ -484,7 +487,12 @@ const server = http.createServer(async (req, res) => {
 
     const autoModeStatus = getMonitorStatus();
 
-    const body = renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts);
+    const envKillSwitches = {
+      autoModeEnv: config.AUTO_MODE_ENABLED,
+      paperCloseEnv: config.AUTO_MODE_PAPER_CLOSE,
+    };
+
+    const body = renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(pageShell("System", "/system", body));
     return;
@@ -840,6 +848,73 @@ const server = http.createServer(async (req, res) => {
     const body = renderMetricsUi(metrics);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(pageShell("Metrics", "/metrics-ui", body));
+    return;
+  }
+
+  // ── POST /api/system/settings ──────────────────────────────────────
+  if (url.pathname === "/api/system/settings" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", async () => {
+      try {
+        const data = JSON.parse(body);
+        const update = {};
+        if (typeof data.autoModeEnabled === "boolean") update.autoModeEnabled = data.autoModeEnabled;
+        if (typeof data.paperCloseEnabled === "boolean") update.paperCloseEnabled = data.paperCloseEnabled;
+        if (Object.keys(update).length === 0) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Provide at least one boolean field: autoModeEnabled, paperCloseEnabled" }));
+          return;
+        }
+        const doc = await SystemSetting.findOneAndUpdate(
+          { _id: "system" },
+          { $set: update },
+          { upsert: true, new: true, lean: true }
+        );
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(doc));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // ── POST /api/tickets/autoclose ────────────────────────────────────
+  if (url.pathname === "/api/tickets/autoclose" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", async () => {
+      try {
+        const data = JSON.parse(body);
+        if (!data.ticketId || typeof data.autoCloseEnabled !== "boolean") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Provide ticketId and autoCloseEnabled (boolean)" }));
+          return;
+        }
+        if (!mongoose.Types.ObjectId.isValid(data.ticketId)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid ticketId format" }));
+          return;
+        }
+        const ticket = await TradeTicket.findByIdAndUpdate(
+          String(data.ticketId),
+          { $set: { autoCloseEnabled: data.autoCloseEnabled } },
+          { new: true, lean: true }
+        );
+        if (!ticket) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Ticket not found" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(ticket));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
     return;
   }
 
