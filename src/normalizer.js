@@ -102,6 +102,7 @@ function normalizeMarket(item) {
 
   return {
     question,
+    groupItemTitle: item.groupItemTitle || "",
     eventTitle: item.eventTitle || "",
     category: item.category || "",
     subcategory: item.subcategory || "",

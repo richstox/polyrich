@@ -125,6 +125,23 @@ console.log("\nnormalizeMarket");
   assert(m.conditionId === "", "missing conditionId defaults to empty string");
 }
 
+{
+  // groupItemTitle preserved from raw market
+  const m = normalizeMarket({
+    question: "Will Elon Musk post 240-259 tweets from April 3 to April 10, 2026?",
+    slug: "elon-musk-of-tweets-april-3-april-10-240-259",
+    eventSlug: "elon-musk-tweets-april",
+    groupItemTitle: "240-259",
+  });
+  assert(m.groupItemTitle === "240-259", "groupItemTitle preserved from raw market");
+}
+
+{
+  // missing groupItemTitle defaults to empty string
+  const m = normalizeMarket({ question: "Q", slug: "q-slug" });
+  assert(m.groupItemTitle === "", "missing groupItemTitle defaults to empty string");
+}
+
 // ---------------------------------------------------------------------------
 // polymarketUrl
 // ---------------------------------------------------------------------------
@@ -396,6 +413,38 @@ console.log("\ncardHeadline (event-first)");
     });
     assert(result.headline === "Will rain tomorrow?", "no duplication when same");
     assert(result.subtext === "", "subtext empty when same as headline");
+  }
+
+  // groupItemTitle preferred as subtext over verbose per-token question (multi-outcome market)
+  {
+    const result = cardHeadline({
+      question: "Will Elon Musk post 240-259 tweets from April 3 to April 10, 2026?",
+      eventTitle: "Elon Musk # tweets April 3 - April 10, 2026?",
+      groupItemTitle: "240-259",
+    });
+    assert(result.headline === "Elon Musk # tweets April 3 - April 10, 2026?", "headline is eventTitle for grouped market");
+    assert(result.subtext === "240-259", "subtext is groupItemTitle, not verbose per-token question");
+  }
+
+  // groupItemTitle absent → falls back to mktLabel (legacy behaviour)
+  {
+    const result = cardHeadline({
+      question: "Will Elon Musk post 240-259 tweets from April 3 to April 10, 2026?",
+      eventTitle: "Elon Musk # tweets April 3 - April 10, 2026?",
+    });
+    assert(result.headline === "Elon Musk # tweets April 3 - April 10, 2026?", "headline is eventTitle without groupItemTitle");
+    assert(result.subtext === "Will Elon Musk post 240-259 tweets from April 3 to April 10, 2026?", "subtext falls back to question when no groupItemTitle");
+  }
+
+  // groupItemTitle with invalid market label — still shown as subtext
+  {
+    const result = cardHeadline({
+      question: "YES",
+      eventTitle: "Some Multi-Outcome Event",
+      groupItemTitle: "Option A",
+    });
+    assert(result.headline === "Some Multi-Outcome Event", "headline eventTitle when question invalid + groupItemTitle");
+    assert(result.subtext === "Option A", "subtext is groupItemTitle when question invalid");
   }
 }
 
