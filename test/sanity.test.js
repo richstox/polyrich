@@ -142,6 +142,42 @@ console.log("\nnormalizeMarket");
   assert(m.groupItemTitle === "", "missing groupItemTitle defaults to empty string");
 }
 
+{
+  // outcomes as JSON string (Polymarket API often returns this format)
+  const m = normalizeMarket({
+    question: "Match Winner",
+    slug: "match-winner",
+    outcomes: '["KOIA","BAR"]',
+    groupItemTitle: "Match Winner",
+  });
+  assert(Array.isArray(m.outcomes), "JSON-string outcomes parsed into array");
+  assert(m.outcomes.length === 2, "JSON-string outcomes has 2 entries");
+  assert(m.outcomes[0] === "KOIA", "JSON-string outcomes[0] is KOIA");
+  assert(m.outcomes[1] === "BAR", "JSON-string outcomes[1] is BAR");
+}
+
+{
+  // outcomes as actual array (still works)
+  const m = normalizeMarket({
+    question: "Match Winner",
+    slug: "match-winner",
+    outcomes: ["MIN", "DAL"],
+  });
+  assert(m.outcomes[0] === "MIN", "array outcomes[0] is MIN");
+  assert(m.outcomes[1] === "DAL", "array outcomes[1] is DAL");
+}
+
+{
+  // outcomes as invalid JSON string falls back to empty array
+  const m = normalizeMarket({
+    question: "Q",
+    slug: "q",
+    outcomes: "not-json",
+  });
+  assert(Array.isArray(m.outcomes), "invalid JSON outcomes falls back to array");
+  assert(m.outcomes.length === 0, "invalid JSON outcomes is empty");
+}
+
 // ---------------------------------------------------------------------------
 // polymarketUrl
 // ---------------------------------------------------------------------------

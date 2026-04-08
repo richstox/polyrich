@@ -102,7 +102,12 @@ function normalizeMarket(item) {
 
   // Preserve the outcomes array (e.g. ["MIN", "DAL"]) — these are the short
   // names shown on Polymarket buy buttons and may differ from groupItemTitle.
-  const rawOutcomes = item.outcomes;
+  // The API may return outcomes as a JSON string (like outcomePrices) or as an
+  // actual array, so parse if necessary.
+  let rawOutcomes = item.outcomes;
+  if (typeof rawOutcomes === "string") {
+    try { rawOutcomes = JSON.parse(rawOutcomes); } catch (_) { rawOutcomes = []; }
+  }
   const outcomes = Array.isArray(rawOutcomes)
     ? rawOutcomes.map((o) => (typeof o === "string" ? o : (o && o.title) || "")).filter(Boolean)
     : [];
