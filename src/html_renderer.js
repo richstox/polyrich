@@ -1300,6 +1300,9 @@ function renderTradeCard(item) {
   const safeLink = link ? escHtml(link) : "";
   const { headline, subtext } = cardHeadline(item);
   const qText = safeQuestion(item);
+  // For multi-outcome grouped markets, prefix the action with the outcome label
+  // so the customer knows exactly which outcome to act on (e.g. "240-259 BUY YES")
+  const outcomeLabel = (item.groupItemTitle || "").trim();
   const subtextHtml = subtext ? `<div style="font-size:0.78rem;color:#6b7280;margin-top:2px;">${escHtml(subtext)}</div>` : "";
   const questionHtml = link
     ? `<a href="${safeLink}" target="_blank" rel="noopener" class="trade-card-title">${escHtml(headline)}</a>${subtextHtml}`
@@ -1396,9 +1399,9 @@ function renderTradeCard(item) {
     });
 
     return `
-      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}">>
+      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}">
         <div class="trade-card-header">${questionHtml}</div>
-        <div class="action-pill ${actionCls}">\u26A1 EXECUTE \u00B7 ${escHtml(action)}</div>
+        <div class="action-pill ${actionCls}">\u26A1 EXECUTE \u00B7 ${outcomeLabel ? escHtml(outcomeLabel) + " " : ""}${escHtml(action)}</div>
         <div class="trade-plan-grid">
           <div class="trade-plan-item"><span class="trade-plan-label">ENTRY LIMIT</span><span class="trade-plan-value">$${entryNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
@@ -1445,7 +1448,7 @@ function renderTradeCard(item) {
   return `
     <div class="trade-card">
       <div class="trade-card-header">${questionHtml}</div>
-      <div class="action-pill pill-watch">\uD83D\uDC41 WATCH</div>
+      <div class="action-pill pill-watch">\uD83D\uDC41 WATCH${outcomeLabel ? " \u00B7 " + escHtml(outcomeLabel) : ""}</div>
       <div style="padding:8px 0;">
         <p style="margin:0 0 6px;font-size:0.88rem;"><strong>WHY WATCH:</strong> ${escHtml(watchReason)}</p>
         <p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> ${escHtml(watchNext)}</p>
@@ -1690,6 +1693,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var stop = parseFloat(card.getAttribute('data-stop-num'));
           var market = card.getAttribute('data-market') || '';
           var act = card.getAttribute('data-action') || '';
+          var outcome = card.getAttribute('data-outcome') || '';
           if (isNaN(hMax) || isNaN(entry) || entry <= 0) continue;
 
           var maxSizeRaw;
@@ -1706,7 +1710,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             var pillEl = card.querySelector('.action-pill');
             if (pillEl) {
               pillEl.className = 'action-pill pill-watch';
-              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH';
+              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH' + (outcome ? ' \\u00B7 ' + outcome : '');
             }
             var planGrid = card.querySelector('.trade-plan-grid');
             if (planGrid) planGrid.style.display = 'none';
@@ -1753,7 +1757,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var pillEl2 = card.querySelector('.action-pill');
           if (pillEl2 && pillEl2.className.indexOf('pill-watch') !== -1) {
             pillEl2.className = 'action-pill pill-buy-yes';
-            pillEl2.innerHTML = '\\u26A1 EXECUTE \\u00B7 ' + act;
+            pillEl2.innerHTML = '\\u26A1 EXECUTE \\u00B7 ' + (outcome ? outcome + ' ' : '') + act;
           }
           var planGrid3 = card.querySelector('.trade-plan-grid');
           if (planGrid3) planGrid3.style.display = '';
@@ -2334,6 +2338,10 @@ function renderTicketsPage(tickets, highlightId) {
       ? '<span class="tk-type-badge tk-type-exec">\u26A1 EXEC</span>'
       : '<span class="tk-type-badge tk-type-watch">\uD83D\uDC41 WATCH</span>';
     const actionLabel = t.action || "\u2014";
+    const ticketOutcome = (t.groupItemTitle || "").trim();
+    const actionDisplay = ticketOutcome
+      ? ticketOutcome + " " + actionLabel
+      : actionLabel;
     const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "\u2014";
     const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "\u2014";
     const tp = typeof t.takeProfit === "number" ? "$" + t.takeProfit.toFixed(2) : "\u2014";
@@ -2386,7 +2394,7 @@ function renderTicketsPage(tickets, highlightId) {
         ${pnlBadgeHtml}
         <div class="tk-meta-row">
           ${typeBadge}
-          <span>${escHtml(actionLabel)}</span>
+          <span>${escHtml(actionDisplay)}</span>
           <span>\u{1F552} ${utcSpan(t.createdAt)}</span>
         </div>
         <div class="tk-price-grid">
