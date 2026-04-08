@@ -1088,6 +1088,74 @@ console.log("\nfinal selection: mispricing quota");
   const wsCard = renderTradeCard(makeTradeItem({ groupItemTitle: "   " }));
   assert(!wsCard.includes("   BUY YES"),
     "whitespace-only groupItemTitle: no leading whitespace in pill");
+
+  // 6) O/U market: "O/U 2.5" → pill must say "Over 2.5 Buy Over"
+  const ouCard = renderTradeCard(makeTradeItem({ groupItemTitle: "O/U 2.5" }));
+  assert(ouCard.includes("Over 2.5 Buy Over"),
+    "O/U outcome: pill contains 'Over 2.5 Buy Over'");
+  assert(!ouCard.includes("O/U 2.5 BUY YES"),
+    "O/U outcome: pill does NOT contain raw 'O/U 2.5 BUY YES'");
+
+  // 7) O/U with different line: "O/U 3.5"
+  const ou35Card = renderTradeCard(makeTradeItem({ groupItemTitle: "O/U 3.5" }));
+  assert(ou35Card.includes("Over 3.5 Buy Over"),
+    "O/U 3.5: pill contains 'Over 3.5 Buy Over'");
+}
+
+// ---------------------------------------------------------------------------
+// formatOutcomeAction: unit tests for O/U label rewrite
+// ---------------------------------------------------------------------------
+{
+  console.log("\nformatOutcomeAction: O/U label rewrite");
+  const { formatOutcomeAction } = require("../src/html_renderer");
+
+  // BUY YES on O/U market → Over
+  const r1 = formatOutcomeAction("O/U 2.5", "BUY YES");
+  assert(r1.displayLabel === "Over 2.5", "O/U 2.5 + BUY YES → displayLabel 'Over 2.5'");
+  assert(r1.displayAction === "Buy Over", "O/U 2.5 + BUY YES → displayAction 'Buy Over'");
+
+  // BUY NO on O/U market → Under
+  const r2 = formatOutcomeAction("O/U 2.5", "BUY NO");
+  assert(r2.displayLabel === "Under 2.5", "O/U 2.5 + BUY NO → displayLabel 'Under 2.5'");
+  assert(r2.displayAction === "Buy Under", "O/U 2.5 + BUY NO → displayAction 'Buy Under'");
+
+  // WATCH on O/U market → expanded but neutral
+  const r3 = formatOutcomeAction("O/U 2.5", "WATCH");
+  assert(r3.displayLabel === "Over/Under 2.5", "O/U 2.5 + WATCH → displayLabel 'Over/Under 2.5'");
+  assert(r3.displayAction === "WATCH", "O/U 2.5 + WATCH → displayAction unchanged");
+
+  // Non-O/U label passes through
+  const r4 = formatOutcomeAction("Blue Jackets", "BUY YES");
+  assert(r4.displayLabel === "Blue Jackets", "non-O/U: displayLabel unchanged");
+  assert(r4.displayAction === "BUY YES", "non-O/U: displayAction unchanged");
+
+  // Empty label passes through
+  const r5 = formatOutcomeAction("", "BUY YES");
+  assert(r5.displayLabel === "", "empty label: displayLabel empty");
+  assert(r5.displayAction === "BUY YES", "empty label: displayAction unchanged");
+
+  // Case-insensitive O/U matching
+  const r6 = formatOutcomeAction("o/u 1.5", "BUY YES");
+  assert(r6.displayLabel === "Over 1.5", "lowercase o/u: displayLabel 'Over 1.5'");
+  assert(r6.displayAction === "Buy Over", "lowercase o/u: displayAction 'Buy Over'");
+}
+
+// ---------------------------------------------------------------------------
+// cardHeadline: O/U subtext expansion
+// ---------------------------------------------------------------------------
+{
+  console.log("\ncardHeadline: O/U subtext expansion");
+  const { cardHeadline } = require("../src/html_renderer");
+
+  const result = cardHeadline({
+    eventTitle: "SC Braga vs. Real Betis Balompié",
+    question: "Will SC Braga vs Real Betis go over 2.5 goals?",
+    groupItemTitle: "O/U 2.5",
+  });
+  assert(result.subtext === "Over/Under 2.5",
+    "O/U groupItemTitle expanded to 'Over/Under 2.5' in subtext");
+  assert(result.headline === "SC Braga vs. Real Betis Balompié",
+    "headline unchanged for O/U market");
 }
 
 // ---------------------------------------------------------------------------

@@ -229,7 +229,10 @@ function cardHeadline(item) {
 
   // For multi-outcome grouped markets (e.g. "240-259" tweet-count ranges),
   // prefer the short groupItemTitle over the verbose per-token question as subtext.
-  const groupTitle = (item.groupItemTitle || "").trim();
+  // Expand abbreviated O/U labels (e.g. "O/U 2.5" → "Over/Under 2.5") for clarity.
+  let groupTitle = (item.groupItemTitle || "").trim();
+  const ouMatch = OU_PATTERN.exec(groupTitle);
+  if (ouMatch) groupTitle = `Over/Under ${ouMatch[1]}`;
 
   if (validEvent && validMkt && eventTitle !== mktLabel) {
     // Event title as headline; use groupItemTitle when available instead of verbose token question
@@ -1298,6 +1301,30 @@ function whyNowSummary(item) {
   return parts.join(" · ") || "—";
 }
 
+/**
+ * For Over/Under markets whose groupItemTitle is "O/U <line>" (e.g. "O/U 2.5"),
+ * rewrite the display so the action pill reads clearly:
+ *   "Over 2.5 Buy Over @ $0.43"  instead of  "O/U 2.5 BUY YES @ $0.43"
+ *
+ * Returns { displayLabel, displayAction } — the human-readable outcome label and
+ * action text.  For non-O/U markets the values pass through unchanged.
+ */
+const OU_PATTERN = /^O\/U\s+(.+)$/i;
+
+function formatOutcomeAction(rawLabel, rawAction) {
+  const m = OU_PATTERN.exec(rawLabel);
+  if (!m) return { displayLabel: rawLabel, displayAction: rawAction };
+  const line = m[1]; // e.g. "2.5"
+  if (rawAction === "BUY YES") {
+    return { displayLabel: `Over ${line}`, displayAction: "Buy Over" };
+  }
+  if (rawAction === "BUY NO") {
+    return { displayLabel: `Under ${line}`, displayAction: "Buy Under" };
+  }
+  // WATCH — keep descriptive label but expand abbreviation
+  return { displayLabel: `Over/Under ${line}`, displayAction: rawAction };
+}
+
 /** Render a single trade card for the /trade page. */
 function renderTradeCard(item) {
   let { action, actionCls, whyWatch, nextStep } = inferDirection(item);
@@ -1307,7 +1334,7 @@ function renderTradeCard(item) {
   const { headline, subtext } = cardHeadline(item);
   const qText = safeQuestion(item);
   // For multi-outcome grouped markets, prefix the action with the outcome label
-  // so the customer knows exactly which outcome to act on (e.g. "240-259 BUY YES")
+  // so the customer knows exactly which outcome to act on (e.g. "Over 2.5 Buy Over")
   const outcomeLabel = (item.groupItemTitle || "").trim();
   const subtextHtml = subtext ? `<div style="font-size:0.78rem;color:#6b7280;margin-top:2px;">${escHtml(subtext)}</div>` : "";
   const questionHtml = link
@@ -1342,6 +1369,9 @@ function renderTradeCard(item) {
   }
 
   const isExecute = action !== "WATCH";
+
+  // Rewrite abbreviated O/U labels into clear Over/Under text
+  const { displayLabel, displayAction } = formatOutcomeAction(outcomeLabel, action);
 
   // Debug section (shared between EXECUTE and WATCH)
   const debugHtml = `
@@ -1408,7 +1438,7 @@ function renderTradeCard(item) {
     return `
       <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}" data-end-date="${escHtml(item.endDate || "")}">
         <div class="trade-card-header">${questionHtml}</div>
-        <div class="action-pill ${actionCls}">\u26A1 ${outcomeLabel ? escHtml(outcomeLabel) + " " : ""}${escHtml(action)} @ $${entryNum.toFixed(2)}</div>
+        <div class="action-pill ${actionCls}">\u26A1 ${displayLabel ? escHtml(displayLabel) + " " : ""}${escHtml(displayAction)} @ $${entryNum.toFixed(2)}</div>
         <div class="trade-size-row trade-plan-item" style="margin-bottom:6px;"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
         <div class="trade-plan-grid">
           <div class="trade-plan-item"><span class="trade-plan-label">TAKE PROFIT</span><span class="trade-plan-value">$${tpNum.toFixed(2)}</span></div>
@@ -1455,7 +1485,7 @@ function renderTradeCard(item) {
   return `
     <div class="trade-card">
       <div class="trade-card-header">${questionHtml}</div>
-      <div class="action-pill pill-watch">\uD83D\uDC41 WATCH${outcomeLabel ? " \u00B7 " + escHtml(outcomeLabel) : ""}</div>
+      <div class="action-pill pill-watch">\uD83D\uDC41 WATCH${displayLabel ? " \u00B7 " + escHtml(displayLabel) : ""}</div>
       <div style="padding:8px 0;">
         <p style="margin:0 0 6px;font-size:0.88rem;"><strong>WHY WATCH:</strong> ${escHtml(watchReason)}</p>
         <p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> ${escHtml(watchNext)}</p>
@@ -1589,6 +1619,17 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
 
       function escH(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+      // Client-side O/U → Over/Under rewrite (mirrors server-side formatOutcomeAction)
+      var OU_RE = /^O\\/U\\s+(.+)$/i;
+      function fmtOA(label, act) {
+        var m = OU_RE.exec(label);
+        if (!m) return { dl: label, da: act };
+        var line = m[1];
+        if (act === 'BUY YES') return { dl: 'Over ' + line, da: 'Buy Over' };
+        if (act === 'BUY NO') return { dl: 'Under ' + line, da: 'Buy Under' };
+        return { dl: 'Over/Under ' + line, da: act };
+      }
+
       var PRESETS = {
         'conservative':      { riskPct: 0.5, cap: 10 },
         'default':           { riskPct: 1.0, cap: 50 },
@@ -1719,7 +1760,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
             var pillEl = card.querySelector('.action-pill');
             if (pillEl) {
               pillEl.className = 'action-pill pill-watch';
-              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH' + (outcome ? ' \\u00B7 ' + escH(outcome) : '');
+              pillEl.innerHTML = '\\uD83D\\uDC41 WATCH' + (outcome ? ' \\u00B7 ' + escH(fmtOA(outcome, act).dl || outcome) : '');
             }
             var planGrid = card.querySelector('.trade-plan-grid');
             if (planGrid) planGrid.style.display = 'none';
@@ -1768,7 +1809,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           var pillEl2 = card.querySelector('.action-pill');
           if (pillEl2 && pillEl2.className.indexOf('pill-watch') !== -1) {
             pillEl2.className = 'action-pill pill-buy-yes';
-            pillEl2.innerHTML = '\\u26A1 ' + (outcome ? escH(outcome) + ' ' : '') + escH(act) + ' @ $' + entry.toFixed(2);
+            var oa = fmtOA(outcome, act);
+            pillEl2.innerHTML = '\\u26A1 ' + (oa.dl ? escH(oa.dl) + ' ' : '') + escH(oa.da) + ' @ $' + entry.toFixed(2);
           }
           var planGrid3 = card.querySelector('.trade-plan-grid');
           if (planGrid3) planGrid3.style.display = '';
@@ -2356,9 +2398,12 @@ function renderTicketsPage(tickets, highlightId) {
       : '<span class="tk-type-badge tk-type-watch">\uD83D\uDC41 WATCH</span>';
     const actionLabel = t.action || "\u2014";
     const ticketOutcome = (t.groupItemTitle || "").trim();
-    const actionDisplay = ticketOutcome
-      ? ticketOutcome + " " + actionLabel
-      : actionLabel;
+    // Normalize stored BUY_YES/BUY_NO back to BUY YES/BUY NO for display
+    const actionNorm = actionLabel.replace(/_/g, " ");
+    const { displayLabel: tkDispLabel, displayAction: tkDispAction } = formatOutcomeAction(ticketOutcome, actionNorm);
+    const actionDisplay = tkDispLabel
+      ? tkDispLabel + " " + tkDispAction
+      : tkDispAction;
     const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "\u2014";
     const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "\u2014";
     const tp = typeof t.takeProfit === "number" ? "$" + t.takeProfit.toFixed(2) : "\u2014";
@@ -2521,6 +2566,7 @@ module.exports = {
   inferEntry,
   inferSize,
   inferExit,
+  formatOutcomeAction,
   polymarketUrl,
   safeQuestion,
   cardHeadline,
