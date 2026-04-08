@@ -12,6 +12,7 @@ const tradeTicketSchema = new mongoose.Schema(
     marketId: { type: String, required: true },
     eventSlug: { type: String },
     eventTitle: { type: String },
+    groupItemTitle: { type: String },
     marketUrl: { type: String },
     question: { type: String, required: true },
 

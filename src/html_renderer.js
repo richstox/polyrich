@@ -227,12 +227,18 @@ function cardHeadline(item) {
   const validEvent = !isInvalidDisplayLabel(eventTitle);
   const validMkt = mktLabel !== "Market detail unavailable";
 
+  // For multi-outcome grouped markets (e.g. "240-259" tweet-count ranges),
+  // prefer the short groupItemTitle over the verbose per-token question as subtext.
+  const groupTitle = (item.groupItemTitle || "").trim();
+
   if (validEvent && validMkt && eventTitle !== mktLabel) {
-    // Event title as headline, market label as subtext
-    return { headline: eventTitle, subtext: mktLabel };
+    // Event title as headline; use groupItemTitle when available instead of verbose token question
+    const sub = groupTitle || mktLabel;
+    return { headline: eventTitle, subtext: sub };
   }
   if (validEvent && !validMkt) {
-    return { headline: eventTitle, subtext: "" };
+    // No usable market label — show groupItemTitle if present
+    return { headline: eventTitle, subtext: groupTitle };
   }
   if (validMkt) {
     return { headline: mktLabel, subtext: validEvent && eventTitle !== mktLabel ? eventTitle : "" };
@@ -1367,6 +1373,7 @@ function renderTradeCard(item) {
       marketId: item.conditionId || item.marketSlug || item.question,
       eventSlug: item.eventSlug || null,
       eventTitle: item.eventTitle || null,
+      groupItemTitle: item.groupItemTitle || null,
       marketUrl: link || null,
       question: qText,
       tradeability: "EXECUTE",
@@ -1420,6 +1427,7 @@ function renderTradeCard(item) {
     marketId: item.conditionId || item.marketSlug || item.question,
     eventSlug: item.eventSlug || null,
     eventTitle: item.eventTitle || null,
+    groupItemTitle: item.groupItemTitle || null,
     marketUrl: link || null,
     question: qText,
     tradeability: "WATCH",
