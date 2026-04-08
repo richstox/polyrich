@@ -237,12 +237,12 @@ function cardHeadline(item) {
   // When groupItemTitle is empty, derive a fallback from the first non-generic
   // outcome name (e.g. "MIN" for a sports moneyline).  Used only in branches
   // where the subtext would otherwise be blank.
-  let outcomeFallback = "";
+  let firstOutcomeFallback = "";
   if (!groupTitle) {
-    const oc = Array.isArray(item.outcomes) ? item.outcomes : [];
-    const first = (oc[0] || "").trim();
-    if (first && !GENERIC_OUTCOMES.has(first.toLowerCase())) {
-      outcomeFallback = first;
+    const outcomesList = Array.isArray(item.outcomes) ? item.outcomes : [];
+    const firstOutcome = (outcomesList[0] || "").trim();
+    if (firstOutcome && !GENERIC_OUTCOMES.has(firstOutcome.toLowerCase())) {
+      firstOutcomeFallback = firstOutcome;
     }
   }
 
@@ -253,12 +253,12 @@ function cardHeadline(item) {
   }
   if (validEvent && !validMkt) {
     // No usable market label — show groupItemTitle or outcome fallback
-    return { headline: eventTitle, subtext: groupTitle || outcomeFallback };
+    return { headline: eventTitle, subtext: groupTitle || firstOutcomeFallback };
   }
   if (validMkt) {
     // Use groupTitle / outcome fallback as subtext when headline equals the market label
     // (e.g. sports moneylines where eventTitle and question both resolve to "Wild vs Stars")
-    const sub = (validEvent && eventTitle !== mktLabel) ? eventTitle : (groupTitle || outcomeFallback);
+    const sub = (validEvent && eventTitle !== mktLabel) ? eventTitle : (groupTitle || firstOutcomeFallback);
     return { headline: mktLabel, subtext: sub };
   }
   return { headline: "Market detail unavailable", subtext: "" };
