@@ -558,6 +558,15 @@ const server = http.createServer(async (req, res) => {
       scanStatus.lastError = err.message;
     }
 
+    // If a returnTo param is present, redirect back instead of rendering the scan page
+    const ALLOWED_RETURN_PATHS = new Set(["/trade", "/ideas", "/explore"]);
+    const returnTo = url.searchParams.get("returnTo");
+    if (returnTo && ALLOWED_RETURN_PATHS.has(returnTo)) {
+      res.writeHead(302, { Location: returnTo });
+      res.end();
+      return;
+    }
+
     const failBanner = scanError
       ? `<div class="error-banner">SCAN FAILED: ${scanError}</div>`
       : "";
