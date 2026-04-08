@@ -1054,13 +1054,13 @@ console.log("\nfinal selection: mispricing quota");
     }, overrides);
   }
 
-  // 1) Multi-outcome with outcomes array: uses outcomes[0] for Buy action
+  // 1) Multi-outcome with outcomes array: uses outcomes[0] for Buy action, keeps groupItemTitle as label
   const sportsCard = renderTradeCard(makeTradeItem({
     groupItemTitle: "Blue Jackets",
     outcomes: ["CBJ", "BUF"],
   }));
-  assert(sportsCard.includes("Buy CBJ"),
-    "multi-outcome sports with outcomes: pill contains 'Buy CBJ' (button label)");
+  assert(sportsCard.includes("Blue Jackets Buy CBJ"),
+    "multi-outcome sports with outcomes: pill contains 'Blue Jackets Buy CBJ' (groupItemTitle + button label)");
   assert(!sportsCard.includes("Buy Blue Jackets"),
     "multi-outcome sports with outcomes: pill does NOT use groupItemTitle 'Buy Blue Jackets'");
 
@@ -1078,8 +1078,8 @@ console.log("\nfinal selection: mispricing quota");
     groupItemTitle: "Wild",
     outcomes: ["MIN", "DAL"],
   }));
-  assert(nhlCard.includes("Buy MIN"),
-    "NHL sports: pill contains 'Buy MIN' (Polymarket button label)");
+  assert(nhlCard.includes("Wild Buy MIN"),
+    "NHL sports: pill contains 'Wild Buy MIN' (groupItemTitle + button label)");
   assert(!nhlCard.includes("Buy Wild"),
     "NHL sports: pill does NOT use groupItemTitle 'Buy Wild'");
 
@@ -1157,14 +1157,14 @@ console.log("\nfinal selection: mispricing quota");
   assert(r4.displayLabel === "", "non-O/U BUY YES: displayLabel empty (folded into action)");
   assert(r4.displayAction === "Buy Blue Jackets", "non-O/U BUY YES no outcomes: displayAction 'Buy Blue Jackets'");
 
-  // Non-O/U label with BUY YES + outcomes array → prefer outcomes[0]
+  // Non-O/U label with BUY YES + outcomes array → prefer outcomes[0], keep groupItemTitle as label
   const r4x = formatOutcomeAction("Wild", "BUY YES", ["MIN", "DAL"]);
-  assert(r4x.displayLabel === "", "non-O/U BUY YES+outcomes: displayLabel empty");
+  assert(r4x.displayLabel === "Wild", "non-O/U BUY YES+outcomes: displayLabel is groupItemTitle 'Wild'");
   assert(r4x.displayAction === "Buy MIN", "non-O/U BUY YES+outcomes: displayAction 'Buy MIN'");
 
-  // Non-O/U label with BUY NO + outcomes array → prefer outcomes[1]
+  // Non-O/U label with BUY NO + outcomes array → prefer outcomes[1], keep groupItemTitle as label
   const r4y = formatOutcomeAction("Wild", "BUY NO", ["MIN", "DAL"]);
-  assert(r4y.displayLabel === "", "non-O/U BUY NO+outcomes: displayLabel empty");
+  assert(r4y.displayLabel === "Wild", "non-O/U BUY NO+outcomes: displayLabel is groupItemTitle 'Wild'");
   assert(r4y.displayAction === "Fade DAL", "non-O/U BUY NO+outcomes: displayAction 'Fade DAL'");
 
   // Non-O/U label with generic outcomes ["Yes","No"] → fallback to groupItemTitle

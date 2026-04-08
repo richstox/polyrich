@@ -1335,15 +1335,17 @@ function formatOutcomeAction(rawLabel, rawAction, outcomes) {
   // reads "Buy {buttonName}" matching the Polymarket buy button.
   // Prefer outcomes[0] (the Polymarket button label, e.g. "MIN") over
   // groupItemTitle (the full name, e.g. "Wild").
+  // When the button label differs from groupItemTitle, keep groupItemTitle as
+  // displayLabel so the pill shows both: "Wild Buy MIN @ $0.45".
   if (rawLabel) {
     const arr = Array.isArray(outcomes) ? outcomes : [];
     const yesName = arr[0] && !GENERIC_OUTCOMES.has(arr[0].toLowerCase()) ? arr[0] : rawLabel;
     const noName  = arr[1] && !GENERIC_OUTCOMES.has(arr[1].toLowerCase()) ? arr[1] : rawLabel;
     if (rawAction === "BUY YES") {
-      return { displayLabel: "", displayAction: `Buy ${yesName}` };
+      return { displayLabel: yesName !== rawLabel ? rawLabel : "", displayAction: `Buy ${yesName}` };
     }
     if (rawAction === "BUY NO") {
-      return { displayLabel: "", displayAction: `Fade ${noName}` };
+      return { displayLabel: noName !== rawLabel ? rawLabel : "", displayAction: `Fade ${noName}` };
     }
   }
 
@@ -1657,12 +1659,13 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
           return { dl: 'Over/Under ' + line, da: act };
         }
         // Non-O/U multi-outcome: prefer Polymarket button label from outcomes
+        // Keep groupItemTitle as dl when it differs from the button label
         if (label) {
           var arr = Array.isArray(outcomes) ? outcomes : [];
           var yn = arr[0] && !GENERIC_OC[arr[0].toLowerCase()] ? arr[0] : label;
           var nn = arr[1] && !GENERIC_OC[arr[1].toLowerCase()] ? arr[1] : label;
-          if (act === 'BUY YES') return { dl: '', da: 'Buy ' + yn };
-          if (act === 'BUY NO') return { dl: '', da: 'Fade ' + nn };
+          if (act === 'BUY YES') return { dl: yn !== label ? label : '', da: 'Buy ' + yn };
+          if (act === 'BUY NO') return { dl: nn !== label ? label : '', da: 'Fade ' + nn };
         }
         return { dl: label, da: act };
       }
