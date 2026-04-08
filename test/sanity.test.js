@@ -1054,12 +1054,34 @@ console.log("\nfinal selection: mispricing quota");
     }, overrides);
   }
 
-  // 1) Multi-outcome: groupItemTitle present → pill must show "Buy {outcome}" not "BUY YES"
-  const sportsCard = renderTradeCard(makeTradeItem({ groupItemTitle: "Blue Jackets" }));
-  assert(sportsCard.includes("Buy Blue Jackets"),
-    "multi-outcome sports: pill contains 'Buy Blue Jackets'");
-  assert(!sportsCard.includes("Blue Jackets BUY YES"),
-    "multi-outcome sports: pill does NOT contain 'Blue Jackets BUY YES'");
+  // 1) Multi-outcome with outcomes array: uses outcomes[0] for Buy action
+  const sportsCard = renderTradeCard(makeTradeItem({
+    groupItemTitle: "Blue Jackets",
+    outcomes: ["CBJ", "BUF"],
+  }));
+  assert(sportsCard.includes("Buy CBJ"),
+    "multi-outcome sports with outcomes: pill contains 'Buy CBJ' (button label)");
+  assert(!sportsCard.includes("Buy Blue Jackets"),
+    "multi-outcome sports with outcomes: pill does NOT use groupItemTitle 'Buy Blue Jackets'");
+
+  // 1b) Multi-outcome WITHOUT outcomes array: falls back to groupItemTitle
+  const sportsCardNoOC = renderTradeCard(makeTradeItem({ groupItemTitle: "Blue Jackets" }));
+  assert(sportsCardNoOC.includes("Buy Blue Jackets"),
+    "multi-outcome sports without outcomes: pill falls back to 'Buy Blue Jackets'");
+  assert(!sportsCardNoOC.includes("Blue Jackets BUY YES"),
+    "multi-outcome sports without outcomes: pill does NOT contain 'Blue Jackets BUY YES'");
+
+  // 1c) NHL-style: groupItemTitle "Wild", outcomes ["MIN", "DAL"]
+  const nhlCard = renderTradeCard(makeTradeItem({
+    question: "Wild vs. Stars",
+    eventTitle: "Wild vs. Stars",
+    groupItemTitle: "Wild",
+    outcomes: ["MIN", "DAL"],
+  }));
+  assert(nhlCard.includes("Buy MIN"),
+    "NHL sports: pill contains 'Buy MIN' (Polymarket button label)");
+  assert(!nhlCard.includes("Buy Wild"),
+    "NHL sports: pill does NOT use groupItemTitle 'Buy Wild'");
 
   // 2) Multi-outcome date: groupItemTitle = "April 15"
   const dateCard = renderTradeCard(makeTradeItem({
@@ -1130,12 +1152,26 @@ console.log("\nfinal selection: mispricing quota");
   assert(r3.displayLabel === "Over/Under 2.5", "O/U 2.5 + WATCH → displayLabel 'Over/Under 2.5'");
   assert(r3.displayAction === "WATCH", "O/U 2.5 + WATCH → displayAction unchanged");
 
-  // Non-O/U label with BUY YES → "Buy {label}"
+  // Non-O/U label with BUY YES → "Buy {label}" (no outcomes, fallback)
   const r4 = formatOutcomeAction("Blue Jackets", "BUY YES");
   assert(r4.displayLabel === "", "non-O/U BUY YES: displayLabel empty (folded into action)");
-  assert(r4.displayAction === "Buy Blue Jackets", "non-O/U BUY YES: displayAction 'Buy Blue Jackets'");
+  assert(r4.displayAction === "Buy Blue Jackets", "non-O/U BUY YES no outcomes: displayAction 'Buy Blue Jackets'");
 
-  // Non-O/U label with BUY NO → "Fade {label}"
+  // Non-O/U label with BUY YES + outcomes array → prefer outcomes[0]
+  const r4x = formatOutcomeAction("Wild", "BUY YES", ["MIN", "DAL"]);
+  assert(r4x.displayLabel === "", "non-O/U BUY YES+outcomes: displayLabel empty");
+  assert(r4x.displayAction === "Buy MIN", "non-O/U BUY YES+outcomes: displayAction 'Buy MIN'");
+
+  // Non-O/U label with BUY NO + outcomes array → prefer outcomes[1]
+  const r4y = formatOutcomeAction("Wild", "BUY NO", ["MIN", "DAL"]);
+  assert(r4y.displayLabel === "", "non-O/U BUY NO+outcomes: displayLabel empty");
+  assert(r4y.displayAction === "Fade DAL", "non-O/U BUY NO+outcomes: displayAction 'Fade DAL'");
+
+  // Non-O/U label with generic outcomes ["Yes","No"] → fallback to groupItemTitle
+  const r4z = formatOutcomeAction("Blue Jackets", "BUY YES", ["Yes", "No"]);
+  assert(r4z.displayAction === "Buy Blue Jackets", "generic outcomes fallback: displayAction 'Buy Blue Jackets'");
+
+  // Non-O/U label with BUY NO → "Fade {label}" (no outcomes)
   const r4b = formatOutcomeAction("Blue Jackets", "BUY NO");
   assert(r4b.displayLabel === "", "non-O/U BUY NO: displayLabel empty");
   assert(r4b.displayAction === "Fade Blue Jackets", "non-O/U BUY NO: displayAction 'Fade Blue Jackets'");
