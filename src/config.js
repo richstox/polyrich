@@ -44,4 +44,26 @@ module.exports = {
 
   // tags/sports cache TTL (seconds) — default 24 h
   TAGS_CACHE_TTL_SECONDS: parseInt(process.env.TAGS_CACHE_TTL_SECONDS || String(24 * 60 * 60), 10),
+
+  // ---------------------------------------------------------------------------
+  // Auto-mode monitoring
+  // ---------------------------------------------------------------------------
+  AUTO_MODE_ENABLED: process.env.AUTO_MODE_ENABLED === "true",
+  // Base tick interval in ms (15s default)
+  AUTO_MODE_TICK_MS: parseInt(process.env.AUTO_MODE_TICK_MS || "15000", 10),
+  // Jitter ±20% applied to tick interval
+  AUTO_MODE_JITTER_PCT: parseFloat(process.env.AUTO_MODE_JITTER_PCT || "0.20"),
+  // Max tickets per tick
+  AUTO_MODE_BATCH_SIZE: parseInt(process.env.AUTO_MODE_BATCH_SIZE || "20", 10),
+  // Debounce: consecutive checks or seconds required before triggering
+  AUTO_MODE_DEBOUNCE_CHECKS: parseInt(process.env.AUTO_MODE_DEBOUNCE_CHECKS || "2", 10),
+  AUTO_MODE_DEBOUNCE_SEC: parseInt(process.env.AUTO_MODE_DEBOUNCE_SEC || "15", 10),
+  // Cooldown after failed attempt (ms)
+  AUTO_MODE_COOLDOWN_MS: parseInt(process.env.AUTO_MODE_COOLDOWN_MS || "30000", 10),
+  // Backoff schedule on 429/5xx (ms)
+  AUTO_MODE_BACKOFF_INITIAL_MS: parseInt(process.env.AUTO_MODE_BACKOFF_INITIAL_MS || "30000", 10),
+  AUTO_MODE_BACKOFF_MAX_MS: parseInt(process.env.AUTO_MODE_BACKOFF_MAX_MS || "300000", 10),
+  // Lease TTL in ms (60s, renew every 30s)
+  AUTO_MODE_LEASE_TTL_MS: parseInt(process.env.AUTO_MODE_LEASE_TTL_MS || "60000", 10),
+  AUTO_MODE_LEASE_RENEW_MS: parseInt(process.env.AUTO_MODE_LEASE_RENEW_MS || "30000", 10),
 };
