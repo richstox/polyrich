@@ -246,7 +246,15 @@ async function runScan() {
       pagesFetched: fetchStats.pagesFetched,
     }));
 
-    // Auto-save EXECUTE tickets (non-blocking, fire-and-forget)
+    // Auto-save EXECUTE tickets (non-blocking, fire-and-forget).
+    // IMPORTANT: This is the ONLY call site for autoSaveExecuteTickets().
+    // It runs exclusively inside runScan() after a successful new scan —
+    // NOT from the /trade route, page refresh, or any HTTP handler.
+    // The /trade route (line ~497) only calls buildIdeas() + renderTradePage()
+    // and never invokes autoSaveExecuteTickets().
+    // Additionally, the scanRunning mutex (line 149) prevents overlapping scans,
+    // and the atomic lastAutoSaveScanId guard inside autoSaveExecuteTickets()
+    // prevents duplicate auto-saves even across process instances.
     autoSaveExecuteTickets(scanId).catch((err) => {
       console.warn(JSON.stringify({ msg: "autoSave error", scanId, err: err.message }));
     });
@@ -276,6 +284,27 @@ async function runScan() {
 // Auto-Save EXECUTE tickets after a successful scan
 // ---------------------------------------------------------------------------
 async function autoSaveExecuteTickets(scanId) {
+  // ── Atomic once-per-scan idempotency guard ──────────────────────────
+  // Prevents duplicate auto-saves if the same scanId is processed twice
+  // (e.g. overlapping instances, retries). Uses a single Mongo atomic
+  // findOneAndUpdate with a condition: only proceeds if lastAutoSaveScanId
+  // differs from the current scanId. Safe across multiple processes.
+  let guardResult;
+  try {
+    guardResult = await SystemSetting.findOneAndUpdate(
+      { _id: "system", lastAutoSaveScanId: { $ne: scanId } },
+      { $set: { lastAutoSaveScanId: scanId } },
+      { new: true, lean: true }
+    );
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: "autoSave: idempotency guard error", scanId, err: err.message }));
+    return;
+  }
+  if (!guardResult) {
+    console.log(JSON.stringify({ msg: "autoSave: already processed this scanId, skipping", scanId }));
+    return;
+  }
+
   let settings;
   try {
     settings = await SystemSetting.getSettings();
