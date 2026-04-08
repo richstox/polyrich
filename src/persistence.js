@@ -11,6 +11,7 @@ const SHOWN_TTL_SECONDS = config.SHOWN_CANDIDATE_TTL_DAYS * 24 * 60 * 60;
 // ---------------------------------------------------------------------------
 const marketSnapshotSchema = new mongoose.Schema({
   question: String,
+  eventTitle: String,
   category: String,
   subcategory: String,
   marketSlug: String,
@@ -119,6 +120,7 @@ async function upsertSnapshots(candidates, scanId) {
       update: {
         $setOnInsert: {
           question: item.question,
+          eventTitle: item.eventTitle || "",
           category: item.category,
           subcategory: item.subcategory || "",
           marketSlug: item.marketSlug,
