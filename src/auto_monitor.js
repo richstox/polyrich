@@ -456,7 +456,8 @@ async function monitorTick() {
   let dbSettings;
   try {
     dbSettings = await SystemSetting.getSettings();
-  } catch (_) {
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: "failed to fetch SystemSetting, defaulting to disabled", err: err.message, ts: new Date().toISOString() }));
     dbSettings = { autoModeEnabled: false, paperCloseEnabled: false };
   }
   if (!dbSettings.autoModeEnabled) {

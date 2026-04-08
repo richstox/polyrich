@@ -15,15 +15,11 @@ const systemSettingSchema = new mongoose.Schema(
  * Retrieve the single settings document, creating it with defaults if absent.
  */
 systemSettingSchema.statics.getSettings = async function () {
-  let doc = await this.findById("system").lean();
-  if (!doc) {
-    doc = await this.findOneAndUpdate(
-      { _id: "system" },
-      { $setOnInsert: { autoModeEnabled: false, paperCloseEnabled: false } },
-      { upsert: true, new: true, lean: true }
-    );
-  }
-  return doc;
+  return this.findOneAndUpdate(
+    { _id: "system" },
+    { $setOnInsert: { autoModeEnabled: false, paperCloseEnabled: false } },
+    { upsert: true, new: true, lean: true }
+  );
 };
 
 module.exports = mongoose.model("SystemSetting", systemSettingSchema);
