@@ -54,6 +54,9 @@ const tradeTicketSchema = new mongoose.Schema(
     realizedPnlPct: { type: Number, default: null },
     notes: { type: String },
 
+    // Simulation flag — true when ticket was paper-closed (no on-chain execution)
+    isSimulated: { type: Boolean, default: false },
+
     // Auto-mode monitoring fields
     lastPriceCheckAt: { type: Date, default: null },
     lastObservedPrice: { type: Number, default: null },

@@ -910,6 +910,13 @@ function sharedStyles() {
   .tk-pnl-pct { font-weight: 700; font-family: var(--tk-mono); }
   .tk-pnl-pct.pnl-pos { color: var(--tk-green); }
   .tk-pnl-pct.pnl-neg { color: var(--tk-red); }
+  .tk-sim-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 0.72rem; font-weight: 700; font-family: var(--tk-mono);
+    background: rgba(234,179,8,.18); color: #eab308;
+    position: absolute; top: 40px; right: 18px;
+    cursor: help; letter-spacing: 0.04em;
+  }
   /* Equity chart */
   .tk-chart-msg { color: var(--tk-muted); font-size: 0.88rem; padding: 8px 0; }
   /* Misc */
@@ -2233,6 +2240,9 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
   const statusBadge = autoEnabled
     ? '<span style="background:#166534;color:#bbf7d0;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">ENABLED</span>'
     : '<span style="background:#7f1d1d;color:#fecaca;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">DISABLED</span>';
+  const paperCloseBadge = autoModeStatus.paperCloseEnabled
+    ? '<span style="background:#854d0e;color:#fef08a;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">ON</span>'
+    : '<span style="background:#374151;color:#9ca3af;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">OFF</span>';
   const leaseBadge = autoModeStatus.leaseHeld
     ? '<span style="color:#22c55e;">● held</span>'
     : '<span style="color:#ef4444;">● not held</span>';
@@ -2251,6 +2261,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
 
   const attemptRows = recentCloseAttempts.map((a) => {
     const resultCls = a.result === "INTENT_RECORDED" ? "color:#22c55e"
+      : a.result === "PAPER_CLOSED" ? "color:#eab308"
       : a.result === "FAILED" ? "color:#ef4444"
       : "color:#6b7280";
     return `<tr>
@@ -2268,6 +2279,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
       <h2 style="margin-top:0;">🤖 Auto Mode Monitor</h2>
       <div class="grid-2" style="gap:12px 24px;">
         <div><span class="label">Status</span> ${statusBadge}</div>
+        <div><span class="label">Paper Close</span> ${paperCloseBadge}</div>
         <div><span class="label">Lease</span> ${leaseBadge}</div>
         <div><span class="label">Lease owner</span> <span style="font-family:monospace;font-size:0.78rem;">${escHtml(autoModeStatus.leaseOwnerId || "—")}</span></div>
         <div><span class="label">Lease expires</span> ${autoModeStatus.leaseExpiresAt ? utcSpan(autoModeStatus.leaseExpiresAt) : '<span style="color:#6b7280;">—</span>'}</div>
@@ -2584,6 +2596,11 @@ function renderTicketsPage(tickets, highlightId) {
       pnlBadgeHtml = `<span class="tk-pnl-badge ${cls}">${sign}$${t.realizedPnlUsd.toFixed(2)}</span>`;
     }
 
+    // Simulated close badge
+    const simBadgeHtml = t.isSimulated
+      ? '<span class="tk-sim-badge" title="Simulated close (no on-chain execution)">SIM</span>'
+      : "";
+
     const closeHtml = showClose ? `
       <div class="tk-close-form">
         <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="Close price" class="tk-close-input close-price-input" data-ticket-id="${escHtml(String(t._id))}" aria-label="Close price">
@@ -2611,6 +2628,7 @@ function renderTicketsPage(tickets, highlightId) {
       <div class="tk-ticket${hlCls}" id="ticket-${escHtml(String(t._id))}" style="position:relative;" data-end-date="${escHtml(t.endDate || "")}" data-created-at="${escHtml(t.createdAt || "")}">
         <div style="margin-bottom:6px;padding-right:${pnlBadgeHtml ? "80px" : "0"};">${questionLink}</div>
         ${pnlBadgeHtml}
+        ${simBadgeHtml}
         ${actionPillHtml}
         <div class="tk-meta-row">
           <span>\u{1F552} ${utcSpan(t.createdAt)}</span>
