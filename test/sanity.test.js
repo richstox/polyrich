@@ -107,33 +107,36 @@ console.log("\nnormalizeMarket");
   assert(m.tagSlugs[0] === "basketball", "tagSlugs[0] is basketball");
 }
 
+{
+  // conditionId preserved from raw market
+  const m = normalizeMarket({
+    question: "Will Team A win?",
+    slug: "will-team-a-win",
+    eventSlug: "match-2026",
+    conditionId: "0xabc123def456",
+  });
+  assert(m.conditionId === "0xabc123def456", "conditionId preserved from raw market");
+  assert(m.marketSlug === "will-team-a-win", "marketSlug from slug field (not conditionId)");
+}
+
+{
+  // missing conditionId defaults to empty string
+  const m = normalizeMarket({ question: "Q", slug: "q-slug" });
+  assert(m.conditionId === "", "missing conditionId defaults to empty string");
+}
+
 // ---------------------------------------------------------------------------
 // polymarketUrl
 // ---------------------------------------------------------------------------
 console.log("\npolymarketUrl");
 
 {
-  const { polymarketUrl } = (() => {
-    // Inline the function for testing since it's not exported
-    function polymarketUrl(item) {
-      if (typeof item === "string") {
-        if (!item) return null;
-        return "https://polymarket.com/event/" + encodeURIComponent(item);
-      }
-      if (item.eventSlug) {
-        return "https://polymarket.com/event/" + encodeURIComponent(item.eventSlug);
-      }
-      if (item.question) {
-        return "https://polymarket.com/search?q=" + encodeURIComponent(item.question);
-      }
-      return null;
-    }
-    return { polymarketUrl };
-  })();
+  // Now exported — use the real function
+  const { polymarketUrl, safeQuestion } = require("../src/html_renderer");
 
   assert(
     polymarketUrl({ eventSlug: "us-election-2024" }) === "https://polymarket.com/event/us-election-2024",
-    "polymarketUrl uses eventSlug"
+    "polymarketUrl uses eventSlug when no distinct marketSlug"
   );
   assert(
     polymarketUrl({ question: "Will X happen?" }) === "https://polymarket.com/search?q=Will%20X%20happen%3F",
@@ -146,6 +149,85 @@ console.log("\npolymarketUrl");
   assert(
     polymarketUrl("legacy-slug") === "https://polymarket.com/event/legacy-slug",
     "polymarketUrl accepts legacy string arg"
+  );
+
+  // --- Market-specific deep link tests ---
+  assert(
+    polymarketUrl({ eventSlug: "sud-cbc-vas-2026", marketSlug: "will-team-a-win", question: "Will Team A win?" })
+      === "https://polymarket.com/event/sud-cbc-vas-2026/will-team-a-win",
+    "polymarketUrl deep-links to market when eventSlug and marketSlug differ"
+  );
+  assert(
+    polymarketUrl({ eventSlug: "match-event", marketSlug: "will-draw", question: "Will it be a Draw?" })
+      === "https://polymarket.com/event/match-event/will-draw",
+    "polymarketUrl deep-links correctly for draw outcome market"
+  );
+  // When marketSlug equals eventSlug, fall back to event-level URL
+  assert(
+    polymarketUrl({ eventSlug: "some-event", marketSlug: "some-event", question: "Q?" })
+      === "https://polymarket.com/event/some-event",
+    "polymarketUrl does not double-append when marketSlug === eventSlug"
+  );
+  // When marketSlug is a question fallback, do not use it in URL path
+  assert(
+    polymarketUrl({ eventSlug: "evt", marketSlug: "Will X happen?", question: "Will X happen?" })
+      === "https://polymarket.com/event/evt",
+    "polymarketUrl does not use question-as-slug in URL path"
+  );
+
+  // --- Multi-outcome correctness: question and URL from same market ---
+  {
+    const homeMarket = {
+      eventSlug: "match-home-away-draw-2026",
+      marketSlug: "will-home-team-win",
+      question: "Will Home Team win?",
+      conditionId: "0xabc123",
+    };
+    const drawMarket = {
+      eventSlug: "match-home-away-draw-2026",
+      marketSlug: "will-it-be-a-draw",
+      question: "Will it be a Draw?",
+      conditionId: "0xdef456",
+    };
+    const awayMarket = {
+      eventSlug: "match-home-away-draw-2026",
+      marketSlug: "will-away-team-win",
+      question: "Will Away Team win?",
+      conditionId: "0x789ghi",
+    };
+    const homeUrl = polymarketUrl(homeMarket);
+    const drawUrl = polymarketUrl(drawMarket);
+    const awayUrl = polymarketUrl(awayMarket);
+    // Each URL must differ (market-specific)
+    assert(homeUrl !== drawUrl, "home and draw URLs are distinct");
+    assert(homeUrl !== awayUrl, "home and away URLs are distinct");
+    assert(drawUrl !== awayUrl, "draw and away URLs are distinct");
+    // Each URL must contain its own marketSlug
+    assert(homeUrl.includes("will-home-team-win"), "home URL contains home market slug");
+    assert(drawUrl.includes("will-it-be-a-draw"), "draw URL contains draw market slug");
+    assert(awayUrl.includes("will-away-team-win"), "away URL contains away market slug");
+    // All share the same event slug
+    assert(homeUrl.includes("match-home-away-draw-2026"), "home URL contains event slug");
+    assert(drawUrl.includes("match-home-away-draw-2026"), "draw URL contains event slug");
+    assert(awayUrl.includes("match-home-away-draw-2026"), "away URL contains event slug");
+  }
+
+  // --- safeQuestion tests ---
+  assert(
+    safeQuestion({ question: "Will X happen?" }) === "Will X happen?",
+    "safeQuestion returns question when present"
+  );
+  assert(
+    safeQuestion({ question: "" }) === "Market (unknown question)",
+    "safeQuestion returns fallback for empty question"
+  );
+  assert(
+    safeQuestion({}) === "Market (unknown question)",
+    "safeQuestion returns fallback for missing question"
+  );
+  assert(
+    safeQuestion({ question: "   " }) === "Market (unknown question)",
+    "safeQuestion returns fallback for whitespace-only question"
   );
 }
 

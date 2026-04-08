@@ -104,7 +104,11 @@ function polymarketUrl(item) {
     if (!item) return null;
     return `https://polymarket.com/event/${encodeURIComponent(item)}`;
   }
-  // Called with a market item object
+  // Called with a market item object — prefer market-specific deep link
+  if (item.eventSlug && item.marketSlug && item.marketSlug !== item.eventSlug && item.marketSlug !== item.question) {
+    // Deep-link to the specific market within the event
+    return `https://polymarket.com/event/${encodeURIComponent(item.eventSlug)}/${encodeURIComponent(item.marketSlug)}`;
+  }
   if (item.eventSlug) {
     return `https://polymarket.com/event/${encodeURIComponent(item.eventSlug)}`;
   }
@@ -114,12 +118,29 @@ function polymarketUrl(item) {
   return null;
 }
 
+/**
+ * Safe question text: returns the market question or a safe fallback label.
+ * Never returns an empty string — prevents rendering a misleading title.
+ */
+function safeQuestion(item) {
+  if (item.question && item.question.trim()) return item.question;
+  console.warn(JSON.stringify({
+    stage: "safeQuestion",
+    msg: "missing market question — using fallback label",
+    marketSlug: item.marketSlug || "",
+    eventSlug: item.eventSlug || "",
+    ts: new Date().toISOString(),
+  }));
+  return "Market (unknown question)";
+}
+
 /** Compact "Top Pick" card for micro-trade action list */
 function renderTopPick(item) {
   const link = polymarketUrl(item);
+  const qText = safeQuestion(item);
   const questionHtml = link
-    ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;">${escHtml(item.question)}</a>`
-    : `<strong>${escHtml(item.question)}</strong>`;
+    ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;">${escHtml(qText)}</a>`
+    : `<strong>${escHtml(qText)}</strong>`;
   const reasonTags = (item.reasonCodes || []).map((r) => {
     const c = r === "novel" ? "#059669" : r === "near-expiry" ? "#d97706" : r === "filtered" ? "#ef4444" : "#6b7280";
     return `<span style="display:inline-block;padding:1px 6px;border-radius:3px;background:${c}22;color:${c};font-size:0.7rem;border:1px solid ${c}44;margin-right:3px;">${escHtml(r)}</span>`;
@@ -343,9 +364,10 @@ function renderCandidate(item) {
   }).join("");
 
   const link = polymarketUrl(item);
+  const qText = safeQuestion(item);
   const questionHtml = link
-    ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;flex:1;font-size:0.95rem;line-height:1.3;">${escHtml(item.question)}</a>`
-    : `<strong style="flex:1;font-size:0.95rem;line-height:1.3;">${escHtml(item.question)}</strong>`;
+    ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;flex:1;font-size:0.95rem;line-height:1.3;">${escHtml(qText)}</a>`
+    : `<strong style="flex:1;font-size:0.95rem;line-height:1.3;">${escHtml(qText)}</strong>`;
   const whyBullets = computeWhyPick(item);
   const trade = computeTradeability(item);
   const safeLink = link ? escHtml(link) : "";
@@ -978,9 +1000,10 @@ function renderTradeCard(item) {
   const whyNow = whyNowSummary(item);
   const link = polymarketUrl(item);
   const safeLink = link ? escHtml(link) : "";
+  const qText = safeQuestion(item);
   const questionHtml = link
-    ? `<a href="${safeLink}" target="_blank" rel="noopener" class="trade-card-title">${escHtml(item.question)}</a>`
-    : `<span class="trade-card-title">${escHtml(item.question)}</span>`;
+    ? `<a href="${safeLink}" target="_blank" rel="noopener" class="trade-card-title">${escHtml(qText)}</a>`
+    : `<span class="trade-card-title">${escHtml(qText)}</span>`;
 
   let entryNum = null, sizeNum = null, tpNum = null, stopNum = null;
 
@@ -1047,10 +1070,10 @@ function renderTradeCard(item) {
     const savePayload = JSON.stringify({
       scanId: item.scanId || null,
       source: "TRADE_PAGE",
-      marketId: item.marketSlug || item.conditionId || item.question,
+      marketId: item.conditionId || item.marketSlug || item.question,
       eventSlug: item.eventSlug || null,
       marketUrl: link || null,
-      question: item.question,
+      question: qText,
       tradeability: "EXECUTE",
       action: action === "BUY YES" ? "BUY_YES" : action === "BUY NO" ? "BUY_NO" : "WATCH",
       reasonCodes: item.reasonCodes || [],
@@ -1071,7 +1094,7 @@ function renderTradeCard(item) {
     });
 
     return `
-      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(item.question)}" data-action="${escHtml(action)}">
+      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}">>
         <div class="trade-card-header">${questionHtml}</div>
         <div class="action-pill ${actionCls}">\u26A1 EXECUTE \u00B7 ${escHtml(action)}</div>
         <div class="trade-plan-grid">
@@ -1099,10 +1122,10 @@ function renderTradeCard(item) {
   const watchSavePayload = JSON.stringify({
     scanId: item.scanId || null,
     source: "TRADE_PAGE",
-    marketId: item.marketSlug || item.conditionId || item.question,
+    marketId: item.conditionId || item.marketSlug || item.question,
     eventSlug: item.eventSlug || null,
     marketUrl: link || null,
-    question: item.question,
+    question: qText,
     tradeability: "WATCH",
     action: "WATCH",
     reasonCodes: item.reasonCodes || [],
@@ -1872,12 +1895,13 @@ function renderTicketsPage(tickets, highlightId) {
     const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "\u2014";
     const tp = typeof t.takeProfit === "number" ? "$" + t.takeProfit.toFixed(2) : "\u2014";
     const sl = typeof t.riskExitLimit === "number" ? "$" + t.riskExitLimit.toFixed(2) : "\u2014";
-    const polyUrl = t.eventSlug
+    const polyUrl = t.marketUrl || (t.eventSlug
       ? `https://polymarket.com/event/${encodeURIComponent(t.eventSlug)}`
-      : t.marketUrl || null;
+      : null);
+    const ticketQuestion = (t.question && t.question.trim()) ? t.question : "Market (unknown question)";
     const questionLink = polyUrl
-      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:700;font-size:0.92rem;line-height:1.35;">${escHtml(t.question)}</a>`
-      : `<span style="font-weight:700;font-size:0.92rem;line-height:1.35;">${escHtml(t.question)}</span>`;
+      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:700;font-size:0.92rem;line-height:1.35;">${escHtml(ticketQuestion)}</a>`
+      : `<span style="font-weight:700;font-size:0.92rem;line-height:1.35;">${escHtml(ticketQuestion)}</span>`;
     const marketId = t.marketId || "";
     const actionLink = `<a href="/trade?marketId=${encodeURIComponent(marketId)}" style="color:#2563eb;text-decoration:none;font-size:0.85rem;font-weight:600;">${escHtml(actionLabel)}</a>`;
     const isHighlighted = highlightId && String(t._id) === highlightId;
@@ -1990,4 +2014,6 @@ module.exports = {
   inferEntry,
   inferSize,
   inferExit,
+  polymarketUrl,
+  safeQuestion,
 };

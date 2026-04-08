@@ -15,6 +15,7 @@ const marketSnapshotSchema = new mongoose.Schema({
   subcategory: String,
   marketSlug: String,
   eventSlug: String,
+  conditionId: String,
   tagIds: [String],
   tagSlugs: [String],
 
@@ -122,6 +123,7 @@ async function upsertSnapshots(candidates, scanId) {
           subcategory: item.subcategory || "",
           marketSlug: item.marketSlug,
           eventSlug: item.eventSlug,
+          conditionId: item.conditionId || "",
           tagIds: item.tagIds || [],
           tagSlugs: item.tagSlugs || [],
           // normalizeMarket() returns numeric fields as priceYes/spread/etc.
