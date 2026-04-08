@@ -2225,11 +2225,94 @@ function renderExplorePage(data) {
 }
 
 /** Render the /system page body. */
-function renderSystemPage(healthData, metrics) {
+function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts) {
+  autoModeStatus = autoModeStatus || {};
+  recentCloseAttempts = recentCloseAttempts || [];
+
+  const autoEnabled = autoModeStatus.enabled || false;
+  const statusBadge = autoEnabled
+    ? '<span style="background:#166534;color:#bbf7d0;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">ENABLED</span>'
+    : '<span style="background:#7f1d1d;color:#fecaca;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">DISABLED</span>';
+  const leaseBadge = autoModeStatus.leaseHeld
+    ? '<span style="color:#22c55e;">● held</span>'
+    : '<span style="color:#ef4444;">● not held</span>';
+
+  const backoffLabel = autoModeStatus.backoffMs > 0
+    ? `<span style="color:#f59e0b;font-weight:600;">${(autoModeStatus.backoffMs / 1000).toFixed(0)}s</span>`
+    : '<span style="color:#6b7280;">none</span>';
+
+  const lastLoopLabel = autoModeStatus.lastLoopAt
+    ? utcSpan(autoModeStatus.lastLoopAt)
+    : '<span style="color:#6b7280;">—</span>';
+
+  const lastErrLabel = autoModeStatus.lastError
+    ? `<span style="color:#ef4444;">${escHtml(autoModeStatus.lastError)}</span>`
+    : '<span style="color:#6b7280;">—</span>';
+
+  const attemptRows = recentCloseAttempts.map((a) => {
+    const resultCls = a.result === "INTENT_RECORDED" ? "color:#22c55e"
+      : a.result === "FAILED" ? "color:#ef4444"
+      : "color:#6b7280";
+    return `<tr>
+      <td style="padding:4px 8px;font-size:0.8rem;">${utcSpan(a.createdAt)}</td>
+      <td style="padding:4px 8px;font-size:0.8rem;">${escHtml(String(a.ticketId).slice(-6))}</td>
+      <td style="padding:4px 8px;font-size:0.8rem;">${escHtml(a.reason || "—")}</td>
+      <td style="padding:4px 8px;font-size:0.8rem;">${typeof a.observedPrice === "number" ? a.observedPrice.toFixed(4) : "—"}</td>
+      <td style="padding:4px 8px;font-size:0.8rem;${resultCls};font-weight:600;">${escHtml(a.result || "—")}</td>
+      <td style="padding:4px 8px;font-size:0.8rem;color:#ef4444;">${a.error ? escHtml(a.error) : "—"}</td>
+    </tr>`;
+  }).join("");
+
+  const autoModePanel = `
+    <div class="card" style="margin-top:16px;">
+      <h2 style="margin-top:0;">🤖 Auto Mode Monitor</h2>
+      <div class="grid-2" style="gap:12px 24px;">
+        <div><span class="label">Status</span> ${statusBadge}</div>
+        <div><span class="label">Lease</span> ${leaseBadge}</div>
+        <div><span class="label">Lease owner</span> <span style="font-family:monospace;font-size:0.78rem;">${escHtml(autoModeStatus.leaseOwnerId || "—")}</span></div>
+        <div><span class="label">Lease expires</span> ${autoModeStatus.leaseExpiresAt ? utcSpan(autoModeStatus.leaseExpiresAt) : '<span style="color:#6b7280;">—</span>'}</div>
+        <div><span class="label">Last loop</span> ${lastLoopLabel}</div>
+        <div><span class="label">Loop duration</span> <span>${autoModeStatus.lastLoopDurationMs != null ? autoModeStatus.lastLoopDurationMs + "ms" : "—"}</span></div>
+        <div><span class="label">Backoff</span> ${backoffLabel}</div>
+        <div><span class="label">Last error</span> ${lastErrLabel}</div>
+      </div>
+      <hr style="border-color:#1e293b;margin:12px 0;">
+      <div class="grid-2" style="gap:8px 24px;">
+        <div><span class="label">OPEN monitored</span> <strong>${autoModeStatus.openMonitored || 0}</strong></div>
+        <div><span class="label">Intents today</span> <strong>${autoModeStatus.intentsToday || 0}</strong></div>
+        <div><span class="label">Closes today</span> <strong>${autoModeStatus.closesToday || 0}</strong></div>
+        <div><span class="label">Failures today</span> <strong style="color:${(autoModeStatus.failuresToday || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.failuresToday || 0}</strong></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h2 style="margin-top:0;">📋 Recent Close Attempts</h2>
+      ${recentCloseAttempts.length === 0
+        ? '<p style="color:#6b7280;font-size:0.85rem;">No close attempts yet.</p>'
+        : `<div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;">
+              <thead>
+                <tr style="border-bottom:1px solid #1e293b;">
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Time</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Ticket</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Reason</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Price</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Result</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Error</th>
+                </tr>
+              </thead>
+              <tbody>${attemptRows}</tbody>
+            </table>
+          </div>`
+      }
+    </div>
+  `;
+
   return `
     <h1>System <span id="tz-label" style="font-size:0.55em;font-weight:400;color:#6b7280;"></span></h1>
     ${renderHealthUi(healthData)}
     ${renderMetricsUi(metrics)}
+    ${autoModePanel}
     <div class="card">
       <h2 style="margin-top:0;">Quick Links</h2>
       <div class="grid-2">
@@ -2328,7 +2411,7 @@ function renderWatchlistPage(items, highlightId) {
 
 /** Render the /tickets page body. */
 function renderTicketsPage(tickets, highlightId) {
-  const openTickets = tickets.filter((t) => t.status === "OPEN").sort((a, b) => {
+  const openTickets = tickets.filter((t) => t.status === "OPEN" || t.status === "CLOSING" || t.status === "ERROR").sort((a, b) => {
     const ea = a.endDate ? new Date(a.endDate).getTime() : Infinity;
     const eb = b.endDate ? new Date(b.endDate).getTime() : Infinity;
     return ea - eb;

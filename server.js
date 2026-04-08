@@ -18,6 +18,7 @@ const {
   setCachedTagData,
 } = require("./src/persistence");
 const TradeTicket = require("./models/TradeTicket");
+const CloseAttempt = require("./models/CloseAttempt");
 const crypto = require("crypto");
 const { buildIdeas } = require("./src/signal_engine");
 const {
@@ -40,6 +41,7 @@ const {
   inferSize,
   inferExit,
 } = require("./src/html_renderer");
+const { startMonitorLoop, getMonitorStatus } = require("./src/auto_monitor");
 
 // ---------------------------------------------------------------------------
 // Node version check — warn-only, never crash
@@ -439,11 +441,13 @@ const server = http.createServer(async (req, res) => {
     let dbSnapshotCount = null;
     let dbScanCount = null;
     let recentScans = [];
+    let recentCloseAttempts = [];
     try {
-      [dbSnapshotCount, dbScanCount, recentScans] = await Promise.all([
+      [dbSnapshotCount, dbScanCount, recentScans, recentCloseAttempts] = await Promise.all([
         MarketSnapshot.estimatedDocumentCount(),
         Scan.estimatedDocumentCount(),
         Scan.find().sort({ startedAt: -1 }).limit(3).lean(),
+        CloseAttempt.find().sort({ createdAt: -1 }).limit(10).lean(),
       ]);
     } catch (_) {}
 
@@ -478,7 +482,9 @@ const server = http.createServer(async (req, res) => {
       ts: new Date().toISOString(),
     };
 
-    const body = renderSystemPage(healthData, metrics);
+    const autoModeStatus = getMonitorStatus();
+
+    const body = renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(pageShell("System", "/system", body));
     return;
@@ -886,7 +892,7 @@ const server = http.createServer(async (req, res) => {
       const statusFilter = url.searchParams.get("status");
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "200", 10) || 200, 1000);
       const query = {};
-      if (statusFilter === "OPEN" || statusFilter === "CLOSED") query.status = String(statusFilter);
+      if (["OPEN", "CLOSING", "CLOSED", "ERROR"].includes(statusFilter)) query.status = String(statusFilter);
       const tickets = await TradeTicket.find(query).sort({ createdAt: -1 }).limit(limit).lean();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(tickets));
@@ -921,12 +927,13 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ error: "Ticket not found" }));
           return;
         }
-        if (ticket.status !== "OPEN") {
+        if (ticket.status !== "OPEN" && ticket.status !== "CLOSING") {
           res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Ticket is not OPEN" }));
+          res.end(JSON.stringify({ error: "Ticket is not OPEN or CLOSING" }));
           return;
         }
         ticket.status = "CLOSED";
+        ticket.closeReason = ticket.closeReason || "MANUAL";
         ticket.closedAt = new Date();
         ticket.closePrice = Number(data.closePrice);
         // Compute approximate realized PnL if possible
@@ -991,4 +998,5 @@ const port = config.PORT;
 server.listen(port, () => {
   console.log(JSON.stringify({ msg: "server started", port, ts: new Date().toISOString() }));
   scanLoop();
+  startMonitorLoop();
 });
