@@ -1313,16 +1313,30 @@ const OU_PATTERN = /^O\/U\s+(.+)$/i;
 
 function formatOutcomeAction(rawLabel, rawAction) {
   const m = OU_PATTERN.exec(rawLabel);
-  if (!m) return { displayLabel: rawLabel, displayAction: rawAction };
-  const line = m[1]; // e.g. "2.5"
-  if (rawAction === "BUY YES") {
-    return { displayLabel: `Over ${line}`, displayAction: "Buy Over" };
+  if (m) {
+    const line = m[1]; // e.g. "2.5"
+    if (rawAction === "BUY YES") {
+      return { displayLabel: `Over ${line}`, displayAction: "Buy Over" };
+    }
+    if (rawAction === "BUY NO") {
+      return { displayLabel: `Under ${line}`, displayAction: "Buy Under" };
+    }
+    // WATCH — keep descriptive label but expand abbreviation
+    return { displayLabel: `Over/Under ${line}`, displayAction: rawAction };
   }
-  if (rawAction === "BUY NO") {
-    return { displayLabel: `Under ${line}`, displayAction: "Buy Under" };
+
+  // Non-O/U multi-outcome: fold outcome name into the action so the pill
+  // reads "Buy {outcome}" instead of the ambiguous "{outcome} BUY YES".
+  if (rawLabel) {
+    if (rawAction === "BUY YES") {
+      return { displayLabel: "", displayAction: `Buy ${rawLabel}` };
+    }
+    if (rawAction === "BUY NO") {
+      return { displayLabel: "", displayAction: `Fade ${rawLabel}` };
+    }
   }
-  // WATCH — keep descriptive label but expand abbreviation
-  return { displayLabel: `Over/Under ${line}`, displayAction: rawAction };
+
+  return { displayLabel: rawLabel, displayAction: rawAction };
 }
 
 /** Render a single trade card for the /trade page. */
@@ -1623,11 +1637,18 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode) {
       var OU_RE = /^O\\/U\\s+(.+)$/i;
       function fmtOA(label, act) {
         var m = OU_RE.exec(label);
-        if (!m) return { dl: label, da: act };
-        var line = m[1];
-        if (act === 'BUY YES') return { dl: 'Over ' + line, da: 'Buy Over' };
-        if (act === 'BUY NO') return { dl: 'Under ' + line, da: 'Buy Under' };
-        return { dl: 'Over/Under ' + line, da: act };
+        if (m) {
+          var line = m[1];
+          if (act === 'BUY YES') return { dl: 'Over ' + line, da: 'Buy Over' };
+          if (act === 'BUY NO') return { dl: 'Under ' + line, da: 'Buy Under' };
+          return { dl: 'Over/Under ' + line, da: act };
+        }
+        // Non-O/U multi-outcome: fold outcome name into the action
+        if (label) {
+          if (act === 'BUY YES') return { dl: '', da: 'Buy ' + label };
+          if (act === 'BUY NO') return { dl: '', da: 'Fade ' + label };
+        }
+        return { dl: label, da: act };
       }
 
       var PRESETS = {
