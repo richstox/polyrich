@@ -1,0 +1,21 @@
+"use strict";
+
+const mongoose = require("mongoose");
+
+const autoSaveLogSchema = new mongoose.Schema(
+  {
+    scanId: { type: String, required: true },
+    ticketId: { type: mongoose.Schema.Types.ObjectId, ref: "TradeTicket" },
+    marketId: { type: String },
+    action: { type: String },
+    dedupeKey: { type: String },
+    result: { type: String, enum: ["CREATED", "DUPLICATE", "ERROR"], required: true },
+    error: { type: String, default: null },
+  },
+  { timestamps: true }
+);
+
+autoSaveLogSchema.index({ createdAt: -1 });
+autoSaveLogSchema.index({ scanId: 1 });
+
+module.exports = mongoose.model("AutoSaveLog", autoSaveLogSchema);

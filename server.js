@@ -19,6 +19,7 @@ const {
 } = require("./src/persistence");
 const TradeTicket = require("./models/TradeTicket");
 const CloseAttempt = require("./models/CloseAttempt");
+const AutoSaveLog = require("./models/AutoSaveLog");
 const SystemSetting = require("./models/SystemSetting");
 const crypto = require("crypto");
 const { buildIdeas } = require("./src/signal_engine");
@@ -41,6 +42,9 @@ const {
   inferEntry,
   inferSize,
   inferExit,
+  polymarketUrl,
+  safeQuestion,
+  whyNowSummary,
 } = require("./src/html_renderer");
 const { startMonitorLoop, getMonitorStatus } = require("./src/auto_monitor");
 
@@ -83,6 +87,28 @@ function computeDedupeKey(data) {
     canon(data.riskExitLimit),
     canon(data.maxSizeUsd),
     canon(data.scanId),
+  ].join("|");
+  return crypto.createHash("sha1").update(parts).digest("hex");
+}
+
+/**
+ * Cross-scan deduplication key for auto-save.
+ * Excludes scanId so the same trade idea across scans maps to the same key.
+ * sha1(marketId|action|entryLimit|takeProfit|riskExitLimit|maxSizeUsd)
+ */
+function computeAutoSaveDedupeKey(data) {
+  function canon(v) {
+    if (v === null || v === undefined) return "null";
+    if (typeof v === "number") return Number(v).toString();
+    return String(v).trim();
+  }
+  const parts = [
+    canon(data.marketId),
+    canon(data.action),
+    canon(data.entryLimit),
+    canon(data.takeProfit),
+    canon(data.riskExitLimit),
+    canon(data.maxSizeUsd),
   ].join("|");
   return crypto.createHash("sha1").update(parts).digest("hex");
 }
@@ -220,6 +246,19 @@ async function runScan() {
       pagesFetched: fetchStats.pagesFetched,
     }));
 
+    // Auto-save EXECUTE tickets (non-blocking, fire-and-forget).
+    // IMPORTANT: This is the ONLY call site for autoSaveExecuteTickets().
+    // It runs exclusively inside runScan() after a successful new scan —
+    // NOT from the /trade route, page refresh, or any HTTP handler.
+    // The /trade route (line ~497) only calls buildIdeas() + renderTradePage()
+    // and never invokes autoSaveExecuteTickets().
+    // Additionally, the scanRunning mutex (line 149) prevents overlapping scans,
+    // and the atomic lastAutoSaveScanId guard inside autoSaveExecuteTickets()
+    // prevents duplicate auto-saves even across process instances.
+    autoSaveExecuteTickets(scanId).catch((err) => {
+      console.warn(JSON.stringify({ msg: "autoSave error", scanId, err: err.message }));
+    });
+
     return candidates;
   } catch (err) {
     const durationMs = Date.now() - startedAt.getTime();
@@ -239,6 +278,182 @@ async function runScan() {
   } finally {
     scanRunning = false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-Save EXECUTE tickets after a successful scan
+// ---------------------------------------------------------------------------
+async function autoSaveExecuteTickets(scanId) {
+  // ── Atomic once-per-scan idempotency guard ──────────────────────────
+  // Prevents duplicate auto-saves if the same scanId is processed twice
+  // (e.g. overlapping instances, retries). Uses a single Mongo atomic
+  // findOneAndUpdate with a condition: only proceeds if lastAutoSaveScanId
+  // differs from the current scanId. Safe across multiple processes.
+  let guardResult;
+  try {
+    guardResult = await SystemSetting.findOneAndUpdate(
+      { _id: "system", lastAutoSaveScanId: { $ne: scanId } },
+      { $set: { lastAutoSaveScanId: scanId } },
+      { new: true, lean: true }
+    );
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: "autoSave: idempotency guard error", scanId, err: err.message }));
+    return;
+  }
+  if (!guardResult) {
+    console.log(JSON.stringify({ msg: "autoSave: already processed this scanId, skipping", scanId }));
+    return;
+  }
+
+  let settings;
+  try {
+    settings = await SystemSetting.getSettings();
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: "autoSave: cannot read settings", err: err.message }));
+    return;
+  }
+  if (!settings.autoSaveExecuteEnabled) return;
+
+  let tradeCandidates;
+  try {
+    const result = await buildIdeas(scanStatus, {});
+    tradeCandidates = result.tradeCandidates || [];
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: "autoSave: buildIdeas failed", err: err.message }));
+    return;
+  }
+
+  // Derive EXECUTE cards using the same logic as renderTradePage
+  const cards = tradeCandidates.slice(0, 20);
+  const executeItems = [];
+  for (const item of cards) {
+    try {
+      const dir = inferDirection(item);
+      if (dir.action === "WATCH") continue;
+      const entryNum = inferEntry(item, dir.action);
+      if (entryNum === null) continue;
+      const sizeNum = inferSize(item);
+      if (sizeNum === null) continue;
+      const exits = inferExit(entryNum);
+      if (exits.tp === null || exits.stop === null) continue;
+      executeItems.push({ item, dir, entryNum, sizeNum, tpNum: exits.tp, stopNum: exits.stop });
+    } catch (_) { /* skip */ }
+  }
+
+  const limit = config.AUTO_SAVE_EXECUTE_LIMIT;
+  const toSave = executeItems.slice(0, limit);
+  if (toSave.length === 0) return;
+
+  const defaultAutoClose = settings.defaultAutoCloseEnabled || false;
+  let created = 0;
+  let dupes = 0;
+
+  for (const { item, dir, entryNum, sizeNum, tpNum, stopNum } of toSave) {
+    const qText = safeQuestion(item);
+    const link = polymarketUrl(item);
+    const actionEnum = dir.action === "BUY YES" ? "BUY_YES" : dir.action === "BUY NO" ? "BUY_NO" : "WATCH";
+    const marketId = item.conditionId || item.marketSlug || item.question;
+
+    const pnlTpPct = (tpNum - entryNum) / entryNum * 100;
+    const pnlStopPct = (stopNum - entryNum) / entryNum * 100;
+    const pnlTpUsd = sizeNum * (tpNum - entryNum) / entryNum;
+    const pnlStopUsd = sizeNum * (stopNum - entryNum) / entryNum;
+
+    const ticketData = {
+      scanId,
+      source: "TRADE_PAGE",
+      marketId,
+      eventSlug: item.eventSlug || null,
+      eventTitle: item.eventTitle || null,
+      groupItemTitle: item.groupItemTitle || null,
+      marketUrl: link || null,
+      question: qText,
+      tradeability: "EXECUTE",
+      action: actionEnum,
+      reasonCodes: item.reasonCodes || [],
+      whyNow: whyNowSummary(item),
+      planTbd: false,
+      entryLimit: entryNum,
+      takeProfit: tpNum,
+      riskExitLimit: stopNum,
+      maxSizeUsd: sizeNum,
+      bankrollUsd: null,
+      riskPct: null,
+      maxTradeCapUsd: null,
+      minLimitOrderUsd: 5,
+      pnlTpUsd: Math.round(pnlTpUsd * 100) / 100,
+      pnlTpPct: Math.round(pnlTpPct * 10) / 1000,
+      pnlExitUsd: Math.round(pnlStopUsd * 100) / 100,
+      pnlExitPct: Math.round(pnlStopPct * 10) / 1000,
+      endDate: item.endDate || null,
+      autoCloseEnabled: defaultAutoClose,
+    };
+
+    // Cross-scan dedupe key (excludes scanId)
+    const autoDedupeKey = computeAutoSaveDedupeKey({
+      marketId,
+      action: actionEnum,
+      entryLimit: entryNum,
+      takeProfit: tpNum,
+      riskExitLimit: stopNum,
+      maxSizeUsd: sizeNum,
+    });
+
+    try {
+      // Check for existing OPEN or CLOSING ticket with same cross-scan key
+      const existing = await TradeTicket.findOne({
+        dedupeKey: autoDedupeKey,
+        status: { $in: ["OPEN", "CLOSING"] },
+      }).lean();
+
+      if (existing) {
+        dupes++;
+        await AutoSaveLog.create({
+          scanId,
+          ticketId: existing._id,
+          marketId,
+          action: actionEnum,
+          dedupeKey: autoDedupeKey,
+          result: "DUPLICATE",
+        }).catch(() => {});
+        continue;
+      }
+
+      // Use cross-scan dedupeKey + store scanId as metadata (sourceScanId)
+      ticketData.dedupeKey = autoDedupeKey;
+      const ticket = await TradeTicket.create(ticketData);
+      created++;
+      await AutoSaveLog.create({
+        scanId,
+        ticketId: ticket._id,
+        marketId,
+        action: actionEnum,
+        dedupeKey: autoDedupeKey,
+        result: "CREATED",
+      }).catch(() => {});
+    } catch (err) {
+      // Duplicate key error from unique index — treat as dedupe
+      if (err.code === 11000) {
+        dupes++;
+        await AutoSaveLog.create({
+          scanId, marketId, action: actionEnum, dedupeKey: autoDedupeKey, result: "DUPLICATE",
+        }).catch(() => {});
+      } else {
+        await AutoSaveLog.create({
+          scanId, marketId, action: actionEnum, dedupeKey: autoDedupeKey, result: "ERROR", error: err.message,
+        }).catch(() => {});
+      }
+    }
+  }
+
+  console.log(JSON.stringify({
+    msg: "autoSave done",
+    scanId,
+    created,
+    dupes,
+    total: toSave.length,
+    ts: new Date().toISOString(),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -445,13 +660,17 @@ if (url.pathname === "/trade") {
     let recentScans = [];
     let recentCloseAttempts = [];
     let systemSettings = { autoModeEnabled: false, paperCloseEnabled: false };
+    let autoSavedToday = 0;
     try {
-      [dbSnapshotCount, dbScanCount, recentScans, recentCloseAttempts, systemSettings] = await Promise.all([
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+      [dbSnapshotCount, dbScanCount, recentScans, recentCloseAttempts, systemSettings, autoSavedToday] = await Promise.all([
         MarketSnapshot.estimatedDocumentCount(),
         Scan.estimatedDocumentCount(),
         Scan.find().sort({ startedAt: -1 }).limit(3).lean(),
         CloseAttempt.find().sort({ createdAt: -1 }).limit(10).lean(),
         SystemSetting.getSettings(),
+        AutoSaveLog.countDocuments({ result: "CREATED", createdAt: { $gte: todayStart } }),
       ]);
     } catch (_) {}
 
@@ -493,7 +712,7 @@ if (url.pathname === "/trade") {
       paperCloseEnv: config.AUTO_MODE_PAPER_CLOSE,
     };
 
-    const body = renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches);
+    const body = renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(pageShell("System", "/system", body));
     return;
@@ -863,9 +1082,10 @@ if (url.pathname === "/trade") {
         if (typeof data.autoModeEnabled === "boolean") update.autoModeEnabled = data.autoModeEnabled;
         if (typeof data.paperCloseEnabled === "boolean") update.paperCloseEnabled = data.paperCloseEnabled;
         if (typeof data.defaultAutoCloseEnabled === "boolean") update.defaultAutoCloseEnabled = data.defaultAutoCloseEnabled;
+        if (typeof data.autoSaveExecuteEnabled === "boolean") update.autoSaveExecuteEnabled = data.autoSaveExecuteEnabled;
         if (Object.keys(update).length === 0) {
           res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Provide at least one boolean field: autoModeEnabled, paperCloseEnabled, defaultAutoCloseEnabled" }));
+          res.end(JSON.stringify({ error: "Provide at least one boolean field: autoModeEnabled, paperCloseEnabled, defaultAutoCloseEnabled, autoSaveExecuteEnabled" }));
           return;
         }
         const doc = await SystemSetting.findOneAndUpdate(

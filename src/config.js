@@ -18,6 +18,9 @@ module.exports = {
   NOVELTY_LOOKBACK_SCANS: parseInt(process.env.NOVELTY_LOOKBACK_SCANS || "5", 10),
   SCAN_INTERVAL_MS: parseInt(process.env.SCAN_INTERVAL_MS || String(5 * 60 * 1000), 10),
 
+  // Auto-save EXECUTE limit per scan
+  AUTO_SAVE_EXECUTE_LIMIT: parseInt(process.env.AUTO_SAVE_EXECUTE_LIMIT || "10", 10),
+
   // retention (days)
   SNAPSHOT_TTL_DAYS: parseInt(process.env.SNAPSHOT_TTL_DAYS || "14", 10),
   SHOWN_CANDIDATE_TTL_DAYS: parseInt(process.env.SHOWN_CANDIDATE_TTL_DAYS || "30", 10),

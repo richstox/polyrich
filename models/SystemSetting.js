@@ -8,6 +8,9 @@ const systemSettingSchema = new mongoose.Schema(
     autoModeEnabled: { type: Boolean, default: false },
     paperCloseEnabled: { type: Boolean, default: false },
     defaultAutoCloseEnabled: { type: Boolean, default: false },
+    autoSaveExecuteEnabled: { type: Boolean, default: false },
+    // Idempotency guard: last scanId that auto-save already processed
+    lastAutoSaveScanId: { type: String, default: null },
   },
   { timestamps: true }
 );
@@ -18,7 +21,7 @@ const systemSettingSchema = new mongoose.Schema(
 systemSettingSchema.statics.getSettings = async function () {
   return this.findOneAndUpdate(
     { _id: "system" },
-    { $setOnInsert: { autoModeEnabled: false, paperCloseEnabled: false, defaultAutoCloseEnabled: false } },
+    { $setOnInsert: { autoModeEnabled: false, paperCloseEnabled: false, defaultAutoCloseEnabled: false, autoSaveExecuteEnabled: false } },
     { upsert: true, new: true, lean: true }
   );
 };

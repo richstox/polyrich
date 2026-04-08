@@ -1587,6 +1587,15 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
     : "background:#fee2e2;color:#991b1b;";
   const acBadgeText = defaultAutoClose ? "ON" : "OFF";
 
+  const autoSaveEnabled = (systemSettings && systemSettings.autoSaveExecuteEnabled) || false;
+  const asBadgeStyle = autoSaveEnabled
+    ? "background:#dcfce7;color:#166534;"
+    : "background:#fee2e2;color:#991b1b;";
+  const asBadgeText = autoSaveEnabled ? "ON" : "OFF";
+  const autoSaveStatusLine = autoSaveEnabled
+    ? '<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#166534;">💾 Auto‑Save ON: will save new EXECUTE ideas after each scan.</div>'
+    : "";
+
   return `
     <div class="status-bar">
       <div class="status-item"><span class="status-label">Last scan</span><span class="status-value">${lastScan}</span></div>
@@ -1634,8 +1643,16 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
         >${defaultAutoClose ? "ON" : "OFF"}</button>
       </div>
 
+      <div class="status-item">
+        <span class="status-label">Auto‑Save EXECUTE <span style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:0.7rem;font-weight:700;vertical-align:middle;margin-left:4px;${asBadgeStyle}">${asBadgeText}</span></span>
+        <button id="autosave-execute-toggle"
+          style="padding:3px 12px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:pointer;border:1px solid ${autoSaveEnabled ? "#166534" : "#d1d5db"};background:${autoSaveEnabled ? "#dcfce7" : "#f3f4f6"};color:${autoSaveEnabled ? "#166534" : "#6b7280"};"
+        >${autoSaveEnabled ? "ON" : "OFF"}</button>
+      </div>
+
       <a href="/scan?returnTo=/trade" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
+    ${autoSaveStatusLine}
     <div id="limit-order-warning" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#991b1b;">
       ⚠️ Max trade cap must be at least $5 for limit orders.
       <button id="set-cap-5-btn" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #991b1b;background:#fff;color:#991b1b;font-weight:600;font-size:0.82rem;cursor:pointer;">Set cap to $5</button>
@@ -1730,6 +1747,22 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
             body: JSON.stringify({ defaultAutoCloseEnabled: newVal })
           }).then(function() { window.location.reload(); })
             .catch(function() { dacToggle.textContent = 'Error'; dacToggle.disabled = false; });
+        });
+      }
+
+      // Auto-Save EXECUTE toggle
+      var asToggle = document.getElementById('autosave-execute-toggle');
+      if (asToggle) {
+        asToggle.addEventListener('click', function() {
+          var newVal = asToggle.textContent.trim() === 'OFF';
+          asToggle.disabled = true;
+          asToggle.textContent = '...';
+          fetch('/api/system/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ autoSaveExecuteEnabled: newVal })
+          }).then(function() { window.location.reload(); })
+            .catch(function() { asToggle.textContent = 'Error'; asToggle.disabled = false; });
         });
       }
 
@@ -2310,11 +2343,12 @@ function renderExplorePage(data) {
 }
 
 /** Render the /system page body. */
-function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches) {
+function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday) {
   autoModeStatus = autoModeStatus || {};
   recentCloseAttempts = recentCloseAttempts || [];
   systemSettings = systemSettings || { autoModeEnabled: false, paperCloseEnabled: false };
   envKillSwitches = envKillSwitches || { autoModeEnv: false, paperCloseEnv: false };
+  autoSavedToday = autoSavedToday || 0;
 
   const envAutoAllows = envKillSwitches.autoModeEnv;
   const envPaperAllows = envKillSwitches.paperCloseEnv;
@@ -2478,11 +2512,32 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
     </div>
   `;
 
+  const autoSaveEnabled = systemSettings.autoSaveExecuteEnabled || false;
+  const autoSaveBadge = autoSaveEnabled
+    ? '<span style="background:#166534;color:#bbf7d0;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">ON</span>'
+    : '<span style="background:#7f1d1d;color:#fecaca;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">OFF</span>';
+  const autoSavePanel = `
+    <div class="card" style="margin-top:16px;">
+      <h2 style="margin-top:0;">💾 Auto-Save EXECUTE</h2>
+      <div class="grid-2" style="gap:8px 24px;">
+        <div><span class="label">Auto-Save EXECUTE</span> ${autoSaveBadge}</div>
+        <div><span class="label">Auto-saved today</span> <strong>${autoSavedToday}</strong></div>
+      </div>
+      <div style="margin-top:10px;">
+        <button class="sys-toggle-btn" data-field="autoSaveExecuteEnabled" data-value="${autoSaveEnabled ? "false" : "true"}"
+          style="background:${autoSaveEnabled ? "#7f1d1d" : "#166534"};color:#fff;border:none;padding:6px 16px;border-radius:6px;font-size:0.82rem;font-weight:600;cursor:pointer;">
+          ${autoSaveEnabled ? "Disable" : "Enable"}
+        </button>
+      </div>
+    </div>
+  `;
+
   return `
     <h1>System <span id="tz-label" style="font-size:0.55em;font-weight:400;color:#6b7280;"></span></h1>
     ${renderHealthUi(healthData)}
     ${renderMetricsUi(metrics)}
     ${togglesPanel}
+    ${autoSavePanel}
     ${autoModePanel}
     <div class="card">
       <h2 style="margin-top:0;">Quick Links</h2>
@@ -3064,4 +3119,5 @@ module.exports = {
   isInvalidDisplayLabel,
   slugToLabel,
   marketDisplayLabel,
+  whyNowSummary,
 };
