@@ -136,15 +136,15 @@ function safeQuestion(item) {
 
 /**
  * Determine the canonical headline and optional subtext for a card.
- * When an eventTitle exists and differs from the market question, the event title
- * is used as the headline (it matches the Polymarket page the URL leads to) and
- * the market question is demoted to muted subtext.
+ * The market question is always the headline — it is the canonical title
+ * that corresponds to the marketUrl the card links to.
+ * If an eventTitle exists and differs, it is shown as optional muted subtext.
  */
 function cardHeadline(item) {
   const eventTitle = (item.eventTitle || "").trim();
   const question = safeQuestion(item);
   if (eventTitle && eventTitle !== question) {
-    return { headline: eventTitle, subtext: question };
+    return { headline: question, subtext: eventTitle };
   }
   return { headline: question, subtext: "" };
 }
