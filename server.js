@@ -918,6 +918,32 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── POST /api/tickets/autoclose-all ─────────────────────────────────
+  if (url.pathname === "/api/tickets/autoclose-all" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", async () => {
+      try {
+        const data = JSON.parse(body);
+        if (typeof data.autoCloseEnabled !== "boolean") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Provide autoCloseEnabled (boolean)" }));
+          return;
+        }
+        const result = await TradeTicket.updateMany(
+          { status: "OPEN", tradeability: "EXECUTE" },
+          { $set: { autoCloseEnabled: data.autoCloseEnabled } }
+        );
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ updated: result.modifiedCount || 0 }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
   // ── POST /api/tickets ────────────────────────────────────────────────
   if (url.pathname === "/api/tickets" && req.method === "POST") {
     let body = "";
