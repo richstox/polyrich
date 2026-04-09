@@ -176,6 +176,45 @@ async function releaseLease() {
 // ---------------------------------------------------------------------------
 
 /**
+ * Pick the correct market from a Gamma API array response.
+ *
+ * The condition_id query-param endpoint may return multiple market objects
+ * (e.g. different outcomes sharing an event, or duplicate entries).  We match
+ * on conditionId first (exact hex match), then fall back to question text.
+ * If nothing matches, return the first element (preserves legacy behaviour).
+ *
+ * @param {Array} arr — Gamma API array response
+ * @param {Object} ticket — TradeTicket document (has marketId, question)
+ * @returns {Object|null}
+ */
+function matchMarketFromArray(arr, ticket) {
+  if (!arr || arr.length === 0) return null;
+  if (arr.length === 1) return arr[0];
+
+  const wantId = (ticket.marketId || "").toLowerCase();
+  const wantQ  = (ticket.question || "").toLowerCase().trim();
+
+  // 1) Exact conditionId match (most reliable)
+  if (wantId) {
+    const byId = arr.find(
+      (m) => (m.conditionId || m.condition_id || "").toLowerCase() === wantId
+    );
+    if (byId) return byId;
+  }
+
+  // 2) Question-text match
+  if (wantQ) {
+    const byQ = arr.find(
+      (m) => (m.question || "").toLowerCase().trim() === wantQ
+    );
+    if (byQ) return byQ;
+  }
+
+  // 3) Fallback: first element (legacy behaviour)
+  return arr[0];
+}
+
+/**
  * Fetch the current closeable price for a ticket.
  *
  * Price source: Gamma Markets API.
@@ -221,7 +260,11 @@ async function getCurrentCloseablePrice(ticket) {
 
     const raw = await res.json();
     // Query-param endpoint returns an array; path endpoint returns an object.
-    const data = Array.isArray(raw) ? (raw.length > 0 ? raw[0] : null) : raw;
+    // When the array has multiple entries, match the correct market by
+    // conditionId or question instead of blindly taking the first element.
+    const data = Array.isArray(raw)
+      ? matchMarketFromArray(raw, ticket)
+      : raw;
     if (!data) return null;
 
     const bestBid = parseFloat(data.bestBid);
@@ -702,6 +745,7 @@ module.exports = {
   stopMonitorLoop,
   getMonitorStatus,
   getCurrentCloseablePrice,
+  matchMarketFromArray,
   checkTrigger,
   debounceCheck,
   attemptAutoClose,
