@@ -26,6 +26,19 @@ const monitorState = {
   failuresToday: 0,
   counterResetDate: todayDateStr(),
   running: false,
+
+  // Per-tick diagnostic counters (reset each tick)
+  lastTickBatchSize: 0,
+  lastTickPriceOk: 0,
+  lastTickPriceNull: 0,
+  lastTickPriceError: 0,
+  lastTickCooldownSkip: 0,
+  lastTickTriggerHit: 0,
+  lastTickTriggerMiss: 0,
+  lastTickDebounceHold: 0,
+  lastTickCloseAttempt: 0,
+  // Sample: first null-price ticket per tick for debugging
+  lastTickNullPriceSample: null,
 };
 
 /**
@@ -60,6 +73,19 @@ function resetDailyCountersIfNeeded() {
     monitorState.counterResetDate = today;
     idempotencyKeys.clear();
   }
+}
+
+function resetTickDiagnostics() {
+  monitorState.lastTickBatchSize = 0;
+  monitorState.lastTickPriceOk = 0;
+  monitorState.lastTickPriceNull = 0;
+  monitorState.lastTickPriceError = 0;
+  monitorState.lastTickCooldownSkip = 0;
+  monitorState.lastTickTriggerHit = 0;
+  monitorState.lastTickTriggerMiss = 0;
+  monitorState.lastTickDebounceHold = 0;
+  monitorState.lastTickCloseAttempt = 0;
+  monitorState.lastTickNullPriceSample = null;
 }
 
 function jitteredTick() {
@@ -451,6 +477,7 @@ async function attemptAutoClose(ticket, observedPrice, reason, effectivePaperClo
  */
 async function monitorTick() {
   resetDailyCountersIfNeeded();
+  resetTickDiagnostics();
 
   // Check DB-level auto-mode toggle — if disabled, skip this tick entirely
   let dbSettings;
@@ -489,12 +516,17 @@ async function monitorTick() {
   const batch = openTickets.slice(rrOffset, rrOffset + batchSize);
   rrOffset += batchSize;
 
+  monitorState.lastTickBatchSize = batch.length;
+
   for (const ticket of batch) {
     // Rate limiting: space out requests (min ~50ms gap = max ~20 rps within burst,
     // but overall avg is well under 1 rps due to 15s tick interval)
     await new Promise((r) => setTimeout(r, 50));
 
-    if (isInCooldown(ticket._id)) continue;
+    if (isInCooldown(ticket._id)) {
+      monitorState.lastTickCooldownSkip++;
+      continue;
+    }
 
     let priceResult;
     try {
@@ -502,15 +534,31 @@ async function monitorTick() {
     } catch (err) {
       // 429/5xx → trigger backoff
       if (err.statusCode === 429 || (err.statusCode && err.statusCode >= 500)) {
+        monitorState.lastTickPriceError++;
         applyBackoff();
         monitorState.lastError = `API ${err.statusCode}`;
         monitorState.lastErrorAt = new Date();
+        logTickDiagnostics();
         return; // abort this tick
+      }
+      monitorState.lastTickPriceError++;
+      continue;
+    }
+
+    if (!priceResult) {
+      monitorState.lastTickPriceNull++;
+      // Capture the first null-price sample for debugging
+      if (!monitorState.lastTickNullPriceSample) {
+        monitorState.lastTickNullPriceSample = {
+          marketId: ticket.marketId || "—",
+          action: ticket.action || "—",
+          ticketId: String(ticket._id).slice(-6),
+        };
       }
       continue;
     }
 
-    if (!priceResult) continue;
+    monitorState.lastTickPriceOk++;
 
     // Update last observed price on the ticket
     await TradeTicket.updateOne(
@@ -520,15 +568,44 @@ async function monitorTick() {
 
     const { triggered, reason } = checkTrigger(ticket, priceResult.price);
 
-    if (triggered && debounceCheck(ticket._id, true)) {
-      await attemptAutoClose(ticket, priceResult.price, reason, effectivePaperClose);
-    } else if (!triggered) {
+    if (triggered) {
+      monitorState.lastTickTriggerHit++;
+      if (debounceCheck(ticket._id, true)) {
+        monitorState.lastTickCloseAttempt++;
+        await attemptAutoClose(ticket, priceResult.price, reason, effectivePaperClose);
+      } else {
+        monitorState.lastTickDebounceHold++;
+      }
+    } else {
+      monitorState.lastTickTriggerMiss++;
       debounceCheck(ticket._id, false);
     }
   }
 
   // Successful tick: reset backoff
   monitorState.backoffMs = 0;
+
+  logTickDiagnostics();
+}
+
+/** Emit a structured JSON log once per tick with diagnostic breakdown. */
+function logTickDiagnostics() {
+  const s = monitorState;
+  console.log(JSON.stringify({
+    msg: "monitor-tick",
+    open: s.openMonitored,
+    batch: s.lastTickBatchSize,
+    priceOk: s.lastTickPriceOk,
+    priceNull: s.lastTickPriceNull,
+    priceErr: s.lastTickPriceError,
+    cooldown: s.lastTickCooldownSkip,
+    triggerHit: s.lastTickTriggerHit,
+    triggerMiss: s.lastTickTriggerMiss,
+    debounceHold: s.lastTickDebounceHold,
+    closeAttempt: s.lastTickCloseAttempt,
+    nullSample: s.lastTickNullPriceSample,
+    ts: new Date().toISOString(),
+  }));
 }
 
 function applyBackoff() {
