@@ -37,6 +37,7 @@ const monitorState = {
   lastTickTriggerMiss: 0,
   lastTickDebounceHold: 0,
   lastTickCloseAttempt: 0,
+  lastTickIdentitySkip: 0,         // tickets skipped: missing valid conditionId
   // Sample: first null-price ticket per tick for debugging
   lastTickNullPriceSample: null,
 };
@@ -85,6 +86,7 @@ function resetTickDiagnostics() {
   monitorState.lastTickTriggerMiss = 0;
   monitorState.lastTickDebounceHold = 0;
   monitorState.lastTickCloseAttempt = 0;
+  monitorState.lastTickIdentitySkip = 0;
   monitorState.lastTickNullPriceSample = null;
 }
 
@@ -92,6 +94,12 @@ function jitteredTick() {
   const base = config.AUTO_MODE_TICK_MS;
   const jitter = base * config.AUTO_MODE_JITTER_PCT;
   return base + (Math.random() * 2 - 1) * jitter;
+}
+
+/** Returns true if the ticket has a valid conditionId (0x…) suitable for strict monitoring. */
+function hasValidConditionId(ticket) {
+  const cid = (ticket.conditionId || "");
+  return cid.startsWith("0x");
 }
 
 // ---------------------------------------------------------------------------
@@ -176,11 +184,43 @@ async function releaseLease() {
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch the current closeable price for a ticket.
+ * Pick the correct market from a Gamma API array response (strict, fail-closed).
+ *
+ * The condition_id query-param endpoint may return multiple market objects
+ * (e.g. different outcomes sharing an event).  We match ONLY by exact
+ * conditionId (case-insensitive hex match).
+ *
+ * Fail-closed: if no exact conditionId match is found, returns null.
+ * No question-text fallback. No arr[0] fallback.
+ * A missed close is acceptable; a wrong close is not.
+ *
+ * @param {Array} arr — Gamma API array response
+ * @param {Object} ticket — TradeTicket document (has conditionId, marketId)
+ * @returns {Object|null}
+ */
+function matchMarketFromArray(arr, ticket) {
+  if (!arr || arr.length === 0) return null;
+
+  // Use ONLY the dedicated conditionId field — no marketId fallback (fail-closed)
+  const wantId = (ticket.conditionId || "").toLowerCase();
+  if (!wantId) return null;
+
+  // Single-element array still requires exact conditionId match (fail-closed)
+  const match = arr.find(
+    (m) => (m.conditionId || m.condition_id || "").toLowerCase() === wantId
+  );
+
+  return match || null;
+}
+
+/**
+ * Fetch the current closeable price for a ticket (strict, fail-closed).
  *
  * Price source: Gamma Markets API.
  *   - conditionId (0x…) → GET /markets?condition_id={id}  (returns array)
- *   - slug / other     → GET /markets/{slug}              (returns object)
+ *
+ * Only tickets with a valid conditionId are eligible for price lookup.
+ * Slug-based or question-based identifiers are NOT used for monitoring.
  *
  *   - BUY_YES closes by selling YES shares → best executable sell price = bestBid
  *   - BUY_NO closes by selling NO shares → best executable sell price for NO = (1 - bestAsk)
@@ -193,15 +233,11 @@ async function releaseLease() {
  * Returns { price: number, source: string } or null on failure.
  */
 async function getCurrentCloseablePrice(ticket) {
-  const marketId = ticket.marketId;
-  if (!marketId) return null;
+  // Strict: only conditionId (0x…) is acceptable for monitoring lookup — no marketId fallback
+  if (!hasValidConditionId(ticket)) return null;
+  const cid = ticket.conditionId;
 
-  // conditionId (hex hash) must be looked up via query parameter;
-  // slugs can use the path-based endpoint directly.
-  const isConditionId = marketId.startsWith("0x");
-  const url = isConditionId
-    ? `https://gamma-api.polymarket.com/markets?condition_id=${encodeURIComponent(marketId)}`
-    : `https://gamma-api.polymarket.com/markets/${encodeURIComponent(marketId)}`;
+  const url = `https://gamma-api.polymarket.com/markets?condition_id=${encodeURIComponent(cid)}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.FETCH_TIMEOUT_MS);
@@ -220,8 +256,10 @@ async function getCurrentCloseablePrice(ticket) {
     }
 
     const raw = await res.json();
-    // Query-param endpoint returns an array; path endpoint returns an object.
-    const data = Array.isArray(raw) ? (raw.length > 0 ? raw[0] : null) : raw;
+    // condition_id query always returns an array; match strictly by conditionId
+    const data = Array.isArray(raw)
+      ? matchMarketFromArray(raw, ticket)
+      : null;   // non-array response from condition_id query is unexpected → fail-closed
     if (!data) return null;
 
     const bestBid = parseFloat(data.bestBid);
@@ -530,6 +568,20 @@ async function monitorTick() {
   monitorState.lastTickBatchSize = batch.length;
 
   for (const ticket of batch) {
+    // Strict identity gate: skip tickets without a valid conditionId (fail-closed)
+    if (!hasValidConditionId(ticket)) {
+      monitorState.lastTickIdentitySkip++;
+      console.warn(JSON.stringify({
+        msg: "monitor-identity-skip",
+        reason: "missing_conditionId",
+        ticketId: String(ticket._id).slice(-6),
+        marketId: ticket.marketId || "—",
+        conditionId: ticket.conditionId || null,
+        ts: new Date().toISOString(),
+      }));
+      continue;
+    }
+
     // Rate limiting: space out requests (min ~50ms gap = max ~20 rps within burst,
     // but overall avg is well under 1 rps due to 15s tick interval)
     await new Promise((r) => setTimeout(r, 50));
@@ -561,7 +613,7 @@ async function monitorTick() {
       // Capture the first null-price sample for debugging
       if (!monitorState.lastTickNullPriceSample) {
         monitorState.lastTickNullPriceSample = {
-          marketId: ticket.marketId || "—",
+          conditionId: ticket.conditionId || "—",
           action: ticket.action || "—",
           ticketId: String(ticket._id).slice(-6),
         };
@@ -614,6 +666,7 @@ function logTickDiagnostics() {
     triggerMiss: s.lastTickTriggerMiss,
     debounceHold: s.lastTickDebounceHold,
     closeAttempt: s.lastTickCloseAttempt,
+    identitySkip: s.lastTickIdentitySkip,
     nullSample: s.lastTickNullPriceSample,
     ts: new Date().toISOString(),
   }));
@@ -702,6 +755,7 @@ module.exports = {
   stopMonitorLoop,
   getMonitorStatus,
   getCurrentCloseablePrice,
+  matchMarketFromArray,
   checkTrigger,
   debounceCheck,
   attemptAutoClose,

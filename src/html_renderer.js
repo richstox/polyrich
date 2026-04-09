@@ -1509,6 +1509,8 @@ function renderTradeCard(item) {
       scanId: item.scanId || null,
       source: "TRADE_PAGE",
       marketId: item.conditionId || item.marketSlug || item.question,
+      conditionId: item.conditionId || null,
+      marketSlug: item.marketSlug || null,
       eventSlug: item.eventSlug || null,
       eventTitle: item.eventTitle || null,
       groupItemTitle: item.groupItemTitle || null,
@@ -1563,6 +1565,8 @@ function renderTradeCard(item) {
     scanId: item.scanId || null,
     source: "TRADE_PAGE",
     marketId: item.conditionId || item.marketSlug || item.question,
+    conditionId: item.conditionId || null,
+    marketSlug: item.marketSlug || null,
     eventSlug: item.eventSlug || null,
     eventTitle: item.eventTitle || null,
     groupItemTitle: item.groupItemTitle || null,
@@ -2533,10 +2537,11 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         <div title="Tickets where price was fetched OK but has NOT reached TP or Exit level yet — no action needed, still monitoring"><span class="label">Trigger miss</span> <strong>${autoModeStatus.lastTickTriggerMiss || 0}</strong></div>
         <div title="Trigger condition met but held by debounce — requires 2 consecutive checks or 15+ seconds to confirm (prevents false triggers from price noise)"><span class="label">Debounce hold</span> <strong style="color:${(autoModeStatus.lastTickDebounceHold || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickDebounceHold || 0}</strong></div>
         <div title="Actual auto-close attempts made after debounce confirmed the trigger"><span class="label">Close attempt</span> <strong style="color:${(autoModeStatus.lastTickCloseAttempt || 0) > 0 ? "#22c55e" : "inherit"};">${autoModeStatus.lastTickCloseAttempt || 0}</strong></div>
+        <div title="Tickets skipped because they lack a valid conditionId (0x…) — fail-closed identity gate"><span class="label">Identity skip</span> <strong style="color:${(autoModeStatus.lastTickIdentitySkip || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickIdentitySkip || 0}</strong></div>
       </div>${autoModeStatus.lastTickNullPriceSample ? `
       <div style="margin-top:8px;font-size:0.78rem;color:#94a3b8;background:#1e293b;padding:6px 10px;border-radius:6px;">
         <span style="color:#f59e0b;">⚠ Null-price sample:</span>
-        mkt <code>${escHtml(autoModeStatus.lastTickNullPriceSample.marketId || "—")}</code>
+        cid <code>${escHtml(autoModeStatus.lastTickNullPriceSample.conditionId || "—")}</code>
         · ${escHtml(autoModeStatus.lastTickNullPriceSample.action || "—")}
         · ticket …${escHtml(autoModeStatus.lastTickNullPriceSample.ticketId || "—")}
       </div>` : ""}

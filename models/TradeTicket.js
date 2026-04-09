@@ -8,13 +8,15 @@ const tradeTicketSchema = new mongoose.Schema(
     scanId: { type: String },
     source: { type: String, enum: ["TRADE_PAGE"], default: "TRADE_PAGE" },
 
-    // Market identity
+    // Market identity — canonical fields for strict monitoring
     marketId: { type: String, required: true },
+    conditionId: { type: String, default: null },   // 0x… hex — canonical for Gamma lookup
+    marketSlug: { type: String, default: null },     // URL/display slug
     eventSlug: { type: String },
     eventTitle: { type: String },
     groupItemTitle: { type: String },
     marketUrl: { type: String },
-    question: { type: String, required: true },
+    question: { type: String, required: true },      // display text only — NEVER used as identifier
 
     // Classification
     tradeability: { type: String, enum: ["EXECUTE", "WATCH"], required: true },
@@ -59,6 +61,7 @@ const tradeTicketSchema = new mongoose.Schema(
 
     // Auto-mode monitoring fields
     autoCloseEnabled: { type: Boolean, default: false },
+    autoCloseBlockedReason: { type: String, default: null }, // non-null → why auto-close was blocked
     lastPriceCheckAt: { type: Date, default: null },
     lastObservedPrice: { type: Number, default: null },
     autoCloseIntentAt: { type: Date, default: null },
@@ -69,6 +72,7 @@ const tradeTicketSchema = new mongoose.Schema(
 
 tradeTicketSchema.index({ createdAt: -1 });
 tradeTicketSchema.index({ marketId: 1 });
+tradeTicketSchema.index({ conditionId: 1 });
 tradeTicketSchema.index({ status: 1 });
 // Snapshot-level deduplication: same card snapshot cannot be saved twice
 tradeTicketSchema.index({ dedupeKey: 1 }, { unique: true, sparse: true });

@@ -1295,6 +1295,74 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// matchMarketFromArray (auto_monitor) — strict fail-closed
+// ---------------------------------------------------------------------------
+{
+  console.log("\nmatchMarketFromArray (strict fail-closed)");
+  const { matchMarketFromArray } = require("../src/auto_monitor");
+
+  // Empty / null / undefined array → null
+  assert(matchMarketFromArray([], { conditionId: "0xabc" }) === null,
+    "empty array returns null");
+  assert(matchMarketFromArray(null, { conditionId: "0xabc" }) === null,
+    "null array returns null");
+  assert(matchMarketFromArray(undefined, { conditionId: "0xabc" }) === null,
+    "undefined array returns null");
+
+  // Single-element array → matches only if conditionId matches (no auto-return)
+  const single = [{ conditionId: "0xabc", bestBid: "0.55" }];
+  assert(matchMarketFromArray(single, { conditionId: "0xabc" }) === single[0],
+    "single element matched by conditionId");
+  assert(matchMarketFromArray(single, { conditionId: "0xZZZ" }) === null,
+    "single element NOT returned when conditionId doesn't match (fail-closed)");
+
+  // Multi-element: match by conditionId (uses ticket.conditionId field)
+  const mktA = { conditionId: "0xAAA", question: "Q-A", bestBid: "0.40" };
+  const mktB = { conditionId: "0xBBB", question: "Q-B", bestBid: "0.70" };
+  const multi = [mktA, mktB];
+
+  assert(matchMarketFromArray(multi, { conditionId: "0xBBB" }) === mktB,
+    "conditionId match picks correct market (second)");
+  assert(matchMarketFromArray(multi, { conditionId: "0xAAA" }) === mktA,
+    "conditionId match picks correct market (first)");
+
+  // Case-insensitive conditionId matching
+  assert(matchMarketFromArray(multi, { conditionId: "0xbbb" }) === mktB,
+    "conditionId match is case-insensitive");
+
+  // Fail-closed: conditionId not found → returns null (NO question fallback)
+  const mktC = { conditionId: "0xCCC", question: "Will it rain tomorrow?" };
+  const mktD = { conditionId: "0xDDD", question: "Will BTC hit 100k?" };
+  const arr2 = [mktC, mktD];
+  assert(matchMarketFromArray(arr2, { conditionId: "0xZZZ", question: "Will BTC hit 100k?" }) === null,
+    "no question fallback — returns null when conditionId mismatches (fail-closed)");
+
+  // Fail-closed: no match → returns null (NO arr[0] fallback)
+  assert(matchMarketFromArray(arr2, { conditionId: "0xZZZ", question: "No match" }) === null,
+    "no arr[0] fallback — returns null (fail-closed)");
+
+  // Fail-closed: empty ticket → returns null (NO arr[0] fallback)
+  assert(matchMarketFromArray(arr2, {}) === null,
+    "empty ticket returns null (fail-closed)");
+
+  // marketId-only ticket returns null (no fallback to legacy marketId)
+  assert(matchMarketFromArray(multi, { marketId: "0xBBB" }) === null,
+    "marketId-only ticket returns null (no marketId fallback, fail-closed)");
+
+  // condition_id field variant (some API responses use snake_case)
+  const mktE = { condition_id: "0xEEE", question: "Snake case?" };
+  const mktF = { condition_id: "0xFFF", question: "Other" };
+  assert(matchMarketFromArray([mktE, mktF], { conditionId: "0xFFF" }) === mktF,
+    "condition_id (snake_case) variant matched");
+  assert(matchMarketFromArray([mktE, mktF], { conditionId: "0xfff" }) === mktF,
+    "condition_id (snake_case) case-insensitive match");
+
+  // No conditionId on ticket AND no marketId → null (fail-closed)
+  assert(matchMarketFromArray([mktA, mktB], { question: "Q-A" }) === null,
+    "question-only ticket returns null (fail-closed, no question matching)");
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);
