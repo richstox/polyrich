@@ -353,7 +353,19 @@ async function autoSaveExecuteTickets(scanId) {
     const qText = safeQuestion(item);
     const link = polymarketUrl(item);
     const actionEnum = dir.action === "BUY YES" ? "BUY_YES" : dir.action === "BUY NO" ? "BUY_NO" : "WATCH";
-    const marketId = item.conditionId || item.marketSlug || item.question;
+    const rawConditionId = (item.conditionId || "").trim() || null;
+    const rawMarketSlug = (item.marketSlug || "").trim() || null;
+    // marketId stays as primary required field (prefer conditionId, fall back to slug)
+    const marketId = rawConditionId || rawMarketSlug || item.question;
+
+    // Strict identity gate: block auto-close if no valid conditionId
+    const hasCanonicalId = rawConditionId && rawConditionId.startsWith("0x");
+    let effectiveAutoClose = defaultAutoClose;
+    let autoCloseBlockedReason = null;
+    if (!hasCanonicalId) {
+      effectiveAutoClose = false;
+      autoCloseBlockedReason = "no_conditionId";
+    }
 
     const pnlTpPct = (tpNum - entryNum) / entryNum * 100;
     const pnlStopPct = (stopNum - entryNum) / entryNum * 100;
@@ -364,6 +376,8 @@ async function autoSaveExecuteTickets(scanId) {
       scanId,
       source: "TRADE_PAGE",
       marketId,
+      conditionId: rawConditionId,
+      marketSlug: rawMarketSlug,
       eventSlug: item.eventSlug || null,
       eventTitle: item.eventTitle || null,
       groupItemTitle: item.groupItemTitle || null,
@@ -387,7 +401,8 @@ async function autoSaveExecuteTickets(scanId) {
       pnlExitUsd: Math.round(pnlStopUsd * 100) / 100,
       pnlExitPct: Math.round(pnlStopPct * 10) / 1000,
       endDate: item.endDate || null,
-      autoCloseEnabled: defaultAutoClose,
+      autoCloseEnabled: effectiveAutoClose,
+      autoCloseBlockedReason,
     };
 
     // Cross-scan dedupe key (excludes scanId)
@@ -1276,6 +1291,17 @@ if (url.pathname === "/trade") {
             "pnlTpUsd", "pnlTpPct", "pnlExitUsd", "pnlExitPct",
           ];
           for (const f of numericPlanFields) data[f] = null;
+        }
+        // Persist canonical identity fields from the payload
+        if (data.conditionId) data.conditionId = String(data.conditionId).trim() || null;
+        if (data.marketSlug) data.marketSlug = String(data.marketSlug).trim() || null;
+        // Strict auto-close gate: require valid conditionId for monitoring
+        if (data.autoCloseEnabled) {
+          const cid = data.conditionId || "";
+          if (!cid || !cid.startsWith("0x")) {
+            data.autoCloseEnabled = false;
+            data.autoCloseBlockedReason = "no_conditionId";
+          }
         }
         // Snapshot-level idempotency via dedupeKey
         const dedupeKey = computeDedupeKey(data);
