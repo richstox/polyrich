@@ -2868,16 +2868,18 @@ function renderTicketsPage(tickets, highlightId) {
     }
 
     // Editable TP + Exit (risk) for open tickets
+    const tpCurrentEsc = escHtml(typeof t.takeProfit === "number" ? String(t.takeProfit) : "");
+    const slCurrentEsc = escHtml(typeof t.riskExitLimit === "number" ? String(t.riskExitLimit) : "");
     const tpEditHtml = showClose
       ? `<div>
-           <span class="tk-price-label">TP <span class="tk-edit-icon" data-field="takeProfit" data-ticket-id="${escHtml(String(t._id))}" data-current="${typeof t.takeProfit === "number" ? t.takeProfit : ""}" title="Edit TP">\u270E</span></span>
+           <span class="tk-price-label">TP <span class="tk-edit-icon" data-field="takeProfit" data-ticket-id="${escHtml(String(t._id))}" data-current="${tpCurrentEsc}" title="Edit TP">\u270E</span></span>
            <div class="tk-price-val tk-editable-val" data-field="takeProfit" data-ticket-id="${escHtml(String(t._id))}">${tp}</div>
          </div>`
       : `<div><span class="tk-price-label">TP</span><div class="tk-price-val">${tp}</div></div>`;
 
     const slEditHtml = showClose
       ? `<div>
-           <span class="tk-price-label">Exit (risk) <span class="tk-edit-icon" data-field="riskExitLimit" data-ticket-id="${escHtml(String(t._id))}" data-current="${typeof t.riskExitLimit === "number" ? t.riskExitLimit : ""}" title="Edit Exit (risk)">\u270E</span></span>
+           <span class="tk-price-label">Exit (risk) <span class="tk-edit-icon" data-field="riskExitLimit" data-ticket-id="${escHtml(String(t._id))}" data-current="${slCurrentEsc}" title="Edit Exit (risk)">\u270E</span></span>
            <div class="tk-price-val tk-editable-val" data-field="riskExitLimit" data-ticket-id="${escHtml(String(t._id))}">${sl}</div>
          </div>`
       : `<div><span class="tk-price-label">Exit (risk)</span><div class="tk-price-val">${sl}</div></div>`;
@@ -2886,13 +2888,14 @@ function renderTicketsPage(tickets, highlightId) {
     let closedFooterHtml = "";
     if (!showClose) {
       const cpLabel = typeof t.closePrice === "number" ? "$" + t.closePrice.toFixed(2) : "\u2014";
+      const cpCurrentEsc = escHtml(typeof t.closePrice === "number" ? String(t.closePrice) : "");
       const pctLabel = typeof t.realizedPnlPct === "number"
         ? `<span class="tk-pnl-pct ${pnlCls(t.realizedPnlPct)}">${t.realizedPnlPct >= 0 ? "+" : ""}${(t.realizedPnlPct * 100).toFixed(1)}%</span>`
         : "";
       closedFooterHtml = `
         <div class="tk-closed-footer">
           <span class="tk-closed-price-display" data-ticket-id="${escHtml(String(t._id))}">Closed: ${cpLabel}</span>
-          <span class="tk-edit-icon" data-field="closePrice" data-ticket-id="${escHtml(String(t._id))}" data-current="${typeof t.closePrice === "number" ? t.closePrice : ""}" title="Edit close price">\u270E</span>
+          <span class="tk-edit-icon" data-field="closePrice" data-ticket-id="${escHtml(String(t._id))}" data-current="${cpCurrentEsc}" title="Edit close price">\u270E</span>
           ${pctLabel}
         </div>
       `;
@@ -2992,6 +2995,8 @@ function renderTicketsPage(tickets, highlightId) {
         var icon = e.target.closest(".tk-edit-icon");
         if (!icon) return;
         var field = icon.getAttribute("data-field");
+        // Whitelist allowed fields to prevent selector injection
+        if (field !== "takeProfit" && field !== "riskExitLimit" && field !== "closePrice") return;
         var ticketId = icon.getAttribute("data-ticket-id");
         var current = icon.getAttribute("data-current") || "";
         // For closePrice, the editable container is the closed-footer
@@ -3005,7 +3010,7 @@ function renderTicketsPage(tickets, highlightId) {
 
         var origHtml = valEl.innerHTML;
         var editHtml = '<span class="tk-inline-edit">' +
-          '<input type="number" step="0.01" min="0" max="1" inputmode="decimal" value="' + current + '" class="tk-inline-input">' +
+          '<input type="number" step="0.01" min="0" inputmode="decimal" value="' + current + '" class="tk-inline-input">' +
           '<button class="tk-inline-save">Save</button>' +
           '<button class="tk-inline-cancel">\u2716</button>' +
           '</span>';
