@@ -221,7 +221,7 @@ async function getCurrentCloseablePrice(ticket) {
 
     const raw = await res.json();
     // Query-param endpoint returns an array; path endpoint returns an object.
-    const data = Array.isArray(raw) ? raw[0] : raw;
+    const data = Array.isArray(raw) ? (raw.length > 0 ? raw[0] : null) : raw;
     if (!data) return null;
 
     const bestBid = parseFloat(data.bestBid);
