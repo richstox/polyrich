@@ -36,6 +36,7 @@ const {
   renderExplorePage,
   renderSystemPage,
   renderTicketsPage,
+  renderTicketDetailPage,
   renderWatchlistPage,
   pageShell,
   inferDirection,
@@ -661,6 +662,7 @@ if (url.pathname === "/trade") {
     let recentCloseAttempts = [];
     let systemSettings = { autoModeEnabled: false, paperCloseEnabled: false };
     let autoSavedToday = 0;
+    let ticketCloseStats = { total: 0, auto: 0, manual: 0, other: 0 };
     try {
       const todayStart = new Date();
       todayStart.setUTCHours(0, 0, 0, 0);
@@ -672,6 +674,13 @@ if (url.pathname === "/trade") {
         SystemSetting.getSettings(),
         AutoSaveLog.countDocuments({ result: "CREATED", createdAt: { $gte: todayStart } }),
       ]);
+      // Fetch ticket close breakdown
+      const [totalClosed, autoClosed, manualClosed] = await Promise.all([
+        TradeTicket.countDocuments({ status: "CLOSED" }),
+        TradeTicket.countDocuments({ status: "CLOSED", closeReason: { $in: ["TP_HIT", "EXIT_HIT"] } }),
+        TradeTicket.countDocuments({ status: "CLOSED", closeReason: "MANUAL" }),
+      ]);
+      ticketCloseStats = { total: totalClosed, auto: autoClosed, manual: manualClosed, other: totalClosed - autoClosed - manualClosed };
     } catch (_) {}
 
     const last3Scans = (recentScans || []).map((s) => ({
@@ -712,7 +721,7 @@ if (url.pathname === "/trade") {
       paperCloseEnv: config.AUTO_MODE_PAPER_CLOSE,
     };
 
-    const body = renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday);
+    const body = renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday, ticketCloseStats);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(pageShell("System", "/system", body));
     return;
@@ -1387,6 +1396,40 @@ if (url.pathname === "/trade") {
     } catch (err) {
       res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
       res.end(`tickets error: ${err.message}`);
+      return;
+    }
+  }
+
+  // ── /tickets/:id — Ticket Detail ──────────────────────────────────────
+  const ticketDetailMatch = url.pathname.match(/^\/tickets\/([a-f0-9]{24})$/);
+  if (ticketDetailMatch) {
+    try {
+      const ticketId = ticketDetailMatch[1];
+      if (!mongoose.Types.ObjectId.isValid(ticketId)) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Invalid ticket ID");
+        return;
+      }
+      const ticket = await TradeTicket.findById(ticketId).lean();
+      if (!ticket) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Ticket not found");
+        return;
+      }
+      // Find prev/next tickets (by createdAt, same sorting as /tickets)
+      const [prevTicket, nextTicket] = await Promise.all([
+        TradeTicket.findOne({ tradeability: { $ne: "WATCH" }, createdAt: { $gt: ticket.createdAt } }).sort({ createdAt: 1 }).select("_id").lean(),
+        TradeTicket.findOne({ tradeability: { $ne: "WATCH" }, createdAt: { $lt: ticket.createdAt } }).sort({ createdAt: -1 }).select("_id").lean(),
+      ]);
+      const prevId = prevTicket ? prevTicket._id : null;
+      const nextId = nextTicket ? nextTicket._id : null;
+      const body = renderTicketDetailPage(ticket, prevId, nextId);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(pageShell("Ticket Detail", "/tickets", body));
+      return;
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(`ticket detail error: ${err.message}`);
       return;
     }
   }

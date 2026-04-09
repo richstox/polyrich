@@ -2366,12 +2366,13 @@ function renderExplorePage(data) {
 }
 
 /** Render the /system page body. */
-function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday) {
+function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday, ticketCloseStats) {
   autoModeStatus = autoModeStatus || {};
   recentCloseAttempts = recentCloseAttempts || [];
   systemSettings = systemSettings || { autoModeEnabled: false, paperCloseEnabled: false };
   envKillSwitches = envKillSwitches || { autoModeEnv: false, paperCloseEnv: false };
   autoSavedToday = autoSavedToday || 0;
+  ticketCloseStats = ticketCloseStats || { total: 0, auto: 0, manual: 0, other: 0 };
 
   const envAutoAllows = envKillSwitches.autoModeEnv;
   const envPaperAllows = envKillSwitches.paperCloseEnv;
@@ -2479,9 +2480,11 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
       : a.result === "PAPER_CLOSED" ? "color:#eab308"
       : a.result === "FAILED" ? "color:#ef4444"
       : "color:#6b7280";
+    const ticketIdStr = String(a.ticketId);
+    const ticketIdShort = ticketIdStr.slice(-6);
     return `<tr>
       <td style="padding:4px 8px;font-size:0.8rem;">${utcSpan(a.createdAt)}</td>
-      <td style="padding:4px 8px;font-size:0.8rem;">${escHtml(String(a.ticketId).slice(-6))}</td>
+      <td style="padding:4px 8px;font-size:0.8rem;"><a href="/tickets/${escHtml(ticketIdStr)}" style="color:#60a5fa;text-decoration:none;" title="View ticket detail">${escHtml(ticketIdShort)}</a></td>
       <td style="padding:4px 8px;font-size:0.8rem;">${escHtml(a.reason || "—")}</td>
       <td style="padding:4px 8px;font-size:0.8rem;">${typeof a.observedPrice === "number" ? a.observedPrice.toFixed(4) : "—"}</td>
       <td style="padding:4px 8px;font-size:0.8rem;${resultCls};font-weight:600;">${escHtml(a.result || "—")}</td>
@@ -2505,23 +2508,31 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
       </div>
       <hr style="border-color:#1e293b;margin:12px 0;">
       <div class="grid-2" style="gap:8px 24px;">
-        <div><span class="label">OPEN monitored</span> <strong>${autoModeStatus.openMonitored || 0}</strong></div>
-        <div><span class="label">Intents today</span> <strong>${autoModeStatus.intentsToday || 0}</strong></div>
-        <div><span class="label">Closes today</span> <strong>${autoModeStatus.closesToday || 0}</strong></div>
-        <div><span class="label">Failures today</span> <strong style="color:${(autoModeStatus.failuresToday || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.failuresToday || 0}</strong></div>
+        <div title="Number of OPEN tickets with autoClose enabled — the monitor checks these every tick"><span class="label">OPEN monitored</span> <strong>${autoModeStatus.openMonitored || 0}</strong></div>
+        <div title="Number of close intents recorded today (trigger confirmed, close queued)"><span class="label">Intents today</span> <strong>${autoModeStatus.intentsToday || 0}</strong></div>
+        <div title="Number of tickets successfully closed (paper or on-chain) today"><span class="label">Closes today</span> <strong>${autoModeStatus.closesToday || 0}</strong></div>
+        <div title="Number of close attempts that failed today (API error, network issue)"><span class="label">Failures today</span> <strong style="color:${(autoModeStatus.failuresToday || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.failuresToday || 0}</strong></div>
+      </div>
+      <hr style="border-color:#1e293b;margin:12px 0;">
+      <div style="font-size:0.82rem;color:#94a3b8;margin-bottom:6px;font-weight:600;">📊 Ticket Close Breakdown (all time)</div>
+      <div class="grid-2" style="gap:6px 24px;">
+        <div title="Total number of closed tickets across all time"><span class="label">Total closed</span> <strong>${ticketCloseStats.total}</strong></div>
+        <div title="Tickets closed automatically by the monitor (TP_HIT or EXIT_HIT triggers)"><span class="label">\u{1F916} Auto-closed</span> <strong style="color:#22c55e;">${ticketCloseStats.auto}</strong></div>
+        <div title="Tickets closed manually by the user via the Close button"><span class="label">\u{1F590} Manual</span> <strong>${ticketCloseStats.manual}</strong></div>${ticketCloseStats.other > 0 ? `
+        <div title="Tickets closed with other/unknown reason"><span class="label">Other</span> <strong>${ticketCloseStats.other}</strong></div>` : ""}
       </div>
       <hr style="border-color:#1e293b;margin:12px 0;">
       <div style="font-size:0.82rem;color:#94a3b8;margin-bottom:6px;font-weight:600;">🔬 Last Tick Diagnostics</div>
       <div class="grid-2" style="gap:6px 24px;">
-        <div><span class="label">Batch size</span> <strong>${autoModeStatus.lastTickBatchSize || 0}</strong></div>
-        <div><span class="label">Price OK</span> <strong style="color:#22c55e;">${autoModeStatus.lastTickPriceOk || 0}</strong></div>
-        <div><span class="label">Price NULL</span> <strong style="color:${(autoModeStatus.lastTickPriceNull || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickPriceNull || 0}</strong></div>
-        <div><span class="label">Price error</span> <strong style="color:${(autoModeStatus.lastTickPriceError || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickPriceError || 0}</strong></div>
-        <div><span class="label">Cooldown skip</span> <strong>${autoModeStatus.lastTickCooldownSkip || 0}</strong></div>
-        <div><span class="label">Trigger HIT</span> <strong style="color:${(autoModeStatus.lastTickTriggerHit || 0) > 0 ? "#22c55e" : "inherit"};">${autoModeStatus.lastTickTriggerHit || 0}</strong></div>
-        <div><span class="label">Trigger miss</span> <strong>${autoModeStatus.lastTickTriggerMiss || 0}</strong></div>
-        <div><span class="label">Debounce hold</span> <strong style="color:${(autoModeStatus.lastTickDebounceHold || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickDebounceHold || 0}</strong></div>
-        <div><span class="label">Close attempt</span> <strong style="color:${(autoModeStatus.lastTickCloseAttempt || 0) > 0 ? "#22c55e" : "inherit"};">${autoModeStatus.lastTickCloseAttempt || 0}</strong></div>
+        <div title="Number of open tickets with autoClose enabled that were checked in this tick"><span class="label">Batch size</span> <strong>${autoModeStatus.lastTickBatchSize || 0}</strong></div>
+        <div title="Tickets where the current market price was successfully fetched from the API"><span class="label">Price OK</span> <strong style="color:#22c55e;">${autoModeStatus.lastTickPriceOk || 0}</strong></div>
+        <div title="Tickets where the price API returned no data (market may be inactive or delisted)"><span class="label">Price NULL</span> <strong style="color:${(autoModeStatus.lastTickPriceNull || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickPriceNull || 0}</strong></div>
+        <div title="Tickets where the price API call failed (HTTP 429/5xx — triggers backoff)"><span class="label">Price error</span> <strong style="color:${(autoModeStatus.lastTickPriceError || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickPriceError || 0}</strong></div>
+        <div title="Tickets skipped because they are in cooldown after a failed close attempt"><span class="label">Cooldown skip</span> <strong>${autoModeStatus.lastTickCooldownSkip || 0}</strong></div>
+        <div title="Tickets where price reached Take Profit or Exit (risk) level — trigger condition met"><span class="label">Trigger HIT</span> <strong style="color:${(autoModeStatus.lastTickTriggerHit || 0) > 0 ? "#22c55e" : "inherit"};">${autoModeStatus.lastTickTriggerHit || 0}</strong></div>
+        <div title="Tickets where price was fetched OK but has NOT reached TP or Exit level yet — no action needed, still monitoring"><span class="label">Trigger miss</span> <strong>${autoModeStatus.lastTickTriggerMiss || 0}</strong></div>
+        <div title="Trigger condition met but held by debounce — requires 2 consecutive checks or 15+ seconds to confirm (prevents false triggers from price noise)"><span class="label">Debounce hold</span> <strong style="color:${(autoModeStatus.lastTickDebounceHold || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickDebounceHold || 0}</strong></div>
+        <div title="Actual auto-close attempts made after debounce confirmed the trigger"><span class="label">Close attempt</span> <strong style="color:${(autoModeStatus.lastTickCloseAttempt || 0) > 0 ? "#22c55e" : "inherit"};">${autoModeStatus.lastTickCloseAttempt || 0}</strong></div>
       </div>${autoModeStatus.lastTickNullPriceSample ? `
       <div style="margin-top:8px;font-size:0.78rem;color:#94a3b8;background:#1e293b;padding:6px 10px;border-radius:6px;">
         <span style="color:#f59e0b;">⚠ Null-price sample:</span>
@@ -2539,12 +2550,12 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
             <table style="width:100%;border-collapse:collapse;">
               <thead>
                 <tr style="border-bottom:1px solid #1e293b;">
-                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Time</th>
-                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Ticket</th>
-                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Reason</th>
-                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Price</th>
-                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Result</th>
-                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;">Error</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="When the close attempt was made">Time</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Last 6 chars of ticket ID — click to view detail">Ticket</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Why the close was triggered: TP_HIT = take profit reached, EXIT_HIT = stop loss reached">Reason</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Market price at the time of the close attempt">Price</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="PAPER_CLOSED = simulated close, INTENT_RECORDED = real close queued, FAILED = close failed">Result</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Error message if the close attempt failed">Error</th>
                 </tr>
               </thead>
               <tbody>${attemptRows}</tbody>
@@ -2687,6 +2698,9 @@ function renderTicketsPage(tickets, highlightId) {
   const closedTickets = tickets.filter((t) => t.status === "CLOSED");
   const openCount = openTickets.length;
   const closedCount = closedTickets.length;
+  const autoClosedCount = closedTickets.filter((t) => t.closeReason === "TP_HIT" || t.closeReason === "EXIT_HIT").length;
+  const manualClosedCount = closedTickets.filter((t) => t.closeReason === "MANUAL").length;
+  const otherClosedCount = closedCount - autoClosedCount - manualClosedCount;
   const closedWithPnl = closedTickets.filter((t) => typeof t.realizedPnlUsd === "number");
   const realizedPnlSumUsd = closedWithPnl.reduce((s, t) => s + t.realizedPnlUsd, 0);
   const wins = closedWithPnl.filter((t) => t.realizedPnlUsd > 0).length;
@@ -2787,6 +2801,7 @@ function renderTicketsPage(tickets, highlightId) {
         <div class="tk-summary-item">
           <div class="tk-summary-label"><span>\u{2705}</span> Closed</div>
           <div class="tk-summary-value">${closedCount}</div>
+          <div class="tk-summary-sub" style="font-size:0.72rem;color:#94a3b8;margin-top:2px;" title="TP_HIT + EXIT_HIT = auto-closed by monitor; MANUAL = closed by user">\u{1F916} auto ${autoClosedCount} · \u{1F590} manual ${manualClosedCount}${otherClosedCount > 0 ? ` · other ${otherClosedCount}` : ""}</div>
         </div>
         <div class="tk-summary-item">
           <div class="tk-summary-label"><span>\u{1F4C8}</span> Realized PnL</div>
@@ -2939,6 +2954,9 @@ function renderTicketsPage(tickets, highlightId) {
         ${closeHtml}
         ${autoCloseToggleHtml}
         ${closedFooterHtml}
+        <div style="margin-top:8px;text-align:right;">
+          <a href="/tickets/${escHtml(String(t._id))}" style="color:#60a5fa;font-size:0.78rem;text-decoration:none;" title="View full ticket detail">\u{1F50D} Detail</a>
+        </div>
       </div>
     `;
   }
@@ -3234,6 +3252,239 @@ function renderTicketsPage(tickets, highlightId) {
   `;
 }
 
+// ---------------------------------------------------------------------------
+// Ticket Detail Page
+// ---------------------------------------------------------------------------
+function renderTicketDetailPage(ticket, prevId, nextId) {
+  const t = ticket;
+  const isExec = t.tradeability === "EXECUTE";
+  const isClosed = t.status === "CLOSED";
+
+  function pnlCls(val) {
+    if (typeof val !== "number") return "";
+    return val > 0 ? "pnl-pos" : val < 0 ? "pnl-neg" : "";
+  }
+
+  const extIcon = '<svg style="width:12px;height:12px;vertical-align:middle;margin-left:3px;" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3"/><path d="M9 1h6v6"/><path d="M15 1L7 9"/></svg>';
+
+  // Navigation
+  const prevLink = prevId
+    ? `<a href="/tickets/${escHtml(String(prevId))}" style="color:#60a5fa;text-decoration:none;font-size:0.85rem;" title="Previous ticket">\u{2190} Prev</a>`
+    : '<span style="color:#374151;font-size:0.85rem;">\u{2190} Prev</span>';
+  const nextLink = nextId
+    ? `<a href="/tickets/${escHtml(String(nextId))}" style="color:#60a5fa;text-decoration:none;font-size:0.85rem;" title="Next ticket">Next \u{2192}</a>`
+    : '<span style="color:#374151;font-size:0.85rem;">Next \u{2192}</span>';
+
+  // Headline
+  const { headline, subtext } = cardHeadline(t);
+  const polyUrl = t.marketUrl || (t.eventSlug
+    ? `https://polymarket.com/event/${encodeURIComponent(t.eventSlug)}`
+    : null);
+  const headlineHtml = polyUrl
+    ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="color:#e2e8f0;text-decoration:none;font-size:1.1rem;font-weight:700;">${escHtml(headline)} ${extIcon}</a>`
+    : `<span style="color:#e2e8f0;font-size:1.1rem;font-weight:700;">${escHtml(headline)}</span>`;
+  const subtextHtml = subtext ? `<div style="font-size:0.82rem;color:#64748b;margin-top:2px;">${escHtml(subtext)}</div>` : "";
+
+  // Action display
+  const actionLabel = (t.action || "\u2014").replace(/_/g, " ");
+  const ticketOutcome = (t.groupItemTitle || "").trim();
+  const { displayLabel, displayAction } = formatOutcomeAction(ticketOutcome, actionLabel, t.outcomes);
+  const actionDisplay = displayLabel ? displayLabel + " " + displayAction : displayAction;
+  const pillIcon = isExec ? "\u26A1" : "\uD83D\uDC41";
+  const pillCls = isExec ? "background:#166534;color:#bbf7d0;" : "background:#374151;color:#94a3b8;";
+  const entryAtPrice = typeof t.entryLimit === "number" ? ` @ $${t.entryLimit.toFixed(2)}` : "";
+
+  // Status badge
+  const statusColors = { OPEN: "#166534", CLOSING: "#854d0e", CLOSED: "#374151", ERROR: "#7f1d1d" };
+  const statusBg = statusColors[t.status] || "#374151";
+
+  // Close reason badge
+  const closeReasonLabels = { TP_HIT: "\u{1F916} TP Hit (auto)", EXIT_HIT: "\u{1F916} Exit Hit (auto)", MANUAL: "\u{1F590} Manual", ERROR: "\u{26A0} Error" };
+  const closeReasonHtml = t.closeReason
+    ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#1e293b;color:#94a3b8;font-size:0.78rem;font-weight:600;">${closeReasonLabels[t.closeReason] || escHtml(t.closeReason)}</span>`
+    : "";
+
+  // PnL
+  let pnlHtml = "";
+  if (typeof t.realizedPnlUsd === "number") {
+    const sign = t.realizedPnlUsd >= 0 ? "+" : "";
+    const cls = pnlCls(t.realizedPnlUsd);
+    const pctStr = typeof t.realizedPnlPct === "number" ? ` (${t.realizedPnlPct >= 0 ? "+" : ""}${(t.realizedPnlPct * 100).toFixed(1)}%)` : "";
+    pnlHtml = `<div class="td-row"><span class="td-label">Realized PnL</span><span class="td-val ${cls}" style="font-weight:700;">${sign}$${t.realizedPnlUsd.toFixed(2)}${pctStr}</span></div>`;
+  }
+
+  // Reason codes / signal tags
+  const reasonTagColors = { momentum: "#2563eb", breakout: "#7c3aed", mispricing: "#dc2626", reversal: "#d97706", novel: "#0891b2", "near-expiry": "#c2410c", filtered: "#6b7280" };
+  const reasonTagsHtml = (t.reasonCodes || []).length > 0
+    ? (t.reasonCodes || []).map((r) => {
+        const bg = reasonTagColors[r] || "#6b7280";
+        return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;background:${bg};color:#fff;font-size:0.75rem;font-weight:600;margin-right:4px;margin-bottom:4px;">${escHtml(r)}</span>`;
+      }).join("")
+    : '<span style="color:#6b7280;font-size:0.82rem;">—</span>';
+
+  // Time remaining
+  const ticketEndDate = t.endDate || "";
+  const ticketHoursLeft = ticketEndDate ? ((new Date(ticketEndDate).getTime() - Date.now()) / (1000 * 60 * 60)) : null;
+  const timeLeftLabel = ticketHoursLeft !== null && Number.isFinite(ticketHoursLeft)
+    ? (ticketHoursLeft <= 0 ? "ended" : formatHoursLeft(ticketHoursLeft) + " left")
+    : "\u2014";
+
+  // Optional fields
+  const fmtPrice = (v) => typeof v === "number" ? "$" + v.toFixed(2) : "\u2014";
+  const fmtPct = (v) => typeof v === "number" ? (v * 100).toFixed(1) + "%" : "\u2014";
+  const fmtUsd = (v) => typeof v === "number" ? "$" + v.toFixed(2) : "\u2014";
+
+  // Auto-close fields
+  let autoCloseHtml = "";
+  if (isExec) {
+    const acEnabled = t.autoCloseEnabled ? "ON" : "OFF";
+    const acBg = t.autoCloseEnabled ? "#166534" : "#374151";
+    const acColor = t.autoCloseEnabled ? "#bbf7d0" : "#9ca3af";
+    const lastPrice = typeof t.lastObservedPrice === "number" ? "$" + t.lastObservedPrice.toFixed(4) : "\u2014";
+    const lastCheck = t.lastPriceCheckAt ? utcSpan(t.lastPriceCheckAt) : "\u2014";
+    const intentAt = t.autoCloseIntentAt ? utcSpan(t.autoCloseIntentAt) : "\u2014";
+    const intentReason = t.autoCloseIntentReason || "\u2014";
+    autoCloseHtml = `
+      <div class="td-section">
+        <div class="td-section-title">\u{1F916} Auto-Close</div>
+        <div class="td-row"><span class="td-label">Auto-close</span><span style="display:inline-block;padding:1px 6px;border-radius:4px;background:${acBg};color:${acColor};font-size:0.75rem;font-weight:600;">${acEnabled}</span></div>
+        <div class="td-row"><span class="td-label">Last observed price</span><span class="td-val">${lastPrice}</span></div>
+        <div class="td-row"><span class="td-label">Last price check</span><span class="td-val">${lastCheck}</span></div>
+        <div class="td-row"><span class="td-label">Intent at</span><span class="td-val">${intentAt}</span></div>
+        <div class="td-row"><span class="td-label">Intent reason</span><span class="td-val">${escHtml(intentReason)}</span></div>
+      </div>`;
+  }
+
+  return `
+    <div class="td-page">
+      <div class="td-nav-row">
+        ${prevLink}
+        <a href="/tickets" style="color:#60a5fa;text-decoration:none;font-size:0.85rem;">\u{2190} Back to Tickets</a>
+        ${nextLink}
+      </div>
+
+      <div class="td-card">
+        <div class="td-header">
+          ${headlineHtml}
+          ${subtextHtml}
+        </div>
+
+        <div style="margin:10px 0;">
+          <span style="display:inline-block;padding:3px 10px;border-radius:6px;${pillCls}font-size:0.82rem;font-weight:700;">${pillIcon} ${escHtml(actionDisplay)}${entryAtPrice}</span>
+          <span style="display:inline-block;padding:3px 10px;border-radius:6px;background:${statusBg};color:#fff;font-size:0.78rem;font-weight:600;margin-left:6px;">${escHtml(t.status)}</span>
+          ${t.isSimulated ? '<span style="display:inline-block;padding:3px 10px;border-radius:6px;background:#854d0e;color:#fef3c7;font-size:0.78rem;font-weight:600;margin-left:6px;">SIM</span>' : ""}
+          ${closeReasonHtml ? `<span style="margin-left:6px;">${closeReasonHtml}</span>` : ""}
+        </div>
+
+        <div class="td-section">
+          <div class="td-section-title">\u{1F4CA} Signal Tags</div>
+          <div style="margin-bottom:8px;">${reasonTagsHtml}</div>
+        </div>
+
+        ${t.whyNow ? `<div class="td-section">
+          <div class="td-section-title">\u{26A1} Why Now</div>
+          <div style="color:#e2e8f0;font-size:0.88rem;">${escHtml(t.whyNow)}</div>
+        </div>` : ""}
+
+        ${t.whyWatch ? `<div class="td-section">
+          <div class="td-section-title">\u{1F440} Why Watch</div>
+          <div style="color:#e2e8f0;font-size:0.88rem;">${escHtml(t.whyWatch)}</div>
+        </div>` : ""}
+
+        ${t.nextStep ? `<div class="td-section">
+          <div class="td-section-title">\u{27A1} Next Step</div>
+          <div style="color:#e2e8f0;font-size:0.88rem;">${escHtml(t.nextStep)}</div>
+        </div>` : ""}
+
+        <div class="td-section">
+          <div class="td-section-title">\u{1F4B0} Trade Plan</div>
+          <div class="td-grid">
+            <div class="td-row"><span class="td-label">Entry</span><span class="td-val">${fmtPrice(t.entryLimit)}</span></div>
+            <div class="td-row"><span class="td-label">Take Profit</span><span class="td-val">${fmtPrice(t.takeProfit)}</span></div>
+            <div class="td-row"><span class="td-label">Exit (risk)</span><span class="td-val">${fmtPrice(t.riskExitLimit)}</span></div>
+            <div class="td-row"><span class="td-label">Size (USD)</span><span class="td-val">${fmtUsd(t.maxSizeUsd)}</span></div>
+            <div class="td-row"><span class="td-label">Bankroll</span><span class="td-val">${fmtUsd(t.bankrollUsd)}</span></div>
+            <div class="td-row"><span class="td-label">Risk %</span><span class="td-val">${fmtPct(t.riskPct)}</span></div>
+            <div class="td-row"><span class="td-label">Max trade cap</span><span class="td-val">${fmtUsd(t.maxTradeCapUsd)}</span></div>
+            <div class="td-row"><span class="td-label">Min limit order</span><span class="td-val">${fmtUsd(t.minLimitOrderUsd)}</span></div>
+          </div>
+        </div>
+
+        <div class="td-section">
+          <div class="td-section-title">\u{1F4C8} Projected PnL</div>
+          <div class="td-grid">
+            <div class="td-row"><span class="td-label">PnL if TP hit</span><span class="td-val">${fmtUsd(t.pnlTpUsd)}${typeof t.pnlTpPct === "number" ? " (" + fmtPct(t.pnlTpPct) + ")" : ""}</span></div>
+            <div class="td-row"><span class="td-label">PnL if Exit hit</span><span class="td-val">${fmtUsd(t.pnlExitUsd)}${typeof t.pnlExitPct === "number" ? " (" + fmtPct(t.pnlExitPct) + ")" : ""}</span></div>
+          </div>
+        </div>
+
+        ${isClosed ? `<div class="td-section">
+          <div class="td-section-title">\u{2705} Close Result</div>
+          <div class="td-grid">
+            <div class="td-row"><span class="td-label">Close price</span><span class="td-val">${fmtPrice(t.closePrice)}</span></div>
+            <div class="td-row"><span class="td-label">Closed at</span><span class="td-val">${t.closedAt ? utcSpan(t.closedAt) : "\u2014"}</span></div>
+            ${pnlHtml}
+          </div>
+        </div>` : ""}
+
+        ${autoCloseHtml}
+
+        <div class="td-section">
+          <div class="td-section-title">\u{1F4CB} Metadata</div>
+          <div class="td-grid">
+            <div class="td-row"><span class="td-label">Ticket ID</span><span class="td-val" style="font-family:monospace;font-size:0.78rem;">${escHtml(String(t._id))}</span></div>
+            <div class="td-row"><span class="td-label">Market ID</span><span class="td-val" style="font-family:monospace;font-size:0.78rem;">${escHtml(t.marketId || "\u2014")}</span></div>
+            <div class="td-row"><span class="td-label">Scan ID</span><span class="td-val" style="font-family:monospace;font-size:0.78rem;">${escHtml(t.scanId || "\u2014")}</span></div>
+            <div class="td-row"><span class="td-label">Tradeability</span><span class="td-val">${escHtml(t.tradeability || "\u2014")}</span></div>
+            <div class="td-row"><span class="td-label">Created</span><span class="td-val">${utcSpan(t.createdAt)}</span></div>
+            <div class="td-row"><span class="td-label">Updated</span><span class="td-val">${utcSpan(t.updatedAt)}</span></div>
+            <div class="td-row"><span class="td-label">End date</span><span class="td-val">${t.endDate ? utcSpan(t.endDate) : "\u2014"}</span></div>
+            <div class="td-row"><span class="td-label">Time remaining</span><span class="td-val">${escHtml(timeLeftLabel)}</span></div>
+            ${t.notes ? `<div class="td-row"><span class="td-label">Notes</span><span class="td-val">${escHtml(t.notes)}</span></div>` : ""}
+          </div>
+        </div>
+      </div>
+
+      <div class="td-nav-row" style="margin-top:16px;">
+        ${prevLink}
+        <a href="/tickets" style="color:#60a5fa;text-decoration:none;font-size:0.85rem;">\u{2190} Back to Tickets</a>
+        ${nextLink}
+      </div>
+    </div>
+    <style>
+      .td-page { max-width:700px; margin:0 auto; padding:16px 8px; }
+      .td-nav-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; padding:0 4px; }
+      .td-card { background:#111827; border:1px solid #1e293b; border-radius:12px; padding:20px; }
+      .td-header { margin-bottom:12px; }
+      .td-section { margin-top:16px; padding-top:12px; border-top:1px solid #1e293b; }
+      .td-section-title { font-size:0.82rem; color:#94a3b8; font-weight:600; margin-bottom:8px; }
+      .td-grid { display:grid; grid-template-columns:1fr; gap:4px 0; }
+      .td-row { display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; font-size:0.85rem; }
+      .td-label { color:#94a3b8; min-width:140px; flex-shrink:0; }
+      .td-val { color:#e2e8f0; text-align:right; word-break:break-all; }
+      .pnl-pos { color:#22c55e; }
+      .pnl-neg { color:#ef4444; }
+      body { background:#0b1120; }
+    </style>
+    <script>
+    (function() {
+      document.addEventListener("keydown", function(e) {
+        if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+        if (e.key === "ArrowLeft" || e.key === "k") {
+          var prev = document.querySelector('.td-nav-row a[title="Previous ticket"]');
+          if (prev) prev.click();
+        }
+        if (e.key === "ArrowRight" || e.key === "j") {
+          var next = document.querySelector('.td-nav-row a[title="Next ticket"]');
+          if (next) next.click();
+        }
+      });
+      document.body.style.background = "#0b1120";
+    })();
+    </script>
+  `;
+}
+
 module.exports = {
   renderBreakdown,
   computeWhyPick,
@@ -3252,6 +3503,7 @@ module.exports = {
   renderExplorePage,
   renderSystemPage,
   renderTicketsPage,
+  renderTicketDetailPage,
   renderWatchlistPage,
   pageShell,
   inferDirection,
