@@ -908,6 +908,29 @@ function sharedStyles() {
   }
   .tk-close-btn:hover { background: #2563eb; }
   .tk-close-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  /* Inline edit icon */
+  .tk-edit-icon {
+    cursor: pointer; font-size: 0.72rem; color: var(--tk-muted);
+    margin-left: 4px; opacity: 0.6; transition: opacity .15s;
+  }
+  .tk-edit-icon:hover { opacity: 1; color: var(--tk-accent); }
+  .tk-inline-edit {
+    display: flex; align-items: center; gap: 4px; margin-top: 3px;
+  }
+  .tk-inline-edit input {
+    width: 70px; padding: 3px 6px; border-radius: 5px;
+    border: 1px solid var(--tk-border); background: #0f172a; color: var(--tk-text);
+    font-size: 0.82rem; font-family: var(--tk-mono);
+  }
+  .tk-inline-edit input:focus { outline: none; border-color: var(--tk-accent); }
+  .tk-inline-edit button {
+    padding: 3px 8px; border-radius: 5px; border: none;
+    font-size: 0.72rem; font-weight: 600; cursor: pointer;
+  }
+  .tk-inline-save { background: var(--tk-accent); color: #fff; }
+  .tk-inline-save:hover { background: #2563eb; }
+  .tk-inline-cancel { background: #374151; color: #9ca3af; }
+  .tk-inline-cancel:hover { background: #4b5563; }
   /* Closed footer */
   .tk-closed-footer {
     display: flex; justify-content: space-between; align-items: baseline;
@@ -2818,7 +2841,7 @@ function renderTicketsPage(tickets, highlightId) {
     const closeHtml = showClose ? `
       <div class="tk-close-form">
         <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="Close price" class="tk-close-input close-price-input" data-ticket-id="${escHtml(String(t._id))}" aria-label="Close price">
-        <p class="tk-close-helper">Enter close price (0\u20131 or 0\u2013100 cents). Example: 0.41 or 41.</p>
+        <p class="tk-close-helper">Enter close price (0\u20131). Example: 0.41</p>
         <button class="tk-close-btn close-ticket-btn" data-ticket-id="${escHtml(String(t._id))}">Close</button>
       </div>
     ` : "";
@@ -2844,7 +2867,22 @@ function renderTicketsPage(tickets, highlightId) {
       `;
     }
 
-    // Closed footer
+    // Editable TP + Exit (risk) for open tickets
+    const tpEditHtml = showClose
+      ? `<div>
+           <span class="tk-price-label">TP <span class="tk-edit-icon" data-field="takeProfit" data-ticket-id="${escHtml(String(t._id))}" data-current="${typeof t.takeProfit === "number" ? t.takeProfit : ""}" title="Edit TP">\u270E</span></span>
+           <div class="tk-price-val tk-editable-val" data-field="takeProfit" data-ticket-id="${escHtml(String(t._id))}">${tp}</div>
+         </div>`
+      : `<div><span class="tk-price-label">TP</span><div class="tk-price-val">${tp}</div></div>`;
+
+    const slEditHtml = showClose
+      ? `<div>
+           <span class="tk-price-label">Exit (risk) <span class="tk-edit-icon" data-field="riskExitLimit" data-ticket-id="${escHtml(String(t._id))}" data-current="${typeof t.riskExitLimit === "number" ? t.riskExitLimit : ""}" title="Edit Exit (risk)">\u270E</span></span>
+           <div class="tk-price-val tk-editable-val" data-field="riskExitLimit" data-ticket-id="${escHtml(String(t._id))}">${sl}</div>
+         </div>`
+      : `<div><span class="tk-price-label">Exit (risk)</span><div class="tk-price-val">${sl}</div></div>`;
+
+    // Editable close price for closed tickets
     let closedFooterHtml = "";
     if (!showClose) {
       const cpLabel = typeof t.closePrice === "number" ? "$" + t.closePrice.toFixed(2) : "\u2014";
@@ -2853,7 +2891,8 @@ function renderTicketsPage(tickets, highlightId) {
         : "";
       closedFooterHtml = `
         <div class="tk-closed-footer">
-          <span>Closed: ${cpLabel}</span>
+          <span class="tk-closed-price-display" data-ticket-id="${escHtml(String(t._id))}">Closed: ${cpLabel}</span>
+          <span class="tk-edit-icon" data-field="closePrice" data-ticket-id="${escHtml(String(t._id))}" data-current="${typeof t.closePrice === "number" ? t.closePrice : ""}" title="Edit close price">\u270E</span>
           ${pctLabel}
         </div>
       `;
@@ -2871,8 +2910,8 @@ function renderTicketsPage(tickets, highlightId) {
         </div>
         <div class="tk-price-grid">
           <div><span class="tk-price-label">Entry</span><div class="tk-price-val">${entry}</div></div>
-          <div><span class="tk-price-label">TP</span><div class="tk-price-val">${tp}</div></div>
-          <div><span class="tk-price-label">Exit (risk)</span><div class="tk-price-val">${sl}</div></div>
+          ${tpEditHtml}
+          ${slEditHtml}
           <div><span class="tk-price-label">Size (USD)</span><div class="tk-price-val">${size}</div></div>
         </div>
         ${closeHtml}
@@ -2947,6 +2986,89 @@ function renderTicketsPage(tickets, highlightId) {
         sessionStorage.removeItem("tk_scrollY");
         window.scrollTo(0, parseInt(savedY, 10));
       }
+
+      // --- Inline edit for TP / Exit (risk) / Close price ---
+      document.addEventListener("click", function(e) {
+        var icon = e.target.closest(".tk-edit-icon");
+        if (!icon) return;
+        var field = icon.getAttribute("data-field");
+        var ticketId = icon.getAttribute("data-ticket-id");
+        var current = icon.getAttribute("data-current") || "";
+        // For closePrice, the editable container is the closed-footer
+        var valEl;
+        if (field === "closePrice") {
+          valEl = icon.closest(".tk-closed-footer");
+        } else {
+          valEl = icon.closest("div").querySelector('.tk-editable-val[data-field="' + field + '"]');
+        }
+        if (!valEl || valEl.querySelector(".tk-inline-edit")) return;
+
+        var origHtml = valEl.innerHTML;
+        var editHtml = '<span class="tk-inline-edit">' +
+          '<input type="number" step="0.01" min="0" max="1" inputmode="decimal" value="' + current + '" class="tk-inline-input">' +
+          '<button class="tk-inline-save">Save</button>' +
+          '<button class="tk-inline-cancel">\u2716</button>' +
+          '</span>';
+
+        if (field === "closePrice") {
+          // Insert edit form after the display span, hide display elements
+          var displaySpan = valEl.querySelector(".tk-closed-price-display");
+          var pctSpan = valEl.querySelector(".tk-pnl-pct");
+          if (displaySpan) displaySpan.style.display = "none";
+          if (pctSpan) pctSpan.style.display = "none";
+          icon.style.display = "none";
+          var wrapper = document.createElement("span");
+          wrapper.innerHTML = editHtml;
+          wrapper.className = "tk-edit-wrapper";
+          valEl.insertBefore(wrapper, valEl.firstChild);
+        } else {
+          valEl.innerHTML = editHtml;
+        }
+
+        var inputEl = valEl.querySelector(".tk-inline-input");
+        inputEl.focus();
+        inputEl.select();
+
+        function cancelEdit() {
+          if (field === "closePrice") {
+            var wrapper = valEl.querySelector(".tk-edit-wrapper");
+            if (wrapper) wrapper.remove();
+            var displaySpan = valEl.querySelector(".tk-closed-price-display");
+            var pctSpan = valEl.querySelector(".tk-pnl-pct");
+            if (displaySpan) displaySpan.style.display = "";
+            if (pctSpan) pctSpan.style.display = "";
+            icon.style.display = "";
+          } else {
+            valEl.innerHTML = origHtml;
+          }
+        }
+
+        valEl.querySelector(".tk-inline-cancel").addEventListener("click", cancelEdit);
+
+        inputEl.addEventListener("keydown", function(ev) {
+          if (ev.key === "Escape") cancelEdit();
+          if (ev.key === "Enter") valEl.querySelector(".tk-inline-save").click();
+        });
+
+        valEl.querySelector(".tk-inline-save").addEventListener("click", function() {
+          var newVal = parseFloat(inputEl.value);
+          if (isNaN(newVal) || newVal < 0) { alert("Enter a valid price (0\u20131)"); return; }
+          var payload = { ticketId: ticketId };
+          payload[field] = newVal;
+          var saveBtn = valEl.querySelector(".tk-inline-save");
+          saveBtn.disabled = true;
+          saveBtn.textContent = "\u2026";
+          fetch("/api/tickets/edit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }).then(function(r) { return r.json(); }).then(function(d) {
+            if (d.error) { alert(d.error); saveBtn.disabled = false; saveBtn.textContent = "Save"; return; }
+            sessionStorage.setItem("tk_scrollY", String(window.scrollY));
+            location.reload();
+          }).catch(function() { alert("Save failed"); saveBtn.disabled = false; saveBtn.textContent = "Save"; });
+        });
+      });
 
       // --- Shared helper: update autoclose toggle UI for a single button ---
       function updateAutoCloseUI(toggleBtn, enabled) {

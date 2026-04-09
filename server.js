@@ -1166,6 +1166,85 @@ if (url.pathname === "/trade") {
     return;
   }
 
+  // ── POST /api/tickets/edit ───────────────────────────────────────────
+  // Edit TP / Exit (risk) on OPEN/CLOSING tickets, or closePrice on CLOSED tickets.
+  if (url.pathname === "/api/tickets/edit" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", async () => {
+      try {
+        const data = JSON.parse(body);
+        if (!data.ticketId) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Missing ticketId" }));
+          return;
+        }
+        if (!mongoose.Types.ObjectId.isValid(data.ticketId)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid ticketId format" }));
+          return;
+        }
+        const ticket = await TradeTicket.findById(String(data.ticketId));
+        if (!ticket) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Ticket not found" }));
+          return;
+        }
+
+        let changed = false;
+
+        // TP / Exit (risk) — editable on OPEN or CLOSING tickets
+        if (ticket.status === "OPEN" || ticket.status === "CLOSING") {
+          if (data.takeProfit !== undefined) {
+            let v = Number(data.takeProfit);
+            if (isNaN(v) || v < 0) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "Invalid takeProfit" })); return; }
+            if (v > 1) v = v / 100;
+            ticket.takeProfit = v;
+            changed = true;
+          }
+          if (data.riskExitLimit !== undefined) {
+            let v = Number(data.riskExitLimit);
+            if (isNaN(v) || v < 0) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "Invalid riskExitLimit" })); return; }
+            if (v > 1) v = v / 100;
+            ticket.riskExitLimit = v;
+            changed = true;
+          }
+        }
+
+        // closePrice — editable on CLOSED tickets
+        if (ticket.status === "CLOSED" && data.closePrice !== undefined) {
+          let cp = Number(data.closePrice);
+          if (isNaN(cp) || cp < 0) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "Invalid closePrice" })); return; }
+          if (cp > 1) cp = cp / 100;
+          ticket.closePrice = cp;
+          // Recompute PnL
+          if (typeof ticket.entryLimit === "number" && ticket.entryLimit > 0 &&
+              typeof ticket.maxSizeUsd === "number" && ticket.maxSizeUsd > 0) {
+            const shares = ticket.maxSizeUsd / ticket.entryLimit;
+            const valueExit = shares * ticket.closePrice;
+            ticket.realizedPnlUsd = valueExit - ticket.maxSizeUsd;
+            ticket.realizedPnlPct = ticket.realizedPnlUsd / ticket.maxSizeUsd;
+          }
+          changed = true;
+        }
+
+        if (!changed) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "No valid editable fields provided for this ticket status" }));
+          return;
+        }
+
+        await ticket.save();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(ticket));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
   // ── POST /api/tickets ────────────────────────────────────────────────
   if (url.pathname === "/api/tickets" && req.method === "POST") {
     let body = "";
@@ -1258,7 +1337,9 @@ if (url.pathname === "/trade") {
         ticket.status = "CLOSED";
         ticket.closeReason = ticket.closeReason || "MANUAL";
         ticket.closedAt = new Date();
-        ticket.closePrice = Number(data.closePrice);
+        let cp = Number(data.closePrice);
+        if (cp > 1) cp = cp / 100;   // normalize cents → 0-1
+        ticket.closePrice = cp;
         // Compute approximate realized PnL if possible
         if (typeof ticket.entryLimit === "number" && ticket.entryLimit > 0 &&
             typeof ticket.maxSizeUsd === "number" && ticket.maxSizeUsd > 0) {
