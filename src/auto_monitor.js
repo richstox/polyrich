@@ -96,6 +96,12 @@ function jitteredTick() {
   return base + (Math.random() * 2 - 1) * jitter;
 }
 
+/** Returns true if the ticket has a valid conditionId (0x…) suitable for strict monitoring. */
+function hasValidConditionId(ticket) {
+  const cid = (ticket.conditionId || ticket.marketId || "");
+  return cid.startsWith("0x");
+}
+
 // ---------------------------------------------------------------------------
 // A5) Mongo lease lock
 // ---------------------------------------------------------------------------
@@ -228,8 +234,8 @@ function matchMarketFromArray(arr, ticket) {
  */
 async function getCurrentCloseablePrice(ticket) {
   // Strict: only conditionId (0x…) is acceptable for monitoring lookup
-  const cid = ticket.conditionId || ticket.marketId || "";
-  if (!cid || !cid.startsWith("0x")) return null;
+  if (!hasValidConditionId(ticket)) return null;
+  const cid = ticket.conditionId || ticket.marketId;
 
   const url = `https://gamma-api.polymarket.com/markets?condition_id=${encodeURIComponent(cid)}`;
 
@@ -563,8 +569,7 @@ async function monitorTick() {
 
   for (const ticket of batch) {
     // Strict identity gate: skip tickets without a valid conditionId (fail-closed)
-    const cid = ticket.conditionId || ticket.marketId || "";
-    if (!cid || !cid.startsWith("0x")) {
+    if (!hasValidConditionId(ticket)) {
       monitorState.lastTickIdentitySkip++;
       console.warn(JSON.stringify({
         msg: "monitor-identity-skip",

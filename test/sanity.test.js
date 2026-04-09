@@ -1301,11 +1301,13 @@ console.log("\nfinal selection: mispricing quota");
   console.log("\nmatchMarketFromArray (strict fail-closed)");
   const { matchMarketFromArray } = require("../src/auto_monitor");
 
-  // Empty / null array → null
+  // Empty / null / undefined array → null
   assert(matchMarketFromArray([], { conditionId: "0xabc" }) === null,
     "empty array returns null");
   assert(matchMarketFromArray(null, { conditionId: "0xabc" }) === null,
     "null array returns null");
+  assert(matchMarketFromArray(undefined, { conditionId: "0xabc" }) === null,
+    "undefined array returns null");
 
   // Single-element array → matches only if conditionId matches (no auto-return)
   const single = [{ conditionId: "0xabc", bestBid: "0.55" }];
