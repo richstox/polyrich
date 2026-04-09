@@ -1345,9 +1345,9 @@ console.log("\nfinal selection: mispricing quota");
   assert(matchMarketFromArray(arr2, {}) === null,
     "empty ticket returns null (fail-closed)");
 
-  // Falls back to ticket.marketId when ticket.conditionId is absent (backward compat)
-  assert(matchMarketFromArray(multi, { marketId: "0xBBB" }) === mktB,
-    "falls back to marketId when conditionId absent");
+  // marketId-only ticket returns null (no fallback to legacy marketId)
+  assert(matchMarketFromArray(multi, { marketId: "0xBBB" }) === null,
+    "marketId-only ticket returns null (no marketId fallback, fail-closed)");
 
   // condition_id field variant (some API responses use snake_case)
   const mktE = { condition_id: "0xEEE", question: "Snake case?" };

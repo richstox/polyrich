@@ -98,7 +98,7 @@ function jitteredTick() {
 
 /** Returns true if the ticket has a valid conditionId (0x…) suitable for strict monitoring. */
 function hasValidConditionId(ticket) {
-  const cid = (ticket.conditionId || ticket.marketId || "");
+  const cid = (ticket.conditionId || "");
   return cid.startsWith("0x");
 }
 
@@ -201,8 +201,8 @@ async function releaseLease() {
 function matchMarketFromArray(arr, ticket) {
   if (!arr || arr.length === 0) return null;
 
-  // Use the dedicated conditionId field; fall back to marketId for backward compat
-  const wantId = (ticket.conditionId || ticket.marketId || "").toLowerCase();
+  // Use ONLY the dedicated conditionId field — no marketId fallback (fail-closed)
+  const wantId = (ticket.conditionId || "").toLowerCase();
   if (!wantId) return null;
 
   // Single-element array still requires exact conditionId match (fail-closed)
@@ -233,9 +233,9 @@ function matchMarketFromArray(arr, ticket) {
  * Returns { price: number, source: string } or null on failure.
  */
 async function getCurrentCloseablePrice(ticket) {
-  // Strict: only conditionId (0x…) is acceptable for monitoring lookup
+  // Strict: only conditionId (0x…) is acceptable for monitoring lookup — no marketId fallback
   if (!hasValidConditionId(ticket)) return null;
-  const cid = ticket.conditionId || ticket.marketId;
+  const cid = ticket.conditionId;
 
   const url = `https://gamma-api.polymarket.com/markets?condition_id=${encodeURIComponent(cid)}`;
 
@@ -613,7 +613,7 @@ async function monitorTick() {
       // Capture the first null-price sample for debugging
       if (!monitorState.lastTickNullPriceSample) {
         monitorState.lastTickNullPriceSample = {
-          conditionId: ticket.conditionId || ticket.marketId || "—",
+          conditionId: ticket.conditionId || "—",
           action: ticket.action || "—",
           ticketId: String(ticket._id).slice(-6),
         };
