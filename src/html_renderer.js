@@ -2487,6 +2487,25 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         <div><span class="label">Closes today</span> <strong>${autoModeStatus.closesToday || 0}</strong></div>
         <div><span class="label">Failures today</span> <strong style="color:${(autoModeStatus.failuresToday || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.failuresToday || 0}</strong></div>
       </div>
+      <hr style="border-color:#1e293b;margin:12px 0;">
+      <div style="font-size:0.82rem;color:#94a3b8;margin-bottom:6px;font-weight:600;">🔬 Last Tick Diagnostics</div>
+      <div class="grid-2" style="gap:6px 24px;">
+        <div><span class="label">Batch size</span> <strong>${autoModeStatus.lastTickBatchSize || 0}</strong></div>
+        <div><span class="label">Price OK</span> <strong style="color:#22c55e;">${autoModeStatus.lastTickPriceOk || 0}</strong></div>
+        <div><span class="label">Price NULL</span> <strong style="color:${(autoModeStatus.lastTickPriceNull || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickPriceNull || 0}</strong></div>
+        <div><span class="label">Price error</span> <strong style="color:${(autoModeStatus.lastTickPriceError || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickPriceError || 0}</strong></div>
+        <div><span class="label">Cooldown skip</span> <strong>${autoModeStatus.lastTickCooldownSkip || 0}</strong></div>
+        <div><span class="label">Trigger HIT</span> <strong style="color:${(autoModeStatus.lastTickTriggerHit || 0) > 0 ? "#22c55e" : "inherit"};">${autoModeStatus.lastTickTriggerHit || 0}</strong></div>
+        <div><span class="label">Trigger miss</span> <strong>${autoModeStatus.lastTickTriggerMiss || 0}</strong></div>
+        <div><span class="label">Debounce hold</span> <strong style="color:${(autoModeStatus.lastTickDebounceHold || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickDebounceHold || 0}</strong></div>
+        <div><span class="label">Close attempt</span> <strong style="color:${(autoModeStatus.lastTickCloseAttempt || 0) > 0 ? "#22c55e" : "inherit"};">${autoModeStatus.lastTickCloseAttempt || 0}</strong></div>
+      </div>${autoModeStatus.lastTickNullPriceSample ? `
+      <div style="margin-top:8px;font-size:0.78rem;color:#94a3b8;background:#1e293b;padding:6px 10px;border-radius:6px;">
+        <span style="color:#f59e0b;">⚠ Null-price sample:</span>
+        mkt <code>${escHtml(autoModeStatus.lastTickNullPriceSample.marketId || "—")}</code>
+        · ${escHtml(autoModeStatus.lastTickNullPriceSample.action || "—")}
+        · ticket …${escHtml(autoModeStatus.lastTickNullPriceSample.ticketId || "—")}
+      </div>` : ""}
     </div>
 
     <div class="card" style="margin-top:16px;">
