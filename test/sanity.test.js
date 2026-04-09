@@ -1350,6 +1350,8 @@ console.log("\nfinal selection: mispricing quota");
   const mktF = { condition_id: "0xFFF", question: "Other" };
   assert(matchMarketFromArray([mktE, mktF], { marketId: "0xFFF" }) === mktF,
     "condition_id (snake_case) variant matched");
+  assert(matchMarketFromArray([mktE, mktF], { marketId: "0xfff" }) === mktF,
+    "condition_id (snake_case) case-insensitive match");
 }
 
 // ---------------------------------------------------------------------------

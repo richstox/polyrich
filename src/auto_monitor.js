@@ -180,7 +180,7 @@ async function releaseLease() {
  *
  * The condition_id query-param endpoint may return multiple market objects
  * (e.g. different outcomes sharing an event, or duplicate entries).  We match
- * on conditionId first (exact hex match), then fall back to question text.
+ * on conditionId first (case-insensitive hex match), then fall back to question text.
  * If nothing matches, return the first element (preserves legacy behaviour).
  *
  * @param {Array} arr — Gamma API array response
