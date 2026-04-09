@@ -3470,11 +3470,11 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
     (function() {
       document.addEventListener("keydown", function(e) {
         if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-        if (e.key === "ArrowLeft" || e.key === "j") {
+        if (e.key === "ArrowLeft" || e.key === "k") {
           var prev = document.querySelector('.td-nav-row a[title="Previous ticket"]');
           if (prev) prev.click();
         }
-        if (e.key === "ArrowRight" || e.key === "k") {
+        if (e.key === "ArrowRight" || e.key === "j") {
           var next = document.querySelector('.td-nav-row a[title="Next ticket"]');
           if (next) next.click();
         }
