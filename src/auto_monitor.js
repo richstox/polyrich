@@ -178,7 +178,10 @@ async function releaseLease() {
 /**
  * Fetch the current closeable price for a ticket.
  *
- * Price source: Gamma Markets API (https://gamma-api.polymarket.com/markets/{conditionId or marketSlug}).
+ * Price source: Gamma Markets API.
+ *   - conditionId (0x…) → GET /markets?condition_id={id}  (returns array)
+ *   - slug / other     → GET /markets/{slug}              (returns object)
+ *
  *   - BUY_YES closes by selling YES shares → best executable sell price = bestBid
  *   - BUY_NO closes by selling NO shares → best executable sell price for NO = (1 - bestAsk)
  *     (Since the API returns YES-side bestBid/bestAsk, the NO-side sell price is derived
@@ -193,7 +196,12 @@ async function getCurrentCloseablePrice(ticket) {
   const marketId = ticket.marketId;
   if (!marketId) return null;
 
-  const url = `https://gamma-api.polymarket.com/markets/${encodeURIComponent(marketId)}`;
+  // conditionId (hex hash) must be looked up via query parameter;
+  // slugs can use the path-based endpoint directly.
+  const isConditionId = marketId.startsWith("0x");
+  const url = isConditionId
+    ? `https://gamma-api.polymarket.com/markets?condition_id=${encodeURIComponent(marketId)}`
+    : `https://gamma-api.polymarket.com/markets/${encodeURIComponent(marketId)}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.FETCH_TIMEOUT_MS);
@@ -211,7 +219,10 @@ async function getCurrentCloseablePrice(ticket) {
       return null;
     }
 
-    const data = await res.json();
+    const raw = await res.json();
+    // Query-param endpoint returns an array; path endpoint returns an object.
+    const data = Array.isArray(raw) ? (raw.length > 0 ? raw[0] : null) : raw;
+    if (!data) return null;
 
     const bestBid = parseFloat(data.bestBid);
     const bestAsk = parseFloat(data.bestAsk);
