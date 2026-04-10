@@ -605,7 +605,7 @@ async function attemptAutoClose(ticket, observedPrice, reason, effectivePaperClo
             closedAt: new Date(),
             closePrice: observedPrice,
             isSimulated: true,
-            ...(observedPrice != null ? { lastObservedPrice: observedPrice } : {}),
+            ...(observedPrice !== null ? { lastObservedPrice: observedPrice } : {}),
             ...(realizedPnlUsd !== null ? { realizedPnlUsd, realizedPnlPct } : {}),
           },
         }
