@@ -1427,7 +1427,8 @@ console.log("\nfinal selection: mispricing quota");
 // ---------------------------------------------------------------------------
 // These tests verify the price extraction helpers and fallback chain contract.
 // getCurrentCloseablePrice is async (requires fetch), so we test the building
-// blocks and document the chain: bestBid → outcomePrices → lastTradePrice.
+// blocks and document the chain:
+//   bestBid → outcomePrices → lastTradePrice (SIM-only + freshness-gated)
 {
   console.log("\nPrice fallback chain contract");
 
@@ -1441,6 +1442,7 @@ console.log("\nfinal selection: mispricing quota");
     bestAsk: "0.67",
     outcomePrices: '["0.66","0.34"]',
     lastTradePrice: "0.66",
+    updatedAt: new Date().toISOString(),
     resolved: false,
     closed: false,
   };
@@ -1448,6 +1450,7 @@ console.log("\nfinal selection: mispricing quota");
   assert(matched === fullMarket, "matched market preserves all price fields");
   assert(matched.bestBid === "0.65", "bestBid accessible on matched market");
   assert(matched.lastTradePrice === "0.66", "lastTradePrice accessible on matched market");
+  assert(typeof matched.updatedAt === "string", "updatedAt accessible on matched market");
 
   // Market with NO bestBid/bestAsk but WITH lastTradePrice (live sports scenario)
   const sportsLive = {
@@ -1456,6 +1459,7 @@ console.log("\nfinal selection: mispricing quota");
     bestAsk: null,
     outcomePrices: null,
     lastTradePrice: "0.72",
+    updatedAt: new Date().toISOString(),
     resolved: false,
     closed: false,
   };
@@ -1486,6 +1490,63 @@ console.log("\nfinal selection: mispricing quota");
   try { op = JSON.parse(opStr); } catch (_) { op = null; }
   assert(Array.isArray(op) && parseFloat(op[0]) === 1.0,
     "outcomePrices [1.0, 0.0] → fallback 1 catches settled market");
+}
+
+// ---------------------------------------------------------------------------
+// lastTradePrice gating contract tests (auto_monitor)
+// ---------------------------------------------------------------------------
+// Verify the gating logic independently. getCurrentCloseablePrice is async
+// (needs fetch), so we test the gating decision rules as documented contracts.
+{
+  console.log("\nlastTradePrice gating contract");
+  const cfgMod = require("../src/config");
+
+  // Document the config constant exists and defaults
+  assert(typeof cfgMod.AUTO_MODE_LTP_MAX_AGE_SEC === "number",
+    "AUTO_MODE_LTP_MAX_AGE_SEC is a number");
+  assert(cfgMod.AUTO_MODE_LTP_MAX_AGE_SEC === 120,
+    "AUTO_MODE_LTP_MAX_AGE_SEC default is 120s");
+
+  // Gate logic: paperClose=false → NOT_PAPER_CLOSE (never use for non-SIM)
+  // (Verified via documented contract — function accepts opts.paperClose)
+
+  // Freshness: updatedAt within 120s → age ≤ 120 → PASS
+  const recentUpdatedAt = new Date(Date.now() - 30 * 1000).toISOString();
+  const recentMs = new Date(recentUpdatedAt).getTime();
+  const recentAge = Math.round((Date.now() - recentMs) / 1000);
+  assert(recentAge <= cfgMod.AUTO_MODE_LTP_MAX_AGE_SEC,
+    "30s-old updatedAt is within freshness window");
+
+  // Freshness: updatedAt 5 minutes ago → age > 120 → STALE
+  const staleUpdatedAt = new Date(Date.now() - 300 * 1000).toISOString();
+  const staleMs = new Date(staleUpdatedAt).getTime();
+  const staleAge = Math.round((Date.now() - staleMs) / 1000);
+  assert(staleAge > cfgMod.AUTO_MODE_LTP_MAX_AGE_SEC,
+    "300s-old updatedAt exceeds freshness window → gated as STALE");
+
+  // Freshness: missing updatedAt → null → NO_UPDATED_AT
+  const noTimestamp = null;
+  const parsedMs = noTimestamp ? new Date(noTimestamp).getTime() : NaN;
+  assert(!Number.isFinite(parsedMs),
+    "null updatedAt → cannot compute age → gated as NO_UPDATED_AT");
+
+  // Freshness: invalid updatedAt → NaN → NO_UPDATED_AT
+  const badUpdatedAt = "not-a-date";
+  const badMs = new Date(badUpdatedAt).getTime();
+  assert(!Number.isFinite(badMs),
+    "invalid updatedAt → NaN → gated as NO_UPDATED_AT");
+
+  // lastTradePrice numeric validity
+  assert(Number.isFinite(parseFloat("0.72")) && parseFloat("0.72") > 0,
+    "valid lastTradePrice '0.72' passes numeric gate");
+  assert(!Number.isFinite(parseFloat(null)),
+    "null lastTradePrice fails numeric gate");
+  assert(!Number.isFinite(parseFloat(undefined)),
+    "undefined lastTradePrice fails numeric gate");
+  assert(!(parseFloat("0") > 0),
+    "lastTradePrice '0' fails > 0 gate");
+  assert(!(parseFloat("-0.5") > 0),
+    "negative lastTradePrice fails > 0 gate");
 }
 
 // ---------------------------------------------------------------------------

@@ -264,8 +264,12 @@ function detectMarketEndState(data) {
  *
  * Returns { price: number, source: string, marketEndState?: object } or null on failure.
  * On null return, populates `_lastDiag` on the function for structured debugging.
+ *
+ * @param {object} ticket  - TradeTicket lean doc
+ * @param {object} [opts]  - { paperClose: boolean } — gates SIM-only fallbacks (lastTradePrice)
  */
-async function getCurrentCloseablePrice(ticket) {
+async function getCurrentCloseablePrice(ticket, opts) {
+  const paperClose = !!(opts && opts.paperClose);
   // Strict: only conditionId (0x…) is acceptable for monitoring lookup — no marketId fallback
   if (!hasValidConditionId(ticket)) return null;
   const cid = ticket.conditionId;
@@ -291,8 +295,11 @@ async function getCurrentCloseablePrice(ticket) {
     bestAskValid: false,
     outcomePricesRaw: null,
     lastTradePriceRaw: null,
-    marketEndState: null,         // { ended, settled, closed }
-    nullReason: null,             // classified cause
+    updatedAtRaw: null,              // Gamma API updatedAt (ISO 8601)
+    lastTradeAgeSec: null,           // seconds since updatedAt (freshness)
+    ltpGatedReason: null,            // why lastTradePrice was NOT used for triggers
+    marketEndState: null,            // { ended, settled, closed }
+    nullReason: null,                // classified cause
   };
 
   try {
@@ -340,6 +347,17 @@ async function getCurrentCloseablePrice(ticket) {
     diag.bestAskValid = Number.isFinite(bestAsk);
     diag.outcomePricesRaw = data.outcomePrices ?? null;
     diag.lastTradePriceRaw = data.lastTradePrice ?? null;
+    diag.updatedAtRaw = data.updatedAt ?? null;
+
+    // Compute freshness of market data (used for lastTradePrice gating)
+    let lastTradeAgeSec = null;
+    if (data.updatedAt) {
+      const updatedMs = new Date(data.updatedAt).getTime();
+      if (Number.isFinite(updatedMs)) {
+        lastTradeAgeSec = Math.round((Date.now() - updatedMs) / 1000);
+      }
+    }
+    diag.lastTradeAgeSec = lastTradeAgeSec;
 
     if (ticket.action === "BUY_YES" && Number.isFinite(bestBid) && bestBid > 0) {
       // Selling YES shares → receive bestBid price
@@ -374,21 +392,42 @@ async function getCurrentCloseablePrice(ticket) {
       }
     }
 
-    // Fallback 2: use lastTradePrice — most recent executed trade price.
-    // Crucial for live sports markets where orderbook dries up but trades
-    // still occur, so lastTradePrice reflects the current probability.
+    // Fallback 2 (SIM-only, freshness-gated): lastTradePrice.
+    // lastTradePrice is NOT an executable close price — it is the last matched
+    // trade price. It may be stale or unrepresentative. Only used when:
+    //   (a) Paper Close is ON (SIM mode)
+    //   (b) numeric and > 0
+    //   (c) Gamma `updatedAt` is within AUTO_MODE_LTP_MAX_AGE_SEC seconds
+    // If any gate fails, lastTradePrice is captured in diagnostics only.
     const ltp = parseFloat(data.lastTradePrice);
-    if (Number.isFinite(ltp) && ltp > 0) {
-      if (ticket.action === "BUY_YES") {
-        return { price: ltp, source: "gamma_lastTradePrice", marketEndState: endState };
+    const ltpNumericValid = Number.isFinite(ltp) && ltp > 0;
+
+    if (ltpNumericValid) {
+      let ltpGatedReason = null;
+
+      if (!paperClose) {
+        ltpGatedReason = "NOT_PAPER_CLOSE";
+      } else if (lastTradeAgeSec === null) {
+        ltpGatedReason = "NO_UPDATED_AT";
+      } else if (lastTradeAgeSec > config.AUTO_MODE_LTP_MAX_AGE_SEC) {
+        ltpGatedReason = `STALE_${lastTradeAgeSec}s`;
       }
-      if (ticket.action === "BUY_NO") {
-        // lastTradePrice is YES-side; NO-side ≈ 1 - lastTradePrice
-        const noLtp = 1 - ltp;
-        if (noLtp > 0) {
-          return { price: noLtp, source: "gamma_lastTradePrice_no_derived", marketEndState: endState };
+
+      diag.ltpGatedReason = ltpGatedReason;
+
+      if (!ltpGatedReason) {
+        // All gates passed → use lastTradePrice as SIM fallback
+        if (ticket.action === "BUY_YES") {
+          return { price: ltp, source: "gamma_lastTradePrice", lastTradeAgeSec, marketEndState: endState };
+        }
+        if (ticket.action === "BUY_NO") {
+          const noLtp = 1 - ltp;
+          if (noLtp > 0) {
+            return { price: noLtp, source: "gamma_lastTradePrice_no_derived", lastTradeAgeSec, marketEndState: endState };
+          }
         }
       }
+      // If gated → fall through to null (diagnostics captured above)
     }
 
     // No valid price found — classify the null reason
@@ -396,6 +435,8 @@ async function getCurrentCloseablePrice(ticket) {
       diag.nullReason = "MARKET_SETTLED";
     } else if (endState.ended || endState.closed) {
       diag.nullReason = "MARKET_ENDED";
+    } else if (ltpNumericValid && diag.ltpGatedReason) {
+      diag.nullReason = `LTP_GATED:${diag.ltpGatedReason}`;
     } else {
       diag.nullReason = "MISSING_ORDERBOOK";
     }
@@ -701,7 +742,7 @@ async function monitorTick() {
 
     let priceResult;
     try {
-      priceResult = await getCurrentCloseablePrice(ticket);
+      priceResult = await getCurrentCloseablePrice(ticket, { paperClose: effectivePaperClose });
     } catch (err) {
       // 429/5xx → trigger backoff
       if (err.statusCode === 429 || (err.statusCode && err.statusCode >= 500)) {
@@ -776,6 +817,20 @@ async function monitorTick() {
     ).catch(() => {});
 
     const { triggered, reason } = checkTrigger(ticket, priceResult.price);
+
+    // Structured logging for lastTradePrice-sourced triggers (SIM-only visibility)
+    if (triggered && (priceResult.source === "gamma_lastTradePrice" || priceResult.source === "gamma_lastTradePrice_no_derived")) {
+      console.log(JSON.stringify({
+        msg: "monitor-ltp-trigger",
+        ticketId: String(ticket._id).slice(-6),
+        action: ticket.action,
+        priceSource: priceResult.source,
+        price: priceResult.price,
+        lastTradeAgeSec: priceResult.lastTradeAgeSec ?? null,
+        reason,
+        ts: new Date().toISOString(),
+      }));
+    }
 
     if (triggered) {
       monitorState.lastTickTriggerHit++;

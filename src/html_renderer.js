@@ -2552,7 +2552,10 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         <br>bestBid: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestBidRaw ?? "null"))} (${autoModeStatus.lastTickNullPriceSample.bestBidValid ? "✓" : "✗"})
         · bestAsk: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestAskRaw ?? "null"))} (${autoModeStatus.lastTickNullPriceSample.bestAskValid ? "✓" : "✗"})
         · outcomePrices: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.outcomePricesRaw ?? "null"))}
-        · lastTradePrice: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.lastTradePriceRaw ?? "null"))}${autoModeStatus.lastTickNullPriceSample.marketEndState ? `
+        <br>lastTradePrice: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.lastTradePriceRaw ?? "null"))}
+        · updatedAt: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.updatedAtRaw ?? "null"))}
+        · age: ${autoModeStatus.lastTickNullPriceSample.lastTradeAgeSec !== null ? escHtml(String(autoModeStatus.lastTickNullPriceSample.lastTradeAgeSec)) + "s" : "—"}
+        · ltpGate: <strong style="color:${autoModeStatus.lastTickNullPriceSample.ltpGatedReason ? "#ef4444" : "#22c55e"};">${escHtml(String(autoModeStatus.lastTickNullPriceSample.ltpGatedReason || "PASS"))}</strong>${autoModeStatus.lastTickNullPriceSample.marketEndState ? `
         <br>ended: ${autoModeStatus.lastTickNullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${autoModeStatus.lastTickNullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${autoModeStatus.lastTickNullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
       </div>` : ""}${debugSnapshot && debugSnapshot.nullPriceSample ? `
       <div style="margin-top:8px;font-size:0.78rem;color:#94a3b8;background:#1a2332;padding:8px 10px;border-radius:6px;border:1px solid #334155;">
@@ -2565,7 +2568,10 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         <br>bestBid: ${escHtml(String(debugSnapshot.nullPriceSample.bestBidRaw ?? "null"))} (${debugSnapshot.nullPriceSample.bestBidValid ? "✓" : "✗"})
         · bestAsk: ${escHtml(String(debugSnapshot.nullPriceSample.bestAskRaw ?? "null"))} (${debugSnapshot.nullPriceSample.bestAskValid ? "✓" : "✗"})
         · outcomePrices: ${escHtml(String(debugSnapshot.nullPriceSample.outcomePricesRaw ?? "null"))}
-        · lastTradePrice: ${escHtml(String(debugSnapshot.nullPriceSample.lastTradePriceRaw ?? "null"))}${debugSnapshot.nullPriceSample.marketEndState ? `
+        <br>lastTradePrice: ${escHtml(String(debugSnapshot.nullPriceSample.lastTradePriceRaw ?? "null"))}
+        · updatedAt: ${escHtml(String(debugSnapshot.nullPriceSample.updatedAtRaw ?? "null"))}
+        · age: ${debugSnapshot.nullPriceSample.lastTradeAgeSec !== null ? escHtml(String(debugSnapshot.nullPriceSample.lastTradeAgeSec)) + "s" : "—"}
+        · ltpGate: <strong style="color:${debugSnapshot.nullPriceSample.ltpGatedReason ? "#ef4444" : "#22c55e"};">${escHtml(String(debugSnapshot.nullPriceSample.ltpGatedReason || "PASS"))}</strong>${debugSnapshot.nullPriceSample.marketEndState ? `
         <br>ended: ${debugSnapshot.nullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${debugSnapshot.nullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${debugSnapshot.nullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
         <br><span style="color:#64748b;">Tick: priceNull=${debugSnapshot.tickSummary.priceNull} priceOk=${debugSnapshot.tickSummary.priceOk} priceErr=${debugSnapshot.tickSummary.priceError} ended=${debugSnapshot.tickSummary.endedMarkets} settled=${debugSnapshot.tickSummary.settledMarkets}</span>
       </div>` : ""}
