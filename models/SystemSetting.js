@@ -11,6 +11,10 @@ const systemSettingSchema = new mongoose.Schema(
     autoSaveExecuteEnabled: { type: Boolean, default: false },
     // Idempotency guard: last scanId that auto-save already processed
     lastAutoSaveScanId: { type: String, default: null },
+    // Risk / sizing settings (synced from Trade page — used by auto-save)
+    bankrollUsd: { type: Number, default: null },
+    riskPct: { type: Number, default: null },        // decimal, e.g. 0.01 = 1%
+    maxTradeCapUsd: { type: Number, default: null },  // absolute $ cap per trade
     // Debug: persisted null-price sample from auto-monitor (rate-limited writes)
     debugNullPriceSample: { type: mongoose.Schema.Types.Mixed, default: null },
   },
