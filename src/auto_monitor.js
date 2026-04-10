@@ -38,7 +38,9 @@ const monitorState = {
   lastTickDebounceHold: 0,
   lastTickCloseAttempt: 0,
   lastTickIdentitySkip: 0,         // tickets skipped: missing valid conditionId
-  // Sample: first null-price ticket per tick for debugging
+  lastTickEndedMarkets: 0,         // tickets where market is ended (auto-closed or blocked)
+  lastTickSettledMarkets: 0,       // tickets where market is settled (auto-closed or blocked)
+  // Sample: first null-price ticket per tick for debugging (rich diagnostic)
   lastTickNullPriceSample: null,
 };
 
@@ -87,6 +89,8 @@ function resetTickDiagnostics() {
   monitorState.lastTickDebounceHold = 0;
   monitorState.lastTickCloseAttempt = 0;
   monitorState.lastTickIdentitySkip = 0;
+  monitorState.lastTickEndedMarkets = 0;
+  monitorState.lastTickSettledMarkets = 0;
   monitorState.lastTickNullPriceSample = null;
 }
 
@@ -214,6 +218,34 @@ function matchMarketFromArray(arr, ticket) {
 }
 
 /**
+ * Detect ended / settled / closed state from Gamma API market object.
+ * Returns { ended: bool, settled: bool, closed: bool } based on actual response fields.
+ *
+ * Gamma API fields observed:
+ *   - closed (bool)        — market closed for trading
+ *   - resolved (bool)      — market outcome determined
+ *   - end_date_iso / endDate — market end timestamp (if in the past → ended)
+ *   - active (bool)        — false when market is no longer active
+ */
+function detectMarketEndState(data) {
+  if (!data || typeof data !== "object") return { ended: false, settled: false, closed: false };
+
+  const settled = !!(data.resolved);
+  const closed  = !!(data.closed);
+
+  // ended: endDate/end_date_iso is in the past, OR active===false (but not merely closed)
+  let ended = false;
+  const endDateRaw = data.end_date_iso || data.endDate || null;
+  if (endDateRaw) {
+    const endTs = new Date(endDateRaw).getTime();
+    if (Number.isFinite(endTs) && endTs < Date.now()) ended = true;
+  }
+  if (data.active === false && !settled) ended = true;
+
+  return { ended, settled, closed };
+}
+
+/**
  * Fetch the current closeable price for a ticket (strict, fail-closed).
  *
  * Price source: Gamma Markets API.
@@ -230,9 +262,14 @@ function matchMarketFromArray(arr, ticket) {
  * If the API cannot provide executable bid/ask, we fall back to outcomePrices (last-trade
  * midpoint-like prices). This is documented as an approximation, not a guaranteed fill price.
  *
- * Returns { price: number, source: string } or null on failure.
+ * Returns { price: number, source: string, marketEndState?: object } or null on failure.
+ * On null return, populates `_lastDiag` on the function for structured debugging.
+ *
+ * @param {object} ticket  - TradeTicket lean doc
+ * @param {object} [opts]  - { paperClose: boolean } — gates SIM-only fallbacks (lastTradePrice)
  */
-async function getCurrentCloseablePrice(ticket) {
+async function getCurrentCloseablePrice(ticket, opts) {
+  const paperClose = !!(opts && opts.paperClose);
   // Strict: only conditionId (0x…) is acceptable for monitoring lookup — no marketId fallback
   if (!hasValidConditionId(ticket)) return null;
   const cid = ticket.conditionId;
@@ -242,43 +279,102 @@ async function getCurrentCloseablePrice(ticket) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.FETCH_TIMEOUT_MS);
 
+  // Diagnostic scaffold — populated on null-return paths
+  const diag = {
+    ticketId: String(ticket._id || "").slice(-6),
+    conditionId: cid,
+    action: ticket.action || "—",
+    url,
+    httpStatus: null,
+    responseIsArray: null,
+    responseLength: null,
+    matchedMarket: false,
+    bestBidRaw: null,
+    bestAskRaw: null,
+    bestBidValid: false,
+    bestAskValid: false,
+    outcomePricesRaw: null,
+    lastTradePriceRaw: null,
+    updatedAtRaw: null,              // Gamma API updatedAt (ISO 8601)
+    lastTradeAgeSec: null,           // seconds since Gamma `updatedAt` (market-level proxy, NOT trade-specific)
+    ltpGatedReason: null,            // why lastTradePrice was NOT used for triggers
+    marketEndState: null,            // { ended, settled, closed }
+    nullReason: null,                // classified cause
+  };
+
   try {
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timer);
+    diag.httpStatus = res.status;
 
     if (res.status === 429 || res.status >= 500) {
+      diag.nullReason = `API_${res.status}`;
+      getCurrentCloseablePrice._lastDiag = diag;
       const err = new Error(`API ${res.status}`);
       err.statusCode = res.status;
       throw err;
     }
     if (!res.ok) {
+      diag.nullReason = `HTTP_${res.status}`;
+      getCurrentCloseablePrice._lastDiag = diag;
       return null;
     }
 
     const raw = await res.json();
+    diag.responseIsArray = Array.isArray(raw);
+    diag.responseLength = Array.isArray(raw) ? raw.length : null;
+
     // condition_id query always returns an array; match strictly by conditionId
     const data = Array.isArray(raw)
       ? matchMarketFromArray(raw, ticket)
       : null;   // non-array response from condition_id query is unexpected → fail-closed
-    if (!data) return null;
+    if (!data) {
+      diag.nullReason = Array.isArray(raw) ? "NO_CONDITIONID_MATCH" : "RESPONSE_NOT_ARRAY";
+      getCurrentCloseablePrice._lastDiag = diag;
+      return null;
+    }
+    diag.matchedMarket = true;
+
+    // Detect ended / settled / closed state
+    const endState = detectMarketEndState(data);
+    diag.marketEndState = endState;
 
     const bestBid = parseFloat(data.bestBid);
     const bestAsk = parseFloat(data.bestAsk);
+    diag.bestBidRaw = data.bestBid ?? null;
+    diag.bestAskRaw = data.bestAsk ?? null;
+    diag.bestBidValid = Number.isFinite(bestBid) && bestBid > 0;
+    diag.bestAskValid = Number.isFinite(bestAsk);
+    diag.outcomePricesRaw = data.outcomePrices ?? null;
+    diag.lastTradePriceRaw = data.lastTradePrice ?? null;
+    diag.updatedAtRaw = data.updatedAt ?? null;
+
+    // Compute age of market data via `updatedAt` (market-level proxy).
+    // Note: Gamma API has no trade-specific timestamp; `updatedAt` is the
+    // best available freshness signal but may not reflect actual last trade time.
+    let lastTradeAgeSec = null;
+    if (data.updatedAt) {
+      const updatedMs = new Date(data.updatedAt).getTime();
+      if (Number.isFinite(updatedMs)) {
+        lastTradeAgeSec = Math.round((Date.now() - updatedMs) / 1000);
+      }
+    }
+    diag.lastTradeAgeSec = lastTradeAgeSec;
 
     if (ticket.action === "BUY_YES" && Number.isFinite(bestBid) && bestBid > 0) {
       // Selling YES shares → receive bestBid price
-      return { price: bestBid, source: "gamma_bestBid" };
+      return { price: bestBid, source: "gamma_bestBid", marketEndState: endState };
     }
 
     if (ticket.action === "BUY_NO" && Number.isFinite(bestAsk)) {
       // Selling NO shares → the NO sell price is (1 - bestAsk) on the YES orderbook
       const noSellPrice = 1 - bestAsk;
       if (noSellPrice > 0) {
-        return { price: noSellPrice, source: "gamma_derived_no_sell" };
+        return { price: noSellPrice, source: "gamma_derived_no_sell", marketEndState: endState };
       }
     }
 
-    // Fallback: use outcomePrices if available (approximation only)
+    // Fallback 1: use outcomePrices if available (approximation only)
     let outcomePrices = data.outcomePrices;
     if (typeof outcomePrices === "string") {
       try { outcomePrices = JSON.parse(outcomePrices); } catch (_) { outcomePrices = null; }
@@ -287,26 +383,88 @@ async function getCurrentCloseablePrice(ticket) {
       if (ticket.action === "BUY_YES") {
         const yesPrice = parseFloat(outcomePrices[0]);
         if (Number.isFinite(yesPrice) && yesPrice > 0) {
-          return { price: yesPrice, source: "gamma_outcomePrices_approx" };
+          return { price: yesPrice, source: "gamma_outcomePrices_approx", marketEndState: endState };
         }
       }
       if (ticket.action === "BUY_NO") {
         const noPrice = parseFloat(outcomePrices[1]);
         if (Number.isFinite(noPrice) && noPrice > 0) {
-          return { price: noPrice, source: "gamma_outcomePrices_approx" };
+          return { price: noPrice, source: "gamma_outcomePrices_approx", marketEndState: endState };
         }
       }
     }
 
+    // Fallback 2 (SIM-only, freshness-gated): lastTradePrice.
+    // lastTradePrice is NOT an executable close price — it is the last matched
+    // trade price. It may be stale or unrepresentative and must NEVER be
+    // treated as equivalent to an executable bid/ask.
+    //
+    // IMPORTANT: The Gamma API does NOT provide a trade-specific timestamp
+    // (no `lastTradeTime` / `lastTradeTimestamp` field). We use `updatedAt`
+    // as a market-level object-freshness proxy, but this reflects when the
+    // Gamma record was last refreshed — not necessarily when the last trade
+    // occurred. Therefore lastTradePrice is a best-effort SIM-only heuristic.
+    //
+    // Gates (all must pass, else diagnostics-only):
+    //   (a) Paper Close is ON (SIM mode)
+    //   (b) numeric and > 0
+    //   (c) Gamma `updatedAt` is within AUTO_MODE_LTP_MAX_AGE_SEC seconds
+    // If any gate fails, lastTradePrice is captured in diagnostics only.
+    const ltp = parseFloat(data.lastTradePrice);
+    const ltpNumericValid = Number.isFinite(ltp) && ltp > 0;
+
+    if (ltpNumericValid) {
+      let ltpGatedReason = null;
+
+      if (!paperClose) {
+        ltpGatedReason = "NOT_PAPER_CLOSE";
+      } else if (lastTradeAgeSec === null) {
+        ltpGatedReason = "NO_UPDATED_AT";
+      } else if (lastTradeAgeSec > config.AUTO_MODE_LTP_MAX_AGE_SEC) {
+        ltpGatedReason = `STALE_${lastTradeAgeSec}s`;
+      }
+
+      diag.ltpGatedReason = ltpGatedReason;
+
+      if (!ltpGatedReason) {
+        // All gates passed → use lastTradePrice as SIM fallback
+        if (ticket.action === "BUY_YES") {
+          return { price: ltp, source: "gamma_lastTradePrice", lastTradeAgeSec, marketEndState: endState };
+        }
+        if (ticket.action === "BUY_NO") {
+          const noLtp = 1 - ltp;
+          if (noLtp > 0) {
+            return { price: noLtp, source: "gamma_lastTradePrice_no_derived", lastTradeAgeSec, marketEndState: endState };
+          }
+        }
+      }
+      // If gated → fall through to null (diagnostics captured above)
+    }
+
+    // No valid price found — classify the null reason
+    if (endState.settled) {
+      diag.nullReason = "MARKET_SETTLED";
+    } else if (endState.ended || endState.closed) {
+      diag.nullReason = "MARKET_ENDED";
+    } else if (ltpNumericValid && diag.ltpGatedReason) {
+      diag.nullReason = `LTP_GATED:${diag.ltpGatedReason}`;
+    } else {
+      diag.nullReason = "MISSING_ORDERBOOK";
+    }
+    getCurrentCloseablePrice._lastDiag = diag;
     return null;
   } catch (err) {
     clearTimeout(timer);
     if (err.statusCode === 429 || (err.statusCode && err.statusCode >= 500)) {
       throw err; // propagate for backoff handling
     }
+    if (!diag.nullReason) diag.nullReason = `FETCH_ERROR`;
+    getCurrentCloseablePrice._lastDiag = diag;
     return null;
   }
 }
+// Initialize diagnostic slot
+getCurrentCloseablePrice._lastDiag = null;
 
 // ---------------------------------------------------------------------------
 // A3) Trigger rules + debounce
@@ -439,7 +597,9 @@ async function attemptAutoClose(ticket, observedPrice, reason, effectivePaperClo
       // Compute approximate realized PnL if entry data is available
       let realizedPnlUsd = null;
       let realizedPnlPct = null;
-      if (typeof ticket.entryLimit === "number" && ticket.entryLimit > 0 &&
+      // Guard: observedPrice can be null for settled markets with no orderbook
+      if (typeof observedPrice === "number" &&
+          typeof ticket.entryLimit === "number" && ticket.entryLimit > 0 &&
           typeof ticket.maxSizeUsd === "number" && ticket.maxSizeUsd > 0) {
         const shares = ticket.maxSizeUsd / ticket.entryLimit;
         const valueExit = shares * observedPrice;
@@ -456,7 +616,7 @@ async function attemptAutoClose(ticket, observedPrice, reason, effectivePaperClo
             closedAt: new Date(),
             closePrice: observedPrice,
             isSimulated: true,
-            lastObservedPrice: observedPrice,
+            ...(observedPrice !== null ? { lastObservedPrice: observedPrice } : {}),
             ...(realizedPnlUsd !== null ? { realizedPnlUsd, realizedPnlPct } : {}),
           },
         }
@@ -593,7 +753,7 @@ async function monitorTick() {
 
     let priceResult;
     try {
-      priceResult = await getCurrentCloseablePrice(ticket);
+      priceResult = await getCurrentCloseablePrice(ticket, { paperClose: effectivePaperClose });
     } catch (err) {
       // 429/5xx → trigger backoff
       if (err.statusCode === 429 || (err.statusCode && err.statusCode >= 500)) {
@@ -610,18 +770,56 @@ async function monitorTick() {
 
     if (!priceResult) {
       monitorState.lastTickPriceNull++;
-      // Capture the first null-price sample for debugging
-      if (!monitorState.lastTickNullPriceSample) {
-        monitorState.lastTickNullPriceSample = {
-          conditionId: ticket.conditionId || "—",
-          action: ticket.action || "—",
-          ticketId: String(ticket._id).slice(-6),
-        };
+
+      // Rich diagnostic sample from getCurrentCloseablePrice._lastDiag
+      const diag = getCurrentCloseablePrice._lastDiag;
+      if (!monitorState.lastTickNullPriceSample && diag) {
+        monitorState.lastTickNullPriceSample = { ...diag, capturedAt: new Date().toISOString() };
+      }
+
+      // --- Ended / Settled market handling (null price path) ---
+      const endState = diag && diag.marketEndState;
+      if (endState && (endState.settled || endState.ended || endState.closed)) {
+        const closeReason = endState.settled ? "MARKET_SETTLED" : "MARKET_ENDED";
+        if (endState.settled) monitorState.lastTickSettledMarkets++;
+        else monitorState.lastTickEndedMarkets++;
+
+        if (effectivePaperClose) {
+          // Sim-close: no reliable price → closePrice = null, reason explicit
+          await attemptAutoClose(ticket, null, closeReason, effectivePaperClose);
+          monitorState.lastTickCloseAttempt++;
+        } else {
+          // Block: disable auto-close with explicit reason
+          await TradeTicket.updateOne(
+            { _id: ticket._id },
+            { $set: { autoCloseEnabled: false, autoCloseBlockedReason: closeReason } }
+          ).catch(() => {});
+        }
+        continue;
       }
       continue;
     }
 
     monitorState.lastTickPriceOk++;
+
+    // --- Ended / Settled market handling (price available path) ---
+    const endState = priceResult.marketEndState;
+    if (endState && (endState.settled || endState.ended || endState.closed)) {
+      const closeReason = endState.settled ? "MARKET_SETTLED" : "MARKET_ENDED";
+      if (endState.settled) monitorState.lastTickSettledMarkets++;
+      else monitorState.lastTickEndedMarkets++;
+
+      if (effectivePaperClose) {
+        await attemptAutoClose(ticket, priceResult.price, closeReason, effectivePaperClose);
+        monitorState.lastTickCloseAttempt++;
+      } else {
+        await TradeTicket.updateOne(
+          { _id: ticket._id },
+          { $set: { autoCloseEnabled: false, autoCloseBlockedReason: closeReason } }
+        ).catch(() => {});
+      }
+      continue;
+    }
 
     // Update last observed price on the ticket
     await TradeTicket.updateOne(
@@ -630,6 +828,20 @@ async function monitorTick() {
     ).catch(() => {});
 
     const { triggered, reason } = checkTrigger(ticket, priceResult.price);
+
+    // Structured logging for lastTradePrice-sourced triggers (SIM-only visibility)
+    if (triggered && (priceResult.source === "gamma_lastTradePrice" || priceResult.source === "gamma_lastTradePrice_no_derived")) {
+      console.log(JSON.stringify({
+        msg: "monitor-ltp-trigger",
+        ticketId: String(ticket._id).slice(-6),
+        action: ticket.action,
+        priceSource: priceResult.source,
+        price: priceResult.price,
+        lastTradeAgeSec: priceResult.lastTradeAgeSec ?? null,
+        reason,
+        ts: new Date().toISOString(),
+      }));
+    }
 
     if (triggered) {
       monitorState.lastTickTriggerHit++;
@@ -647,6 +859,9 @@ async function monitorTick() {
 
   // Successful tick: reset backoff
   monitorState.backoffMs = 0;
+
+  // Persist null-price debug sample to Mongo (rate-limited: max once per 60s)
+  await persistDebugSnapshot().catch(() => {});
 
   logTickDiagnostics();
 }
@@ -667,6 +882,8 @@ function logTickDiagnostics() {
     debounceHold: s.lastTickDebounceHold,
     closeAttempt: s.lastTickCloseAttempt,
     identitySkip: s.lastTickIdentitySkip,
+    endedMarkets: s.lastTickEndedMarkets,
+    settledMarkets: s.lastTickSettledMarkets,
     nullSample: s.lastTickNullPriceSample,
     ts: new Date().toISOString(),
   }));
@@ -678,6 +895,41 @@ function applyBackoff() {
   } else {
     monitorState.backoffMs = Math.min(monitorState.backoffMs * 2, config.AUTO_MODE_BACKOFF_MAX_MS);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Debug snapshot persistence (rate-limited)
+// ---------------------------------------------------------------------------
+const DEBUG_SNAPSHOT_INTERVAL_MS = 60_000; // max 1 write per 60s
+let _lastDebugSnapshotAt = 0;
+
+/**
+ * Persist the latest null-price debug sample + tick summary to Mongo
+ * via SystemSetting, rate-limited to avoid write churn.
+ */
+async function persistDebugSnapshot() {
+  const now = Date.now();
+  if (now - _lastDebugSnapshotAt < DEBUG_SNAPSHOT_INTERVAL_MS) return;
+
+  const sample = monitorState.lastTickNullPriceSample;
+  const snapshot = {
+    nullPriceSample: sample || null,
+    tickSummary: {
+      priceNull: monitorState.lastTickPriceNull,
+      priceOk: monitorState.lastTickPriceOk,
+      priceError: monitorState.lastTickPriceError,
+      endedMarkets: monitorState.lastTickEndedMarkets,
+      settledMarkets: monitorState.lastTickSettledMarkets,
+      batchSize: monitorState.lastTickBatchSize,
+    },
+    capturedAt: new Date().toISOString(),
+  };
+
+  await SystemSetting.updateOne(
+    { _id: "system" },
+    { $set: { debugNullPriceSample: snapshot } }
+  );
+  _lastDebugSnapshotAt = now;
 }
 
 // ---------------------------------------------------------------------------
@@ -756,6 +1008,7 @@ module.exports = {
   getMonitorStatus,
   getCurrentCloseablePrice,
   matchMarketFromArray,
+  detectMarketEndState,
   checkTrigger,
   debounceCheck,
   attemptAutoClose,

@@ -71,4 +71,11 @@ module.exports = {
   AUTO_MODE_LEASE_RENEW_MS: parseInt(process.env.AUTO_MODE_LEASE_RENEW_MS || "30000", 10),
   // Paper close: when true, auto-mode closes tickets as simulated (no on-chain execution)
   AUTO_MODE_PAPER_CLOSE: process.env.AUTO_MODE_PAPER_CLOSE === "true",
+  // lastTradePrice freshness gate: max allowed age (seconds) of Gamma `updatedAt`
+  // for lastTradePrice to be eligible as a SIM-only fallback trigger price.
+  // NOTE: `updatedAt` is a market-level object-freshness proxy — the Gamma API
+  // does NOT provide a trade-specific timestamp (no `lastTradeTime` field).
+  // Therefore lastTradePrice is a best-effort SIM-only heuristic, not executable.
+  // If updatedAt is older than this, lastTradePrice is diagnostics-only.
+  AUTO_MODE_LTP_MAX_AGE_SEC: parseInt(process.env.AUTO_MODE_LTP_MAX_AGE_SEC || "120", 10),
 };

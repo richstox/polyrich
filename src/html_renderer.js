@@ -2370,13 +2370,14 @@ function renderExplorePage(data) {
 }
 
 /** Render the /system page body. */
-function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday, ticketCloseStats) {
+function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday, ticketCloseStats, debugSnapshot) {
   autoModeStatus = autoModeStatus || {};
   recentCloseAttempts = recentCloseAttempts || [];
   systemSettings = systemSettings || { autoModeEnabled: false, paperCloseEnabled: false };
   envKillSwitches = envKillSwitches || { autoModeEnv: false, paperCloseEnv: false };
   autoSavedToday = autoSavedToday || 0;
   ticketCloseStats = ticketCloseStats || { total: 0, auto: 0, manual: 0, other: 0 };
+  debugSnapshot = debugSnapshot || null;
 
   const envAutoAllows = envKillSwitches.autoModeEnv;
   const envPaperAllows = envKillSwitches.paperCloseEnv;
@@ -2538,12 +2539,41 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         <div title="Trigger condition met but held by debounce — requires 2 consecutive checks or 15+ seconds to confirm (prevents false triggers from price noise)"><span class="label">Debounce hold</span> <strong style="color:${(autoModeStatus.lastTickDebounceHold || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickDebounceHold || 0}</strong></div>
         <div title="Actual auto-close attempts made after debounce confirmed the trigger"><span class="label">Close attempt</span> <strong style="color:${(autoModeStatus.lastTickCloseAttempt || 0) > 0 ? "#22c55e" : "inherit"};">${autoModeStatus.lastTickCloseAttempt || 0}</strong></div>
         <div title="Tickets skipped because they lack a valid conditionId (0x…) — fail-closed identity gate"><span class="label">Identity skip</span> <strong style="color:${(autoModeStatus.lastTickIdentitySkip || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickIdentitySkip || 0}</strong></div>
+        <div title="Tickets where the market has ended (past end date or inactive)"><span class="label">Ended markets</span> <strong style="color:${(autoModeStatus.lastTickEndedMarkets || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickEndedMarkets || 0}</strong></div>
+        <div title="Tickets where the market has been settled/resolved"><span class="label">Settled markets</span> <strong style="color:${(autoModeStatus.lastTickSettledMarkets || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickSettledMarkets || 0}</strong></div>
       </div>${autoModeStatus.lastTickNullPriceSample ? `
       <div style="margin-top:8px;font-size:0.78rem;color:#94a3b8;background:#1e293b;padding:6px 10px;border-radius:6px;">
-        <span style="color:#f59e0b;">⚠ Null-price sample:</span>
-        cid <code>${escHtml(autoModeStatus.lastTickNullPriceSample.conditionId || "—")}</code>
-        · ${escHtml(autoModeStatus.lastTickNullPriceSample.action || "—")}
-        · ticket …${escHtml(autoModeStatus.lastTickNullPriceSample.ticketId || "—")}
+        <span style="color:#f59e0b;">⚠ Null-price sample (in-memory):</span>
+        cid <code>${escHtml(String(autoModeStatus.lastTickNullPriceSample.conditionId || "—"))}</code>
+        · ${escHtml(String(autoModeStatus.lastTickNullPriceSample.action || "—"))}
+        · ticket …${escHtml(String(autoModeStatus.lastTickNullPriceSample.ticketId || "—"))}
+        · reason: <strong style="color:#ef4444;">${escHtml(String(autoModeStatus.lastTickNullPriceSample.nullReason || "—"))}</strong>
+        · HTTP ${escHtml(String(autoModeStatus.lastTickNullPriceSample.httpStatus ?? "—"))}
+        <br>bestBid: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestBidRaw ?? "null"))} (${autoModeStatus.lastTickNullPriceSample.bestBidValid ? "✓" : "✗"})
+        · bestAsk: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestAskRaw ?? "null"))} (${autoModeStatus.lastTickNullPriceSample.bestAskValid ? "✓" : "✗"})
+        · outcomePrices: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.outcomePricesRaw ?? "null"))}
+        <br>lastTradePrice: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.lastTradePriceRaw ?? "null"))}
+        · updatedAt: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.updatedAtRaw ?? "null"))}
+        · updatedAt age: ${autoModeStatus.lastTickNullPriceSample.lastTradeAgeSec !== null ? escHtml(String(autoModeStatus.lastTickNullPriceSample.lastTradeAgeSec)) + "s" : "—"} <span style="color:#64748b;" title="Gamma API has no trade-specific timestamp; updatedAt is a market-level proxy, not guaranteed last-trade freshness">(proxy)</span>
+        · ltpGate: <strong style="color:${autoModeStatus.lastTickNullPriceSample.ltpGatedReason ? "#ef4444" : "#22c55e"};">${escHtml(String(autoModeStatus.lastTickNullPriceSample.ltpGatedReason || "PASS"))}</strong>${autoModeStatus.lastTickNullPriceSample.marketEndState ? `
+        <br>ended: ${autoModeStatus.lastTickNullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${autoModeStatus.lastTickNullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${autoModeStatus.lastTickNullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
+      </div>` : ""}${debugSnapshot && debugSnapshot.nullPriceSample ? `
+      <div style="margin-top:8px;font-size:0.78rem;color:#94a3b8;background:#1a2332;padding:8px 10px;border-radius:6px;border:1px solid #334155;">
+        <span style="color:#818cf8;">💾 Persisted debug sample</span> <span style="color:#64748b;">(${escHtml(String(debugSnapshot.capturedAt || "—"))})</span><br>
+        cid <code>${escHtml(String(debugSnapshot.nullPriceSample.conditionId || "—"))}</code>
+        · ${escHtml(String(debugSnapshot.nullPriceSample.action || "—"))}
+        · ticket …${escHtml(String(debugSnapshot.nullPriceSample.ticketId || "—"))}
+        · reason: <strong style="color:#ef4444;">${escHtml(String(debugSnapshot.nullPriceSample.nullReason || "—"))}</strong>
+        · HTTP ${escHtml(String(debugSnapshot.nullPriceSample.httpStatus ?? "—"))}
+        <br>bestBid: ${escHtml(String(debugSnapshot.nullPriceSample.bestBidRaw ?? "null"))} (${debugSnapshot.nullPriceSample.bestBidValid ? "✓" : "✗"})
+        · bestAsk: ${escHtml(String(debugSnapshot.nullPriceSample.bestAskRaw ?? "null"))} (${debugSnapshot.nullPriceSample.bestAskValid ? "✓" : "✗"})
+        · outcomePrices: ${escHtml(String(debugSnapshot.nullPriceSample.outcomePricesRaw ?? "null"))}
+        <br>lastTradePrice: ${escHtml(String(debugSnapshot.nullPriceSample.lastTradePriceRaw ?? "null"))}
+        · updatedAt: ${escHtml(String(debugSnapshot.nullPriceSample.updatedAtRaw ?? "null"))}
+        · updatedAt age: ${debugSnapshot.nullPriceSample.lastTradeAgeSec !== null ? escHtml(String(debugSnapshot.nullPriceSample.lastTradeAgeSec)) + "s" : "—"} <span style="color:#64748b;" title="Gamma API has no trade-specific timestamp; updatedAt is a market-level proxy, not guaranteed last-trade freshness">(proxy)</span>
+        · ltpGate: <strong style="color:${debugSnapshot.nullPriceSample.ltpGatedReason ? "#ef4444" : "#22c55e"};">${escHtml(String(debugSnapshot.nullPriceSample.ltpGatedReason || "PASS"))}</strong>${debugSnapshot.nullPriceSample.marketEndState ? `
+        <br>ended: ${debugSnapshot.nullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${debugSnapshot.nullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${debugSnapshot.nullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
+        <br><span style="color:#64748b;">Tick: priceNull=${debugSnapshot.tickSummary.priceNull} priceOk=${debugSnapshot.tickSummary.priceOk} priceErr=${debugSnapshot.tickSummary.priceError} ended=${debugSnapshot.tickSummary.endedMarkets} settled=${debugSnapshot.tickSummary.settledMarkets}</span>
       </div>` : ""}
     </div>
 
@@ -2557,7 +2587,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
                 <tr style="border-bottom:1px solid #1e293b;">
                   <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="When the close attempt was made">Time</th>
                   <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Last 6 chars of ticket ID — click to view detail">Ticket</th>
-                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Why the close was triggered: TP_HIT = take profit reached, EXIT_HIT = stop loss reached">Reason</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Why the close was triggered: TP_HIT = take profit reached, EXIT_HIT = stop loss reached, MARKET_ENDED = market ended/closed, MARKET_SETTLED = market outcome resolved">Reason</th>
                   <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Market price at the time of the close attempt">Price</th>
                   <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="PAPER_CLOSED = simulated close, INTENT_RECORDED = real close queued, FAILED = close failed">Result</th>
                   <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Error message if the close attempt failed">Error</th>

@@ -49,7 +49,7 @@ const tradeTicketSchema = new mongoose.Schema(
 
     // Outcome evaluation
     status: { type: String, enum: ["OPEN", "CLOSING", "CLOSED", "ERROR"], default: "OPEN" },
-    closeReason: { type: String, enum: ["TP_HIT", "EXIT_HIT", "MANUAL", "ERROR"], default: null },
+    closeReason: { type: String, enum: ["TP_HIT", "EXIT_HIT", "MANUAL", "ERROR", "MARKET_ENDED", "MARKET_SETTLED"], default: null },
     closedAt: { type: Date, default: null },
     closePrice: { type: Number, default: null },
     realizedPnlUsd: { type: Number, default: null },
