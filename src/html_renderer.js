@@ -685,7 +685,7 @@ function sharedStyles() {
   .badge-count {
     display: inline-flex; align-items: center; justify-content: center;
     min-width: 22px; height: 22px; border-radius: 11px;
-    background: #e5e7eb; font-size: 0.75rem; font-weight: 600; padding: 0 6px;
+    background: #e5e7eb; color: #0b1120; font-size: 0.75rem; font-weight: 600; padding: 0 6px;
   }
   .snapshot-item {
     background: #131b2e; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 16px;
@@ -2630,6 +2630,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         <div title="Tickets where price API returned no usable data"><span class="label">Price NULL</span> <strong style="color:${(autoModeStatus.lastTickPriceNull || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickPriceNull || 0}</strong></div>
         <div title="Tickets where the price API call failed (HTTP 429/5xx — triggers backoff)"><span class="label">Price error</span> <strong style="color:${(autoModeStatus.lastTickPriceError || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickPriceError || 0}</strong></div>
         <div title="Tickets skipped because they are in cooldown after a failed close attempt"><span class="label">Cooldown skip</span> <strong>${autoModeStatus.lastTickCooldownSkip || 0}</strong></div>
+        <div title="Tickets skipped because they were created less than the minimum hold time ago (prevents closing on stale snapshot pricing)"><span class="label">Min-hold skip</span> <strong>${autoModeStatus.lastTickMinHoldSkip || 0}</strong></div>
         <div title="Tickets where price reached Take Profit or Exit (risk) level — trigger condition met"><span class="label">Trigger HIT</span> <strong style="color:${(autoModeStatus.lastTickTriggerHit || 0) > 0 ? "#22c55e" : "inherit"};">${autoModeStatus.lastTickTriggerHit || 0}</strong></div>
         <div title="Tickets where price was fetched OK but has NOT reached TP or Exit level yet — no action needed, still monitoring"><span class="label">Trigger miss</span> <strong>${autoModeStatus.lastTickTriggerMiss || 0}</strong></div>
         <div title="Trigger condition met but held by debounce — requires 2 consecutive checks or 15+ seconds to confirm (prevents false triggers from price noise)"><span class="label">Debounce hold</span> <strong style="color:${(autoModeStatus.lastTickDebounceHold || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickDebounceHold || 0}</strong></div>
@@ -3166,9 +3167,9 @@ function renderHistoryPage(closedTickets, activeRange, customFrom, customTo) {
       : "";
 
     return `
-      <a href="/tickets/${escHtml(String(t._id))}"
-         class="tk-ticket history-card"
-         style="text-decoration:none;display:block;position:relative;cursor:pointer;"
+      <div class="tk-ticket history-card"
+         style="position:relative;cursor:pointer;"
+         data-detail-url="/tickets/${escHtml(String(t._id))}"
          data-question="${escHtml(headline.toLowerCase())}"
          data-action="${escHtml(t.action || "")}"
          data-pnl="${typeof t.realizedPnlUsd === "number" ? t.realizedPnlUsd : 0}"
@@ -3185,7 +3186,7 @@ function renderHistoryPage(closedTickets, activeRange, customFrom, customTo) {
           <span style="margin-left:auto;">${utcSpan(t.closedAt || t.createdAt)}</span>
           <span style="color:#60a5fa;">→</span>
         </div>
-      </a>
+      </div>
     `;
   }
 
@@ -3210,6 +3211,19 @@ function renderHistoryPage(closedTickets, activeRange, customFrom, customTo) {
     </div>
     <script>
     (function() {
+
+      // Navigate to detail on card click (excluding inner links)
+      var listEl = document.getElementById("history-list");
+      if (listEl) {
+        listEl.addEventListener("click", function(e) {
+          var card = e.target.closest(".history-card");
+          if (!card) return;
+          // Don't navigate if clicking on an inner link or button
+          if (e.target.closest("a[target]") || e.target.closest("button")) return;
+          var url = card.getAttribute("data-detail-url");
+          if (url) window.location.href = url;
+        });
+      }
 
       // Custom range toggle
       var customBtn = document.querySelector('[data-range="custom"]');

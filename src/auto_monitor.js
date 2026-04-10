@@ -33,6 +33,7 @@ const monitorState = {
   lastTickPriceNull: 0,
   lastTickPriceError: 0,
   lastTickCooldownSkip: 0,
+  lastTickMinHoldSkip: 0,
   lastTickTriggerHit: 0,
   lastTickTriggerMiss: 0,
   lastTickDebounceHold: 0,
@@ -90,6 +91,7 @@ function resetTickDiagnostics() {
   monitorState.lastTickPriceNull = 0;
   monitorState.lastTickPriceError = 0;
   monitorState.lastTickCooldownSkip = 0;
+  monitorState.lastTickMinHoldSkip = 0;
   monitorState.lastTickTriggerHit = 0;
   monitorState.lastTickTriggerMiss = 0;
   monitorState.lastTickDebounceHold = 0;
@@ -923,6 +925,16 @@ async function monitorTick() {
       continue;
     }
 
+    // Minimum hold time: skip freshly created tickets to avoid closing on
+    // stale snapshot pricing or transient bid-ask spread exceeding stop margin.
+    if (ticket.createdAt) {
+      const ageMs = Date.now() - new Date(ticket.createdAt).getTime();
+      if (ageMs < config.AUTO_MODE_MIN_HOLD_SEC * 1000) {
+        monitorState.lastTickMinHoldSkip = (monitorState.lastTickMinHoldSkip || 0) + 1;
+        continue;
+      }
+    }
+
     let priceResult;
     // CLOB primary: use CLOB orderbook if the ticket has the required token ID
     const hasTokenId = !!resolveTokenId(ticket);
@@ -1059,6 +1071,7 @@ function logTickDiagnostics() {
     priceNull: s.lastTickPriceNull,
     priceErr: s.lastTickPriceError,
     cooldown: s.lastTickCooldownSkip,
+    minHold: s.lastTickMinHoldSkip,
     triggerHit: s.lastTickTriggerHit,
     triggerMiss: s.lastTickTriggerMiss,
     debounceHold: s.lastTickDebounceHold,
