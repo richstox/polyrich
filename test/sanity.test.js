@@ -2295,6 +2295,14 @@ console.log("\nfinal selection: mispricing quota");
   // Verify data attribute for entryBid
   assert(html.includes('data-entry-bid="0.38"'),
     "Trade card includes data-entry-bid attribute");
+
+  // Test with missing bid: entryBid should render as empty string
+  const itemNoBid = { ...item, bestBidNum: 0 };
+  const htmlNoBid = renderTradeCard(itemNoBid);
+  assert(htmlNoBid.includes('data-entry-bid=""'),
+    "Trade card with missing bid has empty data-entry-bid attribute");
+  assert(htmlNoBid.includes("\u2014"), // em-dash for missing bid display
+    "Trade card shows em-dash for missing entry closeable (bid)");
 }
 
 // ---------------------------------------------------------------------------

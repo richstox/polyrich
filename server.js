@@ -411,6 +411,7 @@ async function autoSaveExecuteTickets(scanId) {
     const askSizeRaw = (typeof item.bestAskSize === "number" && item.bestAskSize > 0) ? item.bestAskSize : null;
 
     // --- Admission gates: spread + liquidity ---
+    // Gate precedence: identity > spread > liquidity (first failure wins)
     if (effectiveAutoClose && spreadPct !== null && spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
       effectiveAutoClose = false;
       autoCloseBlockedReason = "SPREAD_TOO_WIDE";
@@ -1471,6 +1472,7 @@ if (url.pathname === "/trade") {
           }
         }
         // Admission gates for auto-close: spread + liquidity
+        // Gate precedence: identity > spread > liquidity (first failure wins)
         if (data.autoCloseEnabled && typeof data.entrySpreadPct === "number" && data.entrySpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
           data.autoCloseEnabled = false;
           data.autoCloseBlockedReason = "SPREAD_TOO_WIDE";
