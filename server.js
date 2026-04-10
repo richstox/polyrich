@@ -50,6 +50,8 @@ const {
 } = require("./src/html_renderer");
 const { startMonitorLoop, getMonitorStatus } = require("./src/auto_monitor");
 
+const DANGER_ZONE_VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN"];
+
 // ---------------------------------------------------------------------------
 // Node version check — warn-only, never crash
 // ---------------------------------------------------------------------------
@@ -1522,7 +1524,8 @@ if (url.pathname === "/trade") {
         query.closedAt = { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) };
       } else if (rangeParam === "custom" && customFrom) {
         const fromDate = new Date(customFrom);
-        const toDate = customTo ? new Date(customTo + "T23:59:59.999Z") : new Date();
+        const toDateRaw = customTo ? new Date(customTo + "T23:59:59.999Z") : new Date();
+        const toDate = isNaN(toDateRaw.getTime()) ? new Date() : toDateRaw;
         if (!isNaN(fromDate.getTime())) {
           query.closedAt = { $gte: fromDate, $lte: toDate };
         }
@@ -1663,10 +1666,9 @@ if (url.pathname === "/trade") {
         const data = JSON.parse(body);
         const { action, confirmation } = data;
 
-        const VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN"];
-        if (!VALID_ACTIONS.includes(action)) {
+        if (!DANGER_ZONE_VALID_ACTIONS.includes(action)) {
           res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: `Invalid action. Must be one of: ${VALID_ACTIONS.join(", ")}` }));
+          res.end(JSON.stringify({ error: `Invalid action. Must be one of: ${DANGER_ZONE_VALID_ACTIONS.join(", ")}` }));
           return;
         }
 
