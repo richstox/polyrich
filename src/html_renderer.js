@@ -60,6 +60,18 @@ const DIAGNOSTIC_REASONS = {
     whatToDo: "Create a new ticket so entry microstructure is captured, or close manually.",
     queryParam: "blockedReason",
   },
+  NO_EXECUTABLE_BID: {
+    label: "No executable bid",
+    explanation: "The CLOB orderbook did not return a valid executable bid (finite, > 0, < 1). The ticket cannot be auto-closed without a real bid to sell into.",
+    whatToDo: "Wait for a valid bid to appear, or close manually.",
+    queryParam: "monitorReason",
+  },
+  SPREAD_TOO_WIDE: {
+    label: "Spread too wide (warning)",
+    explanation: "The entry spread exceeded the advisory threshold. This is a warning — the ticket is saved but auto-close may be blocked.",
+    whatToDo: "Review the market manually. The wide spread suggests low liquidity.",
+    queryParam: "blockedReason",
+  },
 };
 
 function renderBreakdown(item) {
@@ -1423,7 +1435,7 @@ function inferSize(item) {
  * Returns { tp, stop } as numbers or null.
  */
 function inferExit(entryNum, bidBasis) {
-  const basis = (typeof bidBasis === "number" && bidBasis > 0) ? bidBasis : null;
+  const basis = (Number.isFinite(bidBasis) && bidBasis > 0) ? bidBasis : null;
   if (basis === null || basis >= PRICE_CEILING) return { tp: null, stop: null };
   const tp = Math.min(basis * TP_MULTIPLIER, PRICE_CEILING);
   const stop = Math.max(basis * STOP_MULTIPLIER, PRICE_FLOOR);
@@ -1581,8 +1593,8 @@ function renderTradeCard(item) {
 
     // Entry microstructure for save payload
     const entryAskNum = entryNum;  // inferEntry returns bestAsk
-    const midNum = (entryBidNum && entryAskNum) ? (entryAskNum + entryBidNum) / 2 : null;
-    const spreadAbs = (entryBidNum && entryAskNum) ? (entryAskNum - entryBidNum) : null;
+    const midNum = (Number.isFinite(entryBidNum) && entryBidNum > 0 && entryAskNum) ? (entryAskNum + entryBidNum) / 2 : null;
+    const spreadAbs = (Number.isFinite(entryBidNum) && entryBidNum > 0 && entryAskNum) ? (entryAskNum - entryBidNum) : null;
     const spreadPct = (midNum && midNum > 0 && spreadAbs !== null) ? spreadAbs / midNum : null;
 
     const savePayload = JSON.stringify({
@@ -1635,7 +1647,7 @@ function renderTradeCard(item) {
         <div class="trade-size-row trade-plan-item" style="margin-bottom:6px;"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
         <div class="trade-plan-grid">
           <div class="trade-plan-item"><span class="trade-plan-label">Entry (ask)</span><span class="trade-plan-value">$${entryNum.toFixed(2)}</span></div>
-          <div class="trade-plan-item"><span class="trade-plan-label">Entry closeable (bid)</span><span class="trade-plan-value">${entryBidNum ? "$" + entryBidNum.toFixed(2) : "\u2014"}</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">Entry closeable (bid)</span><span class="trade-plan-value">${(Number.isFinite(entryBidNum) && entryBidNum > 0) ? "$" + entryBidNum.toFixed(2) : "\u2014"}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">TAKE PROFIT (bid-based)</span><span class="trade-plan-value">$${tpNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">STOP-LOSS (bid-based)</span><span class="trade-plan-value">$${stopNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">PnL @ TP (approx)</span><span class="trade-plan-value trade-pnl-tp" style="color:#22c55e;">+$${pnlTpUsd.toFixed(2)} (+${pnlTpPct.toFixed(1)}% of stake)</span></div>
@@ -3728,8 +3740,8 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
     ? (ticketHoursLeft <= 0 ? "ended" : formatHoursLeft(ticketHoursLeft) + " left")
     : "\u2014";
 
-  // Optional fields
-  const fmtPrice = (v) => typeof v === "number" ? "$" + v.toFixed(2) : "\u2014";
+  // Optional fields — never render null/invalid as "$0.00"
+  const fmtPrice = (v) => (Number.isFinite(v) && v > 0) ? "$" + v.toFixed(2) : "\u2014";
   const fmtPct = (v) => typeof v === "number" ? (v * 100).toFixed(1) + "%" : "\u2014";
   const fmtUsd = (v) => typeof v === "number" ? "$" + v.toFixed(2) : "\u2014";
 

@@ -412,8 +412,8 @@ async function autoSaveExecuteTickets(scanId) {
       try {
         const book = await fetchClobBook(tokenId);
         if (book) {
-          // Override bid from CLOB if available and positive (more accurate than Gamma snapshot)
-          if (book.bestBid !== null && book.bestBid > 0) entryBidNum = book.bestBid;
+          // Override bid from CLOB only if normalized value is non-null
+          if (book.bestBid !== null) entryBidNum = book.bestBid;
           bidSizeRaw = book.topBidSize;
           askSizeRaw = book.topAskSize;
         }
@@ -421,8 +421,17 @@ async function autoSaveExecuteTickets(scanId) {
       await new Promise((r) => setTimeout(r, 50)); // rate-limit CLOB calls
     }
 
+    // Structured traceability: log CLOB book state at ticket creation
+    console.log(JSON.stringify({
+      msg: "autoSave-clob-book",
+      tokenId: tokenId || null,
+      entryBid: entryBidNum, entryAsk: entryNum,
+      bidSize: bidSizeRaw, askSize: askSizeRaw,
+      ts: new Date().toISOString(),
+    }));
+
     // Recompute TP/SL with CLOB-verified bid (may differ from Gamma screening pass)
-    if (entryBidNum > 0) {
+    if (Number.isFinite(entryBidNum) && entryBidNum > 0) {
       const clobExits = inferExit(entryNum, entryBidNum);
       if (clobExits.tp !== null && clobExits.stop !== null) {
         tpNum = clobExits.tp;
@@ -430,29 +439,51 @@ async function autoSaveExecuteTickets(scanId) {
       }
     }
 
-    // Fail-closed: if entryBid is missing after CLOB fetch, block auto-close
-    if (effectiveAutoClose && (typeof entryBidNum !== "number" || entryBidNum <= 0)) {
+    // ---------------------------------------------------------------------------
+    // HARD INVARIANT: Fail-closed on missing executable bid
+    // ---------------------------------------------------------------------------
+    // An EXECUTE ticket with auto-close REQUIRES:
+    //  1. entryBid: finite > 0 (valid executable bid from CLOB)
+    //  2. entryAsk: finite > 0 (entry price)
+    //  3. entryBidSize: finite > 0 (liquidity exists at that bid level)
+    //  4. TP and SL: finite > 0 (computed from valid bid basis)
+    // If ANY is missing → block auto-close with NO_EXECUTABLE_BID.
+    const hasValidBid  = Number.isFinite(entryBidNum) && entryBidNum > 0;
+    const hasValidAsk  = Number.isFinite(entryNum) && entryNum > 0;
+    const hasValidSize = Number.isFinite(bidSizeRaw) && bidSizeRaw > 0;
+    const hasValidTP   = Number.isFinite(tpNum) && tpNum > 0;
+    const hasValidSL   = Number.isFinite(stopNum) && stopNum > 0;
+
+    if (effectiveAutoClose && !(hasValidBid && hasValidAsk && hasValidSize && hasValidTP && hasValidSL)) {
       effectiveAutoClose = false;
-      autoCloseBlockedReason = autoCloseBlockedReason || "MISSING_ENTRY_EXEC_PRICES";
+      autoCloseBlockedReason = autoCloseBlockedReason || "NO_EXECUTABLE_BID";
     }
 
     // --- Entry microstructure snapshot ---
     const entryAskNum = entryNum; // inferEntry returns bestAsk
-    const midNum = (entryBidNum > 0 && entryAskNum) ? (entryAskNum + entryBidNum) / 2 : null;
-    const spreadAbs = (entryBidNum > 0 && entryAskNum) ? (entryAskNum - entryBidNum) : null;
+    const midNum = (hasValidBid && entryAskNum) ? (entryAskNum + entryBidNum) / 2 : null;
+    const spreadAbs = (hasValidBid && entryAskNum) ? (entryAskNum - entryBidNum) : null;
     const spreadPct = (midNum && midNum > 0 && spreadAbs !== null) ? spreadAbs / midNum : null;
 
-    // --- Admission gate: spread ---
-    // Skip ticket entirely when CLOB-verified spread exceeds the allowed max.
-    // This prevents creating tickets in illiquid markets where TP/SL are garbage
-    // (e.g., bid=0.001 vs ask=0.32 → TP=0.001×1.10 which is below entry).
+    // --- Spread warning (advisory only, NOT a hard gate) ---
+    // Wide spread is logged for operator awareness but does NOT skip the ticket.
     if (spreadPct !== null && spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
-      continue;
+      console.log(JSON.stringify({
+        msg: "autoSave-spread-warning",
+        marketId, spreadPct: Math.round(spreadPct * 10000) / 10000,
+        threshold: config.MAX_ENTRY_SPREAD_PCT,
+        ts: new Date().toISOString(),
+      }));
+      // Block auto-close for operator review, but still create the ticket
+      if (effectiveAutoClose) {
+        effectiveAutoClose = false;
+        autoCloseBlockedReason = autoCloseBlockedReason || "SPREAD_TOO_WIDE";
+      }
     }
 
     // --- Admission gates: liquidity ---
     // Liquidity gate: close-side = bid (selling shares). Check notional at top bid.
-    if (effectiveAutoClose && entryBidNum > 0 && bidSizeRaw !== null) {
+    if (effectiveAutoClose && hasValidBid && bidSizeRaw !== null) {
       const bidNotionalUsd = entryBidNum * bidSizeRaw;
       if (bidNotionalUsd < config.MIN_BID_SIZE_USD) {
         effectiveAutoClose = false;
@@ -1516,17 +1547,17 @@ if (url.pathname === "/trade") {
             try {
               const book = await fetchClobBook(tokenId);
               if (book) {
-                // Override entry snapshot from CLOB (authoritative)
-                if (book.bestBid !== null && book.bestBid > 0) data.entryBid = book.bestBid;
-                if (book.bestAsk !== null && book.bestAsk > 0) data.entryAsk = book.bestAsk;
+                // Override entry snapshot from CLOB only if normalized values are non-null
+                if (book.bestBid !== null) data.entryBid = book.bestBid;
+                if (book.bestAsk !== null) data.entryAsk = book.bestAsk;
                 data.entryBidSize = book.topBidSize;
                 data.entryAskSize = book.topAskSize;
                 // Recompute derived fields from verified CLOB data
-                const mid = (data.entryBid > 0 && data.entryAsk > 0)
-                  ? (data.entryAsk + data.entryBid) / 2 : null;
+                const vBid = Number.isFinite(data.entryBid) && data.entryBid > 0;
+                const vAsk = Number.isFinite(data.entryAsk) && data.entryAsk > 0;
+                const mid = (vBid && vAsk) ? (data.entryAsk + data.entryBid) / 2 : null;
                 data.entryMid = mid ? Math.round(mid * 10000) / 10000 : null;
-                const spreadAbs = (data.entryBid > 0 && data.entryAsk > 0)
-                  ? (data.entryAsk - data.entryBid) : null;
+                const spreadAbs = (vBid && vAsk) ? (data.entryAsk - data.entryBid) : null;
                 data.entrySpreadAbs = spreadAbs !== null
                   ? Math.round(spreadAbs * 10000) / 10000 : null;
                 const spreadPct = (mid && mid > 0 && spreadAbs !== null)
@@ -1536,13 +1567,26 @@ if (url.pathname === "/trade") {
               }
             } catch (_) { /* CLOB fetch failed — use client-provided data as fallback */ }
           }
-          // Fail-closed: if entryBid is missing after CLOB fetch, block auto-close
-          if (data.autoCloseEnabled && (typeof data.entryBid !== "number" || data.entryBid <= 0)) {
+          // HARD INVARIANT: Fail-closed on missing executable bid
+          // Requires: entryBid (finite > 0), entryAsk (finite > 0), entryBidSize (finite > 0)
+          const vb = Number.isFinite(data.entryBid) && data.entryBid > 0;
+          const va = Number.isFinite(data.entryAsk) && data.entryAsk > 0;
+          const vs = Number.isFinite(data.entryBidSize) && data.entryBidSize > 0;
+          if (data.autoCloseEnabled && !(vb && va && vs)) {
             data.autoCloseEnabled = false;
-            data.autoCloseBlockedReason = data.autoCloseBlockedReason || "MISSING_ENTRY_EXEC_PRICES";
+            data.autoCloseBlockedReason = data.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
+          }
+          // Also verify TP/SL are valid if present
+          if (data.autoCloseEnabled) {
+            const vtp = Number.isFinite(data.takeProfit) && data.takeProfit > 0;
+            const vsl = Number.isFinite(data.riskExitLimit) && data.riskExitLimit > 0;
+            if (!vtp || !vsl) {
+              data.autoCloseEnabled = false;
+              data.autoCloseBlockedReason = data.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
+            }
           }
         }
-        // Admission gate: spread — block auto-close if spread exceeds max
+        // Spread warning: advisory only — block auto-close but don't reject the ticket
         if (data.autoCloseEnabled && typeof data.entrySpreadPct === "number" && data.entrySpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
           data.autoCloseEnabled = false;
           data.autoCloseBlockedReason = data.autoCloseBlockedReason || "SPREAD_TOO_WIDE";
