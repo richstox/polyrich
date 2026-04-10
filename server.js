@@ -378,6 +378,8 @@ async function autoSaveExecuteTickets(scanId) {
       marketId,
       conditionId: rawConditionId,
       marketSlug: rawMarketSlug,
+      yesTokenId: (item.yesTokenId || "").trim() || null,
+      noTokenId: (item.noTokenId || "").trim() || null,
       eventSlug: item.eventSlug || null,
       eventTitle: item.eventTitle || null,
       groupItemTitle: item.groupItemTitle || null,
@@ -1298,6 +1300,9 @@ if (url.pathname === "/trade") {
         // Persist canonical identity fields from the payload
         if (data.conditionId) data.conditionId = String(data.conditionId).trim() || null;
         if (data.marketSlug) data.marketSlug = String(data.marketSlug).trim() || null;
+        // Persist CLOB token IDs from payload
+        if (data.yesTokenId) data.yesTokenId = String(data.yesTokenId).trim() || null;
+        if (data.noTokenId) data.noTokenId = String(data.noTokenId).trim() || null;
         // Strict auto-close gate: require valid conditionId for monitoring
         if (data.autoCloseEnabled) {
           const cid = data.conditionId || "";

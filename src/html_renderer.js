@@ -1511,6 +1511,8 @@ function renderTradeCard(item) {
       marketId: item.conditionId || item.marketSlug || item.question,
       conditionId: item.conditionId || null,
       marketSlug: item.marketSlug || null,
+      yesTokenId: item.yesTokenId || null,
+      noTokenId: item.noTokenId || null,
       eventSlug: item.eventSlug || null,
       eventTitle: item.eventTitle || null,
       groupItemTitle: item.groupItemTitle || null,
@@ -1567,6 +1569,8 @@ function renderTradeCard(item) {
     marketId: item.conditionId || item.marketSlug || item.question,
     conditionId: item.conditionId || null,
     marketSlug: item.marketSlug || null,
+    yesTokenId: item.yesTokenId || null,
+    noTokenId: item.noTokenId || null,
     eventSlug: item.eventSlug || null,
     eventTitle: item.eventTitle || null,
     groupItemTitle: item.groupItemTitle || null,
@@ -2530,8 +2534,8 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
       <div style="font-size:0.82rem;color:#94a3b8;margin-bottom:6px;font-weight:600;">🔬 Last Tick Diagnostics</div>
       <div class="grid-2" style="gap:6px 24px;">
         <div title="Number of open tickets with autoClose enabled that were checked in this tick"><span class="label">Batch size</span> <strong>${autoModeStatus.lastTickBatchSize || 0}</strong></div>
-        <div title="Tickets where the current market price was successfully fetched from the API"><span class="label">Price OK</span> <strong style="color:#22c55e;">${autoModeStatus.lastTickPriceOk || 0}</strong></div>
-        <div title="Tickets where the price API returned no data (market may be inactive or delisted)"><span class="label">Price NULL</span> <strong style="color:${(autoModeStatus.lastTickPriceNull || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickPriceNull || 0}</strong></div>
+        <div title="Tickets where the current market price was successfully fetched"><span class="label">Price OK</span> <strong style="color:#22c55e;">${autoModeStatus.lastTickPriceOk || 0}</strong></div>
+        <div title="Tickets where price API returned no usable data"><span class="label">Price NULL</span> <strong style="color:${(autoModeStatus.lastTickPriceNull || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickPriceNull || 0}</strong></div>
         <div title="Tickets where the price API call failed (HTTP 429/5xx — triggers backoff)"><span class="label">Price error</span> <strong style="color:${(autoModeStatus.lastTickPriceError || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickPriceError || 0}</strong></div>
         <div title="Tickets skipped because they are in cooldown after a failed close attempt"><span class="label">Cooldown skip</span> <strong>${autoModeStatus.lastTickCooldownSkip || 0}</strong></div>
         <div title="Tickets where price reached Take Profit or Exit (risk) level — trigger condition met"><span class="label">Trigger HIT</span> <strong style="color:${(autoModeStatus.lastTickTriggerHit || 0) > 0 ? "#22c55e" : "inherit"};">${autoModeStatus.lastTickTriggerHit || 0}</strong></div>
@@ -2541,39 +2545,40 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         <div title="Tickets skipped because they lack a valid conditionId (0x…) — fail-closed identity gate"><span class="label">Identity skip</span> <strong style="color:${(autoModeStatus.lastTickIdentitySkip || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickIdentitySkip || 0}</strong></div>
         <div title="Tickets where the market has ended (past end date or inactive)"><span class="label">Ended markets</span> <strong style="color:${(autoModeStatus.lastTickEndedMarkets || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickEndedMarkets || 0}</strong></div>
         <div title="Tickets where the market has been settled/resolved"><span class="label">Settled markets</span> <strong style="color:${(autoModeStatus.lastTickSettledMarkets || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickSettledMarkets || 0}</strong></div>
+      </div>
+      <hr style="border-color:#1e293b;margin:12px 0;">
+      <div style="font-size:0.82rem;color:#94a3b8;margin-bottom:6px;font-weight:600;">📡 CLOB Orderbook Diagnostics <span style="background:#166534;color:#bbf7d0;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:700;">PRIMARY</span></div>
+      <div class="grid-2" style="gap:6px 24px;">
+        <div title="Tickets where CLOB orderbook returned a valid top-of-book bid price"><span class="label">CLOB Price OK</span> <strong style="color:#22c55e;">${autoModeStatus.lastTickClobPriceOk || 0}</strong></div>
+        <div title="Tickets where CLOB returned no usable price (no bids, invalid data)"><span class="label">CLOB Price NULL</span> <strong style="color:${(autoModeStatus.lastTickClobPriceNull || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickClobPriceNull || 0}</strong></div>
+        <div title="Tickets where CLOB /book returned 404 — no orderbook exists for this token"><span class="label">CLOB 404 (no book)</span> <strong style="color:${(autoModeStatus.lastTickClobPrice404 || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickClobPrice404 || 0}</strong></div>
+        <div title="Tickets where CLOB returned 429 — rate limited"><span class="label">CLOB rate limit</span> <strong style="color:${(autoModeStatus.lastTickClobRateLimit || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickClobRateLimit || 0}</strong></div>
+        <div title="Tickets blocked because they lack CLOB token IDs (yesTokenId/noTokenId)"><span class="label">Token ID missing</span> <strong style="color:${(autoModeStatus.lastTickClobTokenIdMissing || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickClobTokenIdMissing || 0}</strong></div>
+        <div title="Price monitoring source"><span class="label">Source</span> <strong style="color:#22c55e;">CLOB</strong></div>
       </div>${autoModeStatus.lastTickNullPriceSample ? `
       <div style="margin-top:8px;font-size:0.78rem;color:#94a3b8;background:#1e293b;padding:6px 10px;border-radius:6px;">
         <span style="color:#f59e0b;">⚠ Null-price sample (in-memory):</span>
-        cid <code>${escHtml(String(autoModeStatus.lastTickNullPriceSample.conditionId || "—"))}</code>
+        tokenId <code>${escHtml(String(autoModeStatus.lastTickNullPriceSample.tokenId || "—"))}</code>
         · ${escHtml(String(autoModeStatus.lastTickNullPriceSample.action || "—"))}
         · ticket …${escHtml(String(autoModeStatus.lastTickNullPriceSample.ticketId || "—"))}
         · reason: <strong style="color:#ef4444;">${escHtml(String(autoModeStatus.lastTickNullPriceSample.nullReason || "—"))}</strong>
+        · source: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.source || "—"))}
         · HTTP ${escHtml(String(autoModeStatus.lastTickNullPriceSample.httpStatus ?? "—"))}
-        <br>bestBid: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestBidRaw ?? "null"))} (${autoModeStatus.lastTickNullPriceSample.bestBidValid ? "✓" : "✗"})
-        · bestAsk: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestAskRaw ?? "null"))} (${autoModeStatus.lastTickNullPriceSample.bestAskValid ? "✓" : "✗"})
-        · outcomePrices: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.outcomePricesRaw ?? "null"))}
-        <br>lastTradePrice: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.lastTradePriceRaw ?? "null"))}
-        · updatedAt: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.updatedAtRaw ?? "null"))}
-        · updatedAt age: ${autoModeStatus.lastTickNullPriceSample.lastTradeAgeSec !== null ? escHtml(String(autoModeStatus.lastTickNullPriceSample.lastTradeAgeSec)) + "s" : "—"} <span style="color:#64748b;" title="Gamma API has no trade-specific timestamp; updatedAt is a market-level proxy, not guaranteed last-trade freshness">(proxy)</span>
-        · ltpGate: <strong style="color:${autoModeStatus.lastTickNullPriceSample.ltpGatedReason ? "#ef4444" : "#22c55e"};">${escHtml(String(autoModeStatus.lastTickNullPriceSample.ltpGatedReason || "PASS"))}</strong>${autoModeStatus.lastTickNullPriceSample.marketEndState ? `
-        <br>ended: ${autoModeStatus.lastTickNullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${autoModeStatus.lastTickNullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${autoModeStatus.lastTickNullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
+        <br>bestBid: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestBid ?? "null"))}
+        · bestAsk: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestAsk ?? "null"))}
+        · spread: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.spread ?? "—"))}
+        · bids: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bidsCount ?? "—"))}
+        · asks: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.asksCount ?? "—"))}
       </div>` : ""}${debugSnapshot && debugSnapshot.nullPriceSample ? `
       <div style="margin-top:8px;font-size:0.78rem;color:#94a3b8;background:#1a2332;padding:8px 10px;border-radius:6px;border:1px solid #334155;">
         <span style="color:#818cf8;">💾 Persisted debug sample</span> <span style="color:#64748b;">(${escHtml(String(debugSnapshot.capturedAt || "—"))})</span><br>
-        cid <code>${escHtml(String(debugSnapshot.nullPriceSample.conditionId || "—"))}</code>
+        tokenId <code>${escHtml(String(debugSnapshot.nullPriceSample.tokenId || debugSnapshot.nullPriceSample.conditionId || "—"))}</code>
         · ${escHtml(String(debugSnapshot.nullPriceSample.action || "—"))}
         · ticket …${escHtml(String(debugSnapshot.nullPriceSample.ticketId || "—"))}
         · reason: <strong style="color:#ef4444;">${escHtml(String(debugSnapshot.nullPriceSample.nullReason || "—"))}</strong>
+        · source: ${escHtml(String(debugSnapshot.nullPriceSample.source || "—"))}
         · HTTP ${escHtml(String(debugSnapshot.nullPriceSample.httpStatus ?? "—"))}
-        <br>bestBid: ${escHtml(String(debugSnapshot.nullPriceSample.bestBidRaw ?? "null"))} (${debugSnapshot.nullPriceSample.bestBidValid ? "✓" : "✗"})
-        · bestAsk: ${escHtml(String(debugSnapshot.nullPriceSample.bestAskRaw ?? "null"))} (${debugSnapshot.nullPriceSample.bestAskValid ? "✓" : "✗"})
-        · outcomePrices: ${escHtml(String(debugSnapshot.nullPriceSample.outcomePricesRaw ?? "null"))}
-        <br>lastTradePrice: ${escHtml(String(debugSnapshot.nullPriceSample.lastTradePriceRaw ?? "null"))}
-        · updatedAt: ${escHtml(String(debugSnapshot.nullPriceSample.updatedAtRaw ?? "null"))}
-        · updatedAt age: ${debugSnapshot.nullPriceSample.lastTradeAgeSec !== null ? escHtml(String(debugSnapshot.nullPriceSample.lastTradeAgeSec)) + "s" : "—"} <span style="color:#64748b;" title="Gamma API has no trade-specific timestamp; updatedAt is a market-level proxy, not guaranteed last-trade freshness">(proxy)</span>
-        · ltpGate: <strong style="color:${debugSnapshot.nullPriceSample.ltpGatedReason ? "#ef4444" : "#22c55e"};">${escHtml(String(debugSnapshot.nullPriceSample.ltpGatedReason || "PASS"))}</strong>${debugSnapshot.nullPriceSample.marketEndState ? `
-        <br>ended: ${debugSnapshot.nullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${debugSnapshot.nullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${debugSnapshot.nullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
-        <br><span style="color:#64748b;">Tick: priceNull=${debugSnapshot.tickSummary.priceNull} priceOk=${debugSnapshot.tickSummary.priceOk} priceErr=${debugSnapshot.tickSummary.priceError} ended=${debugSnapshot.tickSummary.endedMarkets} settled=${debugSnapshot.tickSummary.settledMarkets}</span>
+        <br><span style="color:#64748b;">Tick: priceOk=${debugSnapshot.tickSummary.priceOk} priceNull=${debugSnapshot.tickSummary.priceNull} priceErr=${debugSnapshot.tickSummary.priceError} clobOk=${debugSnapshot.tickSummary.clobOk || 0} clob404=${debugSnapshot.tickSummary.clob404 || 0} clobTokenMissing=${debugSnapshot.tickSummary.clobTokenMissing || 0}</span>
       </div>` : ""}
     </div>
 

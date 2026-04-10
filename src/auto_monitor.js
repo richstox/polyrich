@@ -40,6 +40,12 @@ const monitorState = {
   lastTickIdentitySkip: 0,         // tickets skipped: missing valid conditionId
   lastTickEndedMarkets: 0,         // tickets where market is ended (auto-closed or blocked)
   lastTickSettledMarkets: 0,       // tickets where market is settled (auto-closed or blocked)
+  // CLOB diagnostics
+  lastTickClobPriceOk: 0,          // tickets where CLOB orderbook price was successfully fetched
+  lastTickClobPriceNull: 0,        // tickets where CLOB returned no usable price
+  lastTickClobPrice404: 0,         // tickets where CLOB /book returned 404 (no orderbook)
+  lastTickClobRateLimit: 0,        // tickets where CLOB returned 429 (rate limit)
+  lastTickClobTokenIdMissing: 0,   // tickets lacking token IDs → blocked
   // Sample: first null-price ticket per tick for debugging (rich diagnostic)
   lastTickNullPriceSample: null,
 };
@@ -91,6 +97,11 @@ function resetTickDiagnostics() {
   monitorState.lastTickIdentitySkip = 0;
   monitorState.lastTickEndedMarkets = 0;
   monitorState.lastTickSettledMarkets = 0;
+  monitorState.lastTickClobPriceOk = 0;
+  monitorState.lastTickClobPriceNull = 0;
+  monitorState.lastTickClobPrice404 = 0;
+  monitorState.lastTickClobRateLimit = 0;
+  monitorState.lastTickClobTokenIdMissing = 0;
   monitorState.lastTickNullPriceSample = null;
 }
 
@@ -184,8 +195,151 @@ async function releaseLease() {
 }
 
 // ---------------------------------------------------------------------------
-// A2) Current closeable price
+// A2) Current closeable price — CLOB primary + Gamma fallback
 // ---------------------------------------------------------------------------
+
+/**
+ * Resolve the CLOB token ID for the ticket's held outcome.
+ *
+ * Token ID mapping:
+ *   BUY_YES → ticket.yesTokenId  (selling YES shares → need YES token orderbook)
+ *   BUY_NO  → ticket.noTokenId   (selling NO shares → need NO token orderbook)
+ *
+ * Returns the token ID string or null if not available.
+ */
+function resolveTokenId(ticket) {
+  if (ticket.action === "BUY_YES" && ticket.yesTokenId) return ticket.yesTokenId;
+  if (ticket.action === "BUY_NO" && ticket.noTokenId) return ticket.noTokenId;
+  return null;
+}
+
+/**
+ * Fetch executable close price from CLOB orderbook (primary monitoring source).
+ *
+ * Uses GET https://clob.polymarket.com/book?token_id={tokenId}
+ *
+ * For a held position:
+ *   BUY_YES → selling YES shares → executable price = top bid on YES token
+ *   BUY_NO  → selling NO shares  → executable price = top bid on NO token
+ *
+ * Unlike Gamma-based monitoring, we do NOT use `1 - bestAsk` hacks for NO pricing.
+ * Each outcome has its own CLOB orderbook with native bid/ask.
+ *
+ * Returns { price, source, bestBid, bestAsk, spread, topBidSize, topAskSize, timestamp }
+ * or null on failure. Populates getClobPrice._lastDiag for debugging.
+ */
+async function getClobPrice(ticket) {
+  const tokenId = resolveTokenId(ticket);
+  if (!tokenId) return null;
+
+  const url = `https://clob.polymarket.com/book?token_id=${encodeURIComponent(tokenId)}`;
+
+  const diag = {
+    ticketId: String(ticket._id || "").slice(-6),
+    tokenId,
+    action: ticket.action || "—",
+    url,
+    httpStatus: null,
+    bidsCount: null,
+    asksCount: null,
+    bestBid: null,
+    bestAsk: null,
+    topBidSize: null,
+    topAskSize: null,
+    spread: null,
+    timestamp: null,
+    source: "CLOB",
+    nullReason: null,
+  };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    diag.httpStatus = res.status;
+
+    if (res.status === 404) {
+      diag.nullReason = "NO_ORDERBOOK_404";
+      getClobPrice._lastDiag = diag;
+      return null;
+    }
+
+    if (res.status === 429) {
+      diag.nullReason = "RATE_LIMIT_429";
+      getClobPrice._lastDiag = diag;
+      const err = new Error(`CLOB API 429`);
+      err.statusCode = 429;
+      throw err;
+    }
+
+    if (res.status >= 500) {
+      diag.nullReason = `CLOB_API_${res.status}`;
+      getClobPrice._lastDiag = diag;
+      const err = new Error(`CLOB API ${res.status}`);
+      err.statusCode = res.status;
+      throw err;
+    }
+
+    if (!res.ok) {
+      diag.nullReason = `CLOB_HTTP_${res.status}`;
+      getClobPrice._lastDiag = diag;
+      return null;
+    }
+
+    const data = await res.json();
+    const bids = Array.isArray(data.bids) ? data.bids : [];
+    const asks = Array.isArray(data.asks) ? data.asks : [];
+    diag.bidsCount = bids.length;
+    diag.asksCount = asks.length;
+    diag.timestamp = data.timestamp || null;
+
+    // Extract top-of-book
+    const topBid = bids.length > 0 ? parseFloat(bids[0].price) : NaN;
+    const topAsk = asks.length > 0 ? parseFloat(asks[0].price) : NaN;
+    const topBidSize = bids.length > 0 ? parseFloat(bids[0].size) : NaN;
+    const topAskSize = asks.length > 0 ? parseFloat(asks[0].size) : NaN;
+
+    diag.bestBid = Number.isFinite(topBid) ? topBid : null;
+    diag.bestAsk = Number.isFinite(topAsk) ? topAsk : null;
+    diag.topBidSize = Number.isFinite(topBidSize) ? topBidSize : null;
+    diag.topAskSize = Number.isFinite(topAskSize) ? topAskSize : null;
+
+    if (Number.isFinite(topBid) && Number.isFinite(topAsk)) {
+      diag.spread = Math.round((topAsk - topBid) * 10000) / 10000;
+    }
+
+    // Selling shares → executable price is top bid (best price someone will buy at)
+    if (!Number.isFinite(topBid) || topBid <= 0) {
+      diag.nullReason = bids.length === 0 ? "NO_BIDS" : "INVALID_TOP_BID";
+      getClobPrice._lastDiag = diag;
+      return null;
+    }
+
+    getClobPrice._lastDiag = diag;
+    return {
+      price: topBid,
+      source: "CLOB",
+      bestBid: diag.bestBid,
+      bestAsk: diag.bestAsk,
+      spread: diag.spread,
+      topBidSize: diag.topBidSize,
+      topAskSize: diag.topAskSize,
+      timestamp: diag.timestamp,
+      tokenId,
+    };
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.statusCode === 429 || (err.statusCode && err.statusCode >= 500)) {
+      throw err; // propagate for backoff handling
+    }
+    if (!diag.nullReason) diag.nullReason = "CLOB_FETCH_ERROR";
+    getClobPrice._lastDiag = diag;
+    return null;
+  }
+}
+getClobPrice._lastDiag = null;
 
 /**
  * Pick the correct market from a Gamma API array response (strict, fail-closed).
@@ -752,92 +906,89 @@ async function monitorTick() {
     }
 
     let priceResult;
-    try {
-      priceResult = await getCurrentCloseablePrice(ticket, { paperClose: effectivePaperClose });
-    } catch (err) {
-      // 429/5xx → trigger backoff
-      if (err.statusCode === 429 || (err.statusCode && err.statusCode >= 500)) {
-        monitorState.lastTickPriceError++;
-        applyBackoff();
-        monitorState.lastError = `API ${err.statusCode}`;
-        monitorState.lastErrorAt = new Date();
-        logTickDiagnostics();
-        return; // abort this tick
-      }
-      monitorState.lastTickPriceError++;
-      continue;
-    }
+    // CLOB primary: use CLOB orderbook if the ticket has the required token ID
+    const hasTokenId = !!resolveTokenId(ticket);
 
-    if (!priceResult) {
-      monitorState.lastTickPriceNull++;
-
-      // Rich diagnostic sample from getCurrentCloseablePrice._lastDiag
-      const diag = getCurrentCloseablePrice._lastDiag;
-      if (!monitorState.lastTickNullPriceSample && diag) {
-        monitorState.lastTickNullPriceSample = { ...diag, capturedAt: new Date().toISOString() };
-      }
-
-      // --- Ended / Settled market handling (null price path) ---
-      const endState = diag && diag.marketEndState;
-      if (endState && (endState.settled || endState.ended || endState.closed)) {
-        const closeReason = endState.settled ? "MARKET_SETTLED" : "MARKET_ENDED";
-        if (endState.settled) monitorState.lastTickSettledMarkets++;
-        else monitorState.lastTickEndedMarkets++;
-
-        if (effectivePaperClose) {
-          // Sim-close: no reliable price → closePrice = null, reason explicit
-          await attemptAutoClose(ticket, null, closeReason, effectivePaperClose);
-          monitorState.lastTickCloseAttempt++;
-        } else {
-          // Block: disable auto-close with explicit reason
-          await TradeTicket.updateOne(
-            { _id: ticket._id },
-            { $set: { autoCloseEnabled: false, autoCloseBlockedReason: closeReason } }
-          ).catch(() => {});
+    if (hasTokenId) {
+      // --- CLOB path (primary) ---
+      try {
+        priceResult = await getClobPrice(ticket);
+      } catch (err) {
+        if (err.statusCode === 429) {
+          monitorState.lastTickClobRateLimit++;
+          monitorState.lastTickPriceError++;
+          applyBackoff();
+          monitorState.lastError = `CLOB API 429`;
+          monitorState.lastErrorAt = new Date();
+          logTickDiagnostics();
+          return; // abort this tick
         }
+        if (err.statusCode && err.statusCode >= 500) {
+          monitorState.lastTickPriceError++;
+          applyBackoff();
+          monitorState.lastError = `CLOB API ${err.statusCode}`;
+          monitorState.lastErrorAt = new Date();
+          logTickDiagnostics();
+          return;
+        }
+        monitorState.lastTickPriceError++;
         continue;
       }
+
+      if (priceResult) {
+        monitorState.lastTickClobPriceOk++;
+      } else {
+        monitorState.lastTickClobPriceNull++;
+        const clobDiag = getClobPrice._lastDiag;
+        if (clobDiag && clobDiag.nullReason === "NO_ORDERBOOK_404") {
+          monitorState.lastTickClobPrice404++;
+          // Block auto-close: no orderbook for this token
+          await TradeTicket.updateOne(
+            { _id: ticket._id },
+            { $set: { autoCloseBlockedReason: "NO_ORDERBOOK" } }
+          ).catch(() => {});
+        }
+        if (!monitorState.lastTickNullPriceSample && clobDiag) {
+          monitorState.lastTickNullPriceSample = { ...clobDiag, capturedAt: new Date().toISOString() };
+        }
+        // Do NOT fall back to Gamma for close decisions when CLOB is the primary source
+        monitorState.lastTickPriceNull++;
+        continue;
+      }
+    } else {
+      // --- No CLOB token ID: block auto-close with clear reason ---
+      monitorState.lastTickClobTokenIdMissing++;
+      // Disable auto-close for this ticket — missing token IDs
+      await TradeTicket.updateOne(
+        { _id: ticket._id },
+        { $set: { autoCloseEnabled: false, autoCloseBlockedReason: "MISSING_TOKEN_ID" } }
+      ).catch(() => {});
       continue;
     }
 
+    // priceResult is guaranteed non-null here (from CLOB path above)
     monitorState.lastTickPriceOk++;
 
-    // --- Ended / Settled market handling (price available path) ---
-    const endState = priceResult.marketEndState;
-    if (endState && (endState.settled || endState.ended || endState.closed)) {
-      const closeReason = endState.settled ? "MARKET_SETTLED" : "MARKET_ENDED";
-      if (endState.settled) monitorState.lastTickSettledMarkets++;
-      else monitorState.lastTickEndedMarkets++;
-
-      if (effectivePaperClose) {
-        await attemptAutoClose(ticket, priceResult.price, closeReason, effectivePaperClose);
-        monitorState.lastTickCloseAttempt++;
-      } else {
-        await TradeTicket.updateOne(
-          { _id: ticket._id },
-          { $set: { autoCloseEnabled: false, autoCloseBlockedReason: closeReason } }
-        ).catch(() => {});
-      }
-      continue;
-    }
-
-    // Update last observed price on the ticket
+    // Update last observed price + price source on the ticket
     await TradeTicket.updateOne(
       { _id: ticket._id },
-      { $set: { lastPriceCheckAt: new Date(), lastObservedPrice: priceResult.price } }
+      { $set: { lastPriceCheckAt: new Date(), lastObservedPrice: priceResult.price, priceSource: "CLOB" } }
     ).catch(() => {});
 
     const { triggered, reason } = checkTrigger(ticket, priceResult.price);
 
-    // Structured logging for lastTradePrice-sourced triggers (SIM-only visibility)
-    if (triggered && (priceResult.source === "gamma_lastTradePrice" || priceResult.source === "gamma_lastTradePrice_no_derived")) {
+    // Structured logging for CLOB-sourced triggers
+    if (triggered) {
       console.log(JSON.stringify({
-        msg: "monitor-ltp-trigger",
+        msg: "monitor-clob-trigger",
         ticketId: String(ticket._id).slice(-6),
         action: ticket.action,
         priceSource: priceResult.source,
         price: priceResult.price,
-        lastTradeAgeSec: priceResult.lastTradeAgeSec ?? null,
+        tokenId: priceResult.tokenId || null,
+        bestBid: priceResult.bestBid,
+        bestAsk: priceResult.bestAsk,
+        spread: priceResult.spread,
         reason,
         ts: new Date().toISOString(),
       }));
@@ -884,6 +1035,11 @@ function logTickDiagnostics() {
     identitySkip: s.lastTickIdentitySkip,
     endedMarkets: s.lastTickEndedMarkets,
     settledMarkets: s.lastTickSettledMarkets,
+    clobOk: s.lastTickClobPriceOk,
+    clobNull: s.lastTickClobPriceNull,
+    clob404: s.lastTickClobPrice404,
+    clobRateLimit: s.lastTickClobRateLimit,
+    clobTokenMissing: s.lastTickClobTokenIdMissing,
     nullSample: s.lastTickNullPriceSample,
     ts: new Date().toISOString(),
   }));
@@ -921,6 +1077,11 @@ async function persistDebugSnapshot() {
       endedMarkets: monitorState.lastTickEndedMarkets,
       settledMarkets: monitorState.lastTickSettledMarkets,
       batchSize: monitorState.lastTickBatchSize,
+      clobOk: monitorState.lastTickClobPriceOk,
+      clobNull: monitorState.lastTickClobPriceNull,
+      clob404: monitorState.lastTickClobPrice404,
+      clobRateLimit: monitorState.lastTickClobRateLimit,
+      clobTokenMissing: monitorState.lastTickClobTokenIdMissing,
     },
     capturedAt: new Date().toISOString(),
   };
@@ -1007,6 +1168,8 @@ module.exports = {
   stopMonitorLoop,
   getMonitorStatus,
   getCurrentCloseablePrice,
+  getClobPrice,
+  resolveTokenId,
   matchMarketFromArray,
   detectMarketEndState,
   checkTrigger,
