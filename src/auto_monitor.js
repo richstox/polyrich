@@ -296,7 +296,7 @@ async function getCurrentCloseablePrice(ticket, opts) {
     outcomePricesRaw: null,
     lastTradePriceRaw: null,
     updatedAtRaw: null,              // Gamma API updatedAt (ISO 8601)
-    lastTradeAgeSec: null,           // seconds since updatedAt (freshness)
+    lastTradeAgeSec: null,           // seconds since Gamma `updatedAt` (market-level proxy, NOT trade-specific)
     ltpGatedReason: null,            // why lastTradePrice was NOT used for triggers
     marketEndState: null,            // { ended, settled, closed }
     nullReason: null,                // classified cause
@@ -349,7 +349,9 @@ async function getCurrentCloseablePrice(ticket, opts) {
     diag.lastTradePriceRaw = data.lastTradePrice ?? null;
     diag.updatedAtRaw = data.updatedAt ?? null;
 
-    // Compute freshness of market data (used for lastTradePrice gating)
+    // Compute age of market data via `updatedAt` (market-level proxy).
+    // Note: Gamma API has no trade-specific timestamp; `updatedAt` is the
+    // best available freshness signal but may not reflect actual last trade time.
     let lastTradeAgeSec = null;
     if (data.updatedAt) {
       const updatedMs = new Date(data.updatedAt).getTime();
@@ -394,7 +396,16 @@ async function getCurrentCloseablePrice(ticket, opts) {
 
     // Fallback 2 (SIM-only, freshness-gated): lastTradePrice.
     // lastTradePrice is NOT an executable close price — it is the last matched
-    // trade price. It may be stale or unrepresentative. Only used when:
+    // trade price. It may be stale or unrepresentative and must NEVER be
+    // treated as equivalent to an executable bid/ask.
+    //
+    // IMPORTANT: The Gamma API does NOT provide a trade-specific timestamp
+    // (no `lastTradeTime` / `lastTradeTimestamp` field). We use `updatedAt`
+    // as a market-level object-freshness proxy, but this reflects when the
+    // Gamma record was last refreshed — not necessarily when the last trade
+    // occurred. Therefore lastTradePrice is a best-effort SIM-only heuristic.
+    //
+    // Gates (all must pass, else diagnostics-only):
     //   (a) Paper Close is ON (SIM mode)
     //   (b) numeric and > 0
     //   (c) Gamma `updatedAt` is within AUTO_MODE_LTP_MAX_AGE_SEC seconds

@@ -2554,7 +2554,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         · outcomePrices: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.outcomePricesRaw ?? "null"))}
         <br>lastTradePrice: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.lastTradePriceRaw ?? "null"))}
         · updatedAt: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.updatedAtRaw ?? "null"))}
-        · age: ${autoModeStatus.lastTickNullPriceSample.lastTradeAgeSec !== null ? escHtml(String(autoModeStatus.lastTickNullPriceSample.lastTradeAgeSec)) + "s" : "—"}
+        · updatedAt age: ${autoModeStatus.lastTickNullPriceSample.lastTradeAgeSec !== null ? escHtml(String(autoModeStatus.lastTickNullPriceSample.lastTradeAgeSec)) + "s" : "—"} <span style="color:#64748b;" title="Gamma API has no trade-specific timestamp; updatedAt is a market-level proxy, not guaranteed last-trade freshness">(proxy)</span>
         · ltpGate: <strong style="color:${autoModeStatus.lastTickNullPriceSample.ltpGatedReason ? "#ef4444" : "#22c55e"};">${escHtml(String(autoModeStatus.lastTickNullPriceSample.ltpGatedReason || "PASS"))}</strong>${autoModeStatus.lastTickNullPriceSample.marketEndState ? `
         <br>ended: ${autoModeStatus.lastTickNullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${autoModeStatus.lastTickNullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${autoModeStatus.lastTickNullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
       </div>` : ""}${debugSnapshot && debugSnapshot.nullPriceSample ? `
@@ -2570,7 +2570,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         · outcomePrices: ${escHtml(String(debugSnapshot.nullPriceSample.outcomePricesRaw ?? "null"))}
         <br>lastTradePrice: ${escHtml(String(debugSnapshot.nullPriceSample.lastTradePriceRaw ?? "null"))}
         · updatedAt: ${escHtml(String(debugSnapshot.nullPriceSample.updatedAtRaw ?? "null"))}
-        · age: ${debugSnapshot.nullPriceSample.lastTradeAgeSec !== null ? escHtml(String(debugSnapshot.nullPriceSample.lastTradeAgeSec)) + "s" : "—"}
+        · updatedAt age: ${debugSnapshot.nullPriceSample.lastTradeAgeSec !== null ? escHtml(String(debugSnapshot.nullPriceSample.lastTradeAgeSec)) + "s" : "—"} <span style="color:#64748b;" title="Gamma API has no trade-specific timestamp; updatedAt is a market-level proxy, not guaranteed last-trade freshness">(proxy)</span>
         · ltpGate: <strong style="color:${debugSnapshot.nullPriceSample.ltpGatedReason ? "#ef4444" : "#22c55e"};">${escHtml(String(debugSnapshot.nullPriceSample.ltpGatedReason || "PASS"))}</strong>${debugSnapshot.nullPriceSample.marketEndState ? `
         <br>ended: ${debugSnapshot.nullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${debugSnapshot.nullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${debugSnapshot.nullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
         <br><span style="color:#64748b;">Tick: priceNull=${debugSnapshot.tickSummary.priceNull} priceOk=${debugSnapshot.tickSummary.priceOk} priceErr=${debugSnapshot.tickSummary.priceError} ended=${debugSnapshot.tickSummary.endedMarkets} settled=${debugSnapshot.tickSummary.settledMarkets}</span>
