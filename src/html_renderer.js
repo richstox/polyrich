@@ -2575,7 +2575,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
                 <tr style="border-bottom:1px solid #1e293b;">
                   <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="When the close attempt was made">Time</th>
                   <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Last 6 chars of ticket ID — click to view detail">Ticket</th>
-                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Why the close was triggered: TP_HIT = take profit reached, EXIT_HIT = stop loss reached, MARKET_ENDED/SETTLED = market ended">Reason</th>
+                  <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Why the close was triggered: TP_HIT = take profit reached, EXIT_HIT = stop loss reached, MARKET_ENDED = market ended/closed, MARKET_SETTLED = market outcome resolved">Reason</th>
                   <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Market price at the time of the close attempt">Price</th>
                   <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="PAPER_CLOSED = simulated close, INTENT_RECORDED = real close queued, FAILED = close failed">Result</th>
                   <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#94a3b8;" title="Error message if the close attempt failed">Error</th>

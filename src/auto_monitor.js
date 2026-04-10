@@ -235,7 +235,7 @@ function detectMarketEndState(data) {
 
   // ended: endDate/end_date_iso is in the past, OR active===false (but not merely closed)
   let ended = false;
-  const endDateRaw = data.end_date_iso || data.endDate || data.endDate_iso || null;
+  const endDateRaw = data.end_date_iso || data.endDate || null;
   if (endDateRaw) {
     const endTs = new Date(endDateRaw).getTime();
     if (Number.isFinite(endTs) && endTs < Date.now()) ended = true;
@@ -524,6 +524,7 @@ async function attemptAutoClose(ticket, observedPrice, reason, effectivePaperClo
       // Compute approximate realized PnL if entry data is available
       let realizedPnlUsd = null;
       let realizedPnlPct = null;
+      // Guard: observedPrice can be null for settled markets with no orderbook
       if (typeof observedPrice === "number" &&
           typeof ticket.entryLimit === "number" && ticket.entryLimit > 0 &&
           typeof ticket.maxSizeUsd === "number" && ticket.maxSizeUsd > 0) {
@@ -542,7 +543,7 @@ async function attemptAutoClose(ticket, observedPrice, reason, effectivePaperClo
             closedAt: new Date(),
             closePrice: observedPrice,
             isSimulated: true,
-            lastObservedPrice: observedPrice,
+            ...(observedPrice != null ? { lastObservedPrice: observedPrice } : {}),
             ...(realizedPnlUsd !== null ? { realizedPnlUsd, realizedPnlPct } : {}),
           },
         }
