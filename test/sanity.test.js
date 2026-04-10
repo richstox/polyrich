@@ -1363,6 +1363,66 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// detectMarketEndState (auto_monitor)
+// ---------------------------------------------------------------------------
+{
+  console.log("\ndetectMarketEndState");
+  const { detectMarketEndState } = require("../src/auto_monitor");
+
+  // null / undefined → all false
+  const r0 = detectMarketEndState(null);
+  assert(r0.ended === false && r0.settled === false && r0.closed === false,
+    "null data returns all false");
+  const r0b = detectMarketEndState(undefined);
+  assert(r0b.ended === false && r0b.settled === false && r0b.closed === false,
+    "undefined data returns all false");
+
+  // Empty object → all false
+  const r1 = detectMarketEndState({});
+  assert(r1.ended === false && r1.settled === false && r1.closed === false,
+    "empty object returns all false");
+
+  // resolved: true → settled
+  const r2 = detectMarketEndState({ resolved: true });
+  assert(r2.settled === true, "resolved=true → settled=true");
+  assert(r2.closed === false, "resolved=true → closed=false");
+
+  // closed: true → closed
+  const r3 = detectMarketEndState({ closed: true });
+  assert(r3.closed === true, "closed=true → closed=true");
+
+  // end_date_iso in the past → ended
+  const pastDate = new Date(Date.now() - 86400000).toISOString();
+  const r4 = detectMarketEndState({ end_date_iso: pastDate });
+  assert(r4.ended === true, "past end_date_iso → ended=true");
+
+  // endDate in the future → NOT ended
+  const futureDate = new Date(Date.now() + 86400000 * 30).toISOString();
+  const r5 = detectMarketEndState({ endDate: futureDate });
+  assert(r5.ended === false, "future endDate → ended=false");
+
+  // active: false (not settled) → ended
+  const r6 = detectMarketEndState({ active: false });
+  assert(r6.ended === true, "active=false → ended=true");
+
+  // active: false + resolved: true → settled (not just ended)
+  const r7 = detectMarketEndState({ active: false, resolved: true });
+  assert(r7.settled === true, "active=false+resolved=true → settled=true");
+  // active=false with resolved → ended stays false (settled takes precedence logically)
+  // actually per code: active===false && !settled → ended; here settled is true so ended stays false
+  assert(r7.ended === false, "active=false+resolved=true → ended=false (settled overrides)");
+
+  // Combined: end_date_iso past + closed + resolved
+  const r8 = detectMarketEndState({ end_date_iso: pastDate, closed: true, resolved: true });
+  assert(r8.ended === true && r8.settled === true && r8.closed === true,
+    "all flags set when all conditions met");
+
+  // active: true (explicitly) → not ended (even if no other flags)
+  const r9 = detectMarketEndState({ active: true });
+  assert(r9.ended === false, "active=true → ended=false");
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);

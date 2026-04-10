@@ -11,6 +11,8 @@ const systemSettingSchema = new mongoose.Schema(
     autoSaveExecuteEnabled: { type: Boolean, default: false },
     // Idempotency guard: last scanId that auto-save already processed
     lastAutoSaveScanId: { type: String, default: null },
+    // Debug: persisted null-price sample from auto-monitor (rate-limited writes)
+    debugNullPriceSample: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { timestamps: true }
 );

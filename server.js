@@ -736,7 +736,10 @@ if (url.pathname === "/trade") {
       paperCloseEnv: config.AUTO_MODE_PAPER_CLOSE,
     };
 
-    const body = renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday, ticketCloseStats);
+    // Extract persisted debug snapshot from system settings
+    const debugSnapshot = systemSettings.debugNullPriceSample || null;
+
+    const body = renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday, ticketCloseStats, debugSnapshot);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(pageShell("System", "/system", body));
     return;
