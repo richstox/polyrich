@@ -18,6 +18,12 @@ const tradeTicketSchema = new mongoose.Schema(
     marketUrl: { type: String },
     question: { type: String, required: true },      // display text only — NEVER used as identifier
 
+    // CLOB token IDs — required for CLOB orderbook price monitoring
+    // Extracted from Gamma API `clobTokenIds` field (JSON-encoded string array: [yesTokenId, noTokenId])
+    yesTokenId: { type: String, default: null },     // CLOB token ID for YES outcome
+    noTokenId: { type: String, default: null },      // CLOB token ID for NO outcome
+    priceSource: { type: String, default: null },    // "CLOB" when CLOB monitoring is active; audit/debug
+
     // Classification
     tradeability: { type: String, enum: ["EXECUTE", "WATCH"], required: true },
     action: { type: String, enum: ["BUY_YES", "BUY_NO", "WATCH"], required: true },

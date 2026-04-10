@@ -1550,6 +1550,300 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// CLOB integration: resolveTokenId (auto_monitor)
+// ---------------------------------------------------------------------------
+{
+  console.log("\nresolveTokenId (CLOB token selection by action)");
+  const { resolveTokenId } = require("../src/auto_monitor");
+
+  // BUY_YES → yesTokenId
+  assert(
+    resolveTokenId({ action: "BUY_YES", yesTokenId: "tok_yes_123", noTokenId: "tok_no_456" }) === "tok_yes_123",
+    "BUY_YES selects yesTokenId"
+  );
+
+  // BUY_NO → noTokenId
+  assert(
+    resolveTokenId({ action: "BUY_NO", yesTokenId: "tok_yes_123", noTokenId: "tok_no_456" }) === "tok_no_456",
+    "BUY_NO selects noTokenId"
+  );
+
+  // BUY_YES with no yesTokenId → null
+  assert(
+    resolveTokenId({ action: "BUY_YES", yesTokenId: null, noTokenId: "tok_no_456" }) === null,
+    "BUY_YES with null yesTokenId returns null"
+  );
+
+  // BUY_NO with no noTokenId → null
+  assert(
+    resolveTokenId({ action: "BUY_NO", yesTokenId: "tok_yes_123", noTokenId: null }) === null,
+    "BUY_NO with null noTokenId returns null"
+  );
+
+  // BUY_YES with empty string → null
+  assert(
+    resolveTokenId({ action: "BUY_YES", yesTokenId: "", noTokenId: "tok_no_456" }) === null,
+    "BUY_YES with empty yesTokenId returns null"
+  );
+
+  // WATCH action → null (no token selection)
+  assert(
+    resolveTokenId({ action: "WATCH", yesTokenId: "tok_yes_123", noTokenId: "tok_no_456" }) === null,
+    "WATCH action returns null"
+  );
+
+  // Missing action → null
+  assert(
+    resolveTokenId({ yesTokenId: "tok_yes_123", noTokenId: "tok_no_456" }) === null,
+    "missing action returns null"
+  );
+
+  // Both tokens present, BUY_YES selects correct one (not noTokenId)
+  assert(
+    resolveTokenId({ action: "BUY_YES", yesTokenId: "A", noTokenId: "B" }) === "A",
+    "BUY_YES selects 'A' not 'B'"
+  );
+  assert(
+    resolveTokenId({ action: "BUY_NO", yesTokenId: "A", noTokenId: "B" }) === "B",
+    "BUY_NO selects 'B' not 'A'"
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CLOB integration: normalizeMarket extracts clobTokenIds → yesTokenId/noTokenId
+// ---------------------------------------------------------------------------
+{
+  console.log("\nnormalizeMarket: clobTokenIds extraction");
+
+  // Standard JSON string array (Gamma API format)
+  const item1 = {
+    question: "Will BTC hit 100k?",
+    clobTokenIds: '["tok_yes_abc","tok_no_xyz"]',
+    outcomePrices: '["0.65","0.35"]',
+  };
+  const norm1 = normalizeMarket(item1);
+  assert(norm1.yesTokenId === "tok_yes_abc",
+    "clobTokenIds JSON string → yesTokenId = tok_yes_abc");
+  assert(norm1.noTokenId === "tok_no_xyz",
+    "clobTokenIds JSON string → noTokenId = tok_no_xyz");
+
+  // Already parsed array
+  const item2 = {
+    question: "Will ETH merge?",
+    clobTokenIds: ["already_parsed_yes", "already_parsed_no"],
+    outcomePrices: '["0.50","0.50"]',
+  };
+  const norm2 = normalizeMarket(item2);
+  assert(norm2.yesTokenId === "already_parsed_yes",
+    "clobTokenIds array → yesTokenId");
+  assert(norm2.noTokenId === "already_parsed_no",
+    "clobTokenIds array → noTokenId");
+
+  // Missing clobTokenIds → null
+  const item3 = {
+    question: "Legacy market",
+    outcomePrices: '["0.80","0.20"]',
+  };
+  const norm3 = normalizeMarket(item3);
+  assert(norm3.yesTokenId === null,
+    "missing clobTokenIds → yesTokenId null");
+  assert(norm3.noTokenId === null,
+    "missing clobTokenIds → noTokenId null");
+
+  // Invalid JSON string → null
+  const item4 = {
+    question: "Bad data market",
+    clobTokenIds: "not-valid-json",
+    outcomePrices: '["0.50","0.50"]',
+  };
+  const norm4 = normalizeMarket(item4);
+  assert(norm4.yesTokenId === null,
+    "invalid clobTokenIds JSON → yesTokenId null");
+  assert(norm4.noTokenId === null,
+    "invalid clobTokenIds JSON → noTokenId null");
+
+  // Single element array → yes but no noTokenId
+  const item5 = {
+    question: "Single token market",
+    clobTokenIds: '["only_yes"]',
+    outcomePrices: '["0.50","0.50"]',
+  };
+  const norm5 = normalizeMarket(item5);
+  assert(norm5.yesTokenId === "only_yes",
+    "single-element clobTokenIds → yesTokenId present");
+  assert(norm5.noTokenId === null,
+    "single-element clobTokenIds → noTokenId null");
+
+  // Empty array → null
+  const item6 = {
+    question: "Empty tokens market",
+    clobTokenIds: "[]",
+    outcomePrices: '["0.50","0.50"]',
+  };
+  const norm6 = normalizeMarket(item6);
+  assert(norm6.yesTokenId === null,
+    "empty clobTokenIds array → yesTokenId null");
+  assert(norm6.noTokenId === null,
+    "empty clobTokenIds array → noTokenId null");
+}
+
+// ---------------------------------------------------------------------------
+// CLOB integration: getClobPrice diagnostic contract tests
+// ---------------------------------------------------------------------------
+{
+  console.log("\ngetClobPrice diagnostic contracts");
+  const { getClobPrice, resolveTokenId } = require("../src/auto_monitor");
+
+  // Verify getClobPrice._lastDiag is initialized
+  assert(getClobPrice._lastDiag === null || typeof getClobPrice._lastDiag === "object",
+    "getClobPrice._lastDiag exists (null or object)");
+
+  // Verify resolveTokenId handles edge cases (additional coverage)
+  assert(resolveTokenId({}) === null,
+    "empty ticket object → null");
+  assert(resolveTokenId({ action: "BUY_YES" }) === null,
+    "BUY_YES without yesTokenId field → null");
+  assert(resolveTokenId({ action: "BUY_NO" }) === null,
+    "BUY_NO without noTokenId field → null");
+  assert(resolveTokenId({ action: "BUY_YES", yesTokenId: 0 }) === null,
+    "BUY_YES with falsy yesTokenId=0 → null");
+  assert(resolveTokenId({ action: "BUY_NO", noTokenId: false }) === null,
+    "BUY_NO with falsy noTokenId=false → null");
+}
+
+// ---------------------------------------------------------------------------
+// CLOB integration: tickets without token IDs get autoClose disabled
+// ---------------------------------------------------------------------------
+{
+  console.log("\nCLOB: missing token IDs → autoClose blocked");
+
+  // Document the contract: resolveTokenId returns null for tickets without IDs
+  const { resolveTokenId } = require("../src/auto_monitor");
+
+  // Simulating what monitorTick does: if resolveTokenId returns null,
+  // the ticket should be blocked with MISSING_TOKEN_ID reason.
+
+  const ticketNoTokens = {
+    _id: "fakeid123",
+    action: "BUY_YES",
+    conditionId: "0xABC",
+    // yesTokenId missing
+  };
+  const tokenId = resolveTokenId(ticketNoTokens);
+  assert(tokenId === null,
+    "ticket without yesTokenId → resolveTokenId returns null");
+
+  const ticketWithTokens = {
+    _id: "fakeid456",
+    action: "BUY_YES",
+    conditionId: "0xABC",
+    yesTokenId: "tok_yes_123",
+  };
+  const tokenId2 = resolveTokenId(ticketWithTokens);
+  assert(tokenId2 === "tok_yes_123",
+    "ticket with yesTokenId → resolveTokenId returns token");
+
+  // NO side
+  const ticketNoNoToken = {
+    _id: "fakeid789",
+    action: "BUY_NO",
+    conditionId: "0xDEF",
+    yesTokenId: "tok_yes_123",
+    // noTokenId missing
+  };
+  assert(resolveTokenId(ticketNoNoToken) === null,
+    "BUY_NO ticket without noTokenId → resolveTokenId returns null");
+}
+
+// ---------------------------------------------------------------------------
+// CLOB: checkTrigger with CLOB-sourced prices (contract verification)
+// ---------------------------------------------------------------------------
+{
+  console.log("\nCLOB: checkTrigger with CLOB prices");
+  const { checkTrigger } = require("../src/auto_monitor");
+
+  // TP hit at CLOB price
+  const tp = checkTrigger({ takeProfit: 0.75, riskExitLimit: 0.30 }, 0.80);
+  assert(tp.triggered === true && tp.reason === "TP_HIT",
+    "CLOB price 0.80 >= TP 0.75 → TP_HIT");
+
+  // EXIT hit at CLOB price
+  const exit = checkTrigger({ takeProfit: 0.75, riskExitLimit: 0.30 }, 0.25);
+  assert(exit.triggered === true && exit.reason === "EXIT_HIT",
+    "CLOB price 0.25 <= EXIT 0.30 → EXIT_HIT");
+
+  // Neither TP nor EXIT hit
+  const miss = checkTrigger({ takeProfit: 0.75, riskExitLimit: 0.30 }, 0.50);
+  assert(miss.triggered === false,
+    "CLOB price 0.50 between TP and EXIT → not triggered");
+
+  // Exact TP boundary
+  const exact = checkTrigger({ takeProfit: 0.75, riskExitLimit: 0.30 }, 0.75);
+  assert(exact.triggered === true && exact.reason === "TP_HIT",
+    "CLOB price exactly at TP → TP_HIT");
+
+  // Exact EXIT boundary
+  const exactExit = checkTrigger({ takeProfit: 0.75, riskExitLimit: 0.30 }, 0.30);
+  assert(exactExit.triggered === true && exactExit.reason === "EXIT_HIT",
+    "CLOB price exactly at EXIT → EXIT_HIT");
+}
+
+// ---------------------------------------------------------------------------
+// CLOB monitorState: verify CLOB diagnostic counters exist
+// ---------------------------------------------------------------------------
+{
+  console.log("\nCLOB monitorState diagnostic counters");
+  const { monitorState } = require("../src/auto_monitor");
+
+  assert(typeof monitorState.lastTickClobPriceOk === "number",
+    "lastTickClobPriceOk counter exists");
+  assert(typeof monitorState.lastTickClobPriceNull === "number",
+    "lastTickClobPriceNull counter exists");
+  assert(typeof monitorState.lastTickClobPrice404 === "number",
+    "lastTickClobPrice404 counter exists");
+  assert(typeof monitorState.lastTickClobRateLimit === "number",
+    "lastTickClobRateLimit counter exists");
+  assert(typeof monitorState.lastTickClobTokenIdMissing === "number",
+    "lastTickClobTokenIdMissing counter exists");
+
+  // Verify all are initialized to 0
+  assert(monitorState.lastTickClobPriceOk === 0,
+    "lastTickClobPriceOk default 0");
+  assert(monitorState.lastTickClobPriceNull === 0,
+    "lastTickClobPriceNull default 0");
+  assert(monitorState.lastTickClobPrice404 === 0,
+    "lastTickClobPrice404 default 0");
+  assert(monitorState.lastTickClobRateLimit === 0,
+    "lastTickClobRateLimit default 0");
+  assert(monitorState.lastTickClobTokenIdMissing === 0,
+    "lastTickClobTokenIdMissing default 0");
+}
+
+// ---------------------------------------------------------------------------
+// TradeTicket schema: verify CLOB fields exist in schema
+// ---------------------------------------------------------------------------
+{
+  console.log("\nTradeTicket schema: CLOB fields");
+  const TradeTicket = require("../models/TradeTicket");
+  const schemaPaths = TradeTicket.schema.paths;
+
+  assert("yesTokenId" in schemaPaths,
+    "yesTokenId field exists in TradeTicket schema");
+  assert("noTokenId" in schemaPaths,
+    "noTokenId field exists in TradeTicket schema");
+  assert("priceSource" in schemaPaths,
+    "priceSource field exists in TradeTicket schema");
+
+  // Verify defaults
+  assert(schemaPaths.yesTokenId.defaultValue === null,
+    "yesTokenId defaults to null");
+  assert(schemaPaths.noTokenId.defaultValue === null,
+    "noTokenId defaults to null");
+  assert(schemaPaths.priceSource.defaultValue === null,
+    "priceSource defaults to null");
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -112,6 +112,19 @@ function normalizeMarket(item) {
     ? rawOutcomes.map((o) => (typeof o === "string" ? o : (o && o.title) || "")).filter(Boolean)
     : [];
 
+  // CLOB token IDs — Gamma API field `clobTokenIds` is a JSON-encoded string
+  // array: '["<yesTokenId>","<noTokenId>"]'. Index 0 = YES, index 1 = NO.
+  let clobTokenIds = item.clobTokenIds;
+  if (typeof clobTokenIds === "string") {
+    try { clobTokenIds = JSON.parse(clobTokenIds); } catch (_) {
+      console.warn(JSON.stringify({ stage: "normalizeMarket", msg: "invalid clobTokenIds JSON", raw: clobTokenIds.slice(0, 80), ts: new Date().toISOString() }));
+      clobTokenIds = [];
+    }
+  }
+  if (!Array.isArray(clobTokenIds)) clobTokenIds = [];
+  const yesTokenId = (clobTokenIds[0] && typeof clobTokenIds[0] === "string") ? clobTokenIds[0] : null;
+  const noTokenId = (clobTokenIds[1] && typeof clobTokenIds[1] === "string") ? clobTokenIds[1] : null;
+
   return {
     question,
     groupItemTitle: item.groupItemTitle || "",
@@ -122,6 +135,8 @@ function normalizeMarket(item) {
     marketSlug: item.slug || item.marketSlug || item.question || "",
     eventSlug: item.eventSlug || "",
     conditionId: item.conditionId || "",
+    yesTokenId,
+    noTokenId,
     tagIds,
     tagSlugs,
     priceYes,
