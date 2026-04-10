@@ -38,6 +38,18 @@ const tradeTicketSchema = new mongoose.Schema(
     takeProfit: { type: Number, default: null },
     riskExitLimit: { type: Number, default: null },
     maxSizeUsd: { type: Number, default: null },
+
+    // Entry microstructure snapshot — persisted at ticket creation from CLOB book
+    // Basis: entryAsk = what you pay (buy), entryBid = what you'd get (sell-to-close)
+    entryBid: { type: Number, default: null },         // CLOB top bid at entry
+    entryAsk: { type: Number, default: null },         // CLOB top ask at entry
+    entryMid: { type: Number, default: null },         // (entryAsk + entryBid) / 2
+    entrySpreadAbs: { type: Number, default: null },   // entryAsk - entryBid
+    entrySpreadPct: { type: Number, default: null },   // spreadAbs / midpoint
+    entryBidSize: { type: Number, default: null },     // CLOB top bid size (shares)
+    entryAskSize: { type: Number, default: null },     // CLOB top ask size (shares)
+    entryExecutionBasis: { type: String, default: null },     // "ASK" — documents that entryLimit is ask-based
+    triggerReferenceBasis: { type: String, default: null },    // "BID" — documents that TP/SL are bid-based
     bankrollUsd: { type: Number, default: null },
     riskPct: { type: Number, default: null },
     maxTradeCapUsd: { type: Number, default: null },

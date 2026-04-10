@@ -48,6 +48,24 @@ const DIAGNOSTIC_REASONS = {
     whatToDo: "Close the ticket manually, or wait for settlement.",
     queryParam: "monitorReason",
   },
+  SPREAD_TOO_WIDE: {
+    label: "Spread too wide",
+    explanation: "The bid-ask spread at entry exceeded MAX_ENTRY_SPREAD_PCT. Auto-close is disabled because the stop/TP distance would be consumed by spread.",
+    whatToDo: "Wait for tighter spread or close manually. Increase MAX_ENTRY_SPREAD_PCT if comfortable.",
+    queryParam: "blockedReason",
+  },
+  INSUFFICIENT_BID_SIZE: {
+    label: "Insufficient bid size",
+    explanation: "Top-of-book bid notional (USD) at entry was below MIN_BID_SIZE_USD. Not enough close-side liquidity.",
+    whatToDo: "Wait for deeper bids or close manually. Reduce MIN_BID_SIZE_USD if comfortable.",
+    queryParam: "blockedReason",
+  },
+  MISSING_ENTRY_EXEC_PRICES: {
+    label: "Missing entry microstructure",
+    explanation: "This ticket was created before entry bid/ask were persisted. Auto-close is disabled because TP/SL cannot be verified as bid-based.",
+    whatToDo: "Create a new ticket so entry microstructure is captured, or close manually.",
+    queryParam: "blockedReason",
+  },
 };
 
 function renderBreakdown(item) {
@@ -1399,11 +1417,20 @@ function inferSize(item) {
   return Math.floor(raw);
 }
 
-/** Infer exit plan (take profit + stop-loss) from entry price. Returns { tp, stop } as numbers or null. */
-function inferExit(entryNum) {
-  if (entryNum === null || entryNum <= 0 || entryNum >= PRICE_CEILING) return { tp: null, stop: null };
-  const tp = Math.min(entryNum * TP_MULTIPLIER, PRICE_CEILING);
-  const stop = Math.max(entryNum * STOP_MULTIPLIER, PRICE_FLOOR);
+/**
+ * Infer exit plan (take profit + stop-loss).
+ * When `bidBasis` is provided (not null and > 0), TP/SL are computed relative to the
+ * bid price (sell-to-close basis) so that monitoring against the current bid is
+ * apples-to-apples.  When `bidBasis` is null/undefined, falls back to `entryNum`
+ * (legacy ask-based behaviour — only used for rendering, NOT for auto-close triggers).
+ *
+ * Returns { tp, stop } as numbers or null.
+ */
+function inferExit(entryNum, bidBasis) {
+  const basis = (typeof bidBasis === "number" && bidBasis > 0) ? bidBasis : entryNum;
+  if (basis === null || basis <= 0 || basis >= PRICE_CEILING) return { tp: null, stop: null };
+  const tp = Math.min(basis * TP_MULTIPLIER, PRICE_CEILING);
+  const stop = Math.max(basis * STOP_MULTIPLIER, PRICE_FLOOR);
   return { tp, stop };
 }
 
@@ -1490,12 +1517,14 @@ function renderTradeCard(item) {
     : `<span class="trade-card-title">${escHtml(headline)}</span>${subtextHtml}`;
 
   let entryNum = null, sizeNum = null, tpNum = null, stopNum = null;
+  // Entry microstructure: bid is the closeable price basis
+  const entryBidNum = (item.bestBidNum > 0) ? item.bestBidNum : null;
 
   if (action !== "WATCH") {
     entryNum = inferEntry(item, action);
     if (entryNum !== null) {
       sizeNum = inferSize(item);
-      const exits = inferExit(entryNum);
+      const exits = inferExit(entryNum, entryBidNum);
       tpNum = exits.tp;
       stopNum = exits.stop;
     }
@@ -1554,6 +1583,12 @@ function renderTradeCard(item) {
     const pnlTpUsd = sizeNum * (tpNum - entryNum) / entryNum;
     const pnlStopUsd = sizeNum * (stopNum - entryNum) / entryNum;
 
+    // Entry microstructure for save payload
+    const entryAskNum = entryNum;  // inferEntry returns bestAsk
+    const midNum = (entryBidNum && entryAskNum) ? (entryAskNum + entryBidNum) / 2 : null;
+    const spreadAbs = (entryBidNum && entryAskNum) ? (entryAskNum - entryBidNum) : null;
+    const spreadPct = (midNum && midNum > 0 && spreadAbs !== null) ? spreadAbs / midNum : null;
+
     const savePayload = JSON.stringify({
       scanId: item.scanId || null,
       source: "TRADE_PAGE",
@@ -1585,16 +1620,28 @@ function renderTradeCard(item) {
       pnlExitUsd: Math.round(pnlStopUsd * 100) / 100,
       pnlExitPct: Math.round(pnlStopPct * 10) / 1000,
       endDate: item.endDate || null,
+      // Entry microstructure snapshot
+      entryBid: entryBidNum,
+      entryAsk: entryAskNum,
+      entryMid: midNum ? Math.round(midNum * 10000) / 10000 : null,
+      entrySpreadAbs: spreadAbs !== null ? Math.round(spreadAbs * 10000) / 10000 : null,
+      entrySpreadPct: spreadPct !== null ? Math.round(spreadPct * 10000) / 10000 : null,
+      entryBidSize: item.bestBidSize || null,
+      entryAskSize: item.bestAskSize || null,
+      entryExecutionBasis: "ASK",
+      triggerReferenceBasis: "BID",
     });
 
     return `
-      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}" data-outcomes="${escHtml(JSON.stringify(outcomes))}" data-end-date="${escHtml(item.endDate || "")}">
+      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-entry-bid="${entryBidNum || ""}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}" data-outcomes="${escHtml(JSON.stringify(outcomes))}" data-end-date="${escHtml(item.endDate || "")}">
         <div class="trade-card-header">${questionHtml}</div>
         <div class="action-pill ${actionCls}">\u26A1 ${displayLabel ? escHtml(displayLabel) + " " : ""}${escHtml(displayAction)} @ $${entryNum.toFixed(2)}</div>
         <div class="trade-size-row trade-plan-item" style="margin-bottom:6px;"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
         <div class="trade-plan-grid">
-          <div class="trade-plan-item"><span class="trade-plan-label">TAKE PROFIT</span><span class="trade-plan-value">$${tpNum.toFixed(2)}</span></div>
-          <div class="trade-plan-item"><span class="trade-plan-label">STOP-LOSS</span><span class="trade-plan-value">$${stopNum.toFixed(2)}</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">Entry (ask)</span><span class="trade-plan-value">$${entryNum.toFixed(2)}</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">Entry closeable (bid)</span><span class="trade-plan-value">${entryBidNum ? "$" + entryBidNum.toFixed(2) : "\u2014"}</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">TAKE PROFIT (bid-based)</span><span class="trade-plan-value">$${tpNum.toFixed(2)}</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">STOP-LOSS (bid-based)</span><span class="trade-plan-value">$${stopNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">PnL @ TP (approx)</span><span class="trade-plan-value trade-pnl-tp" style="color:#22c55e;">+$${pnlTpUsd.toFixed(2)} (+${pnlTpPct.toFixed(1)}% of stake)</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">PnL @ SL (approx)</span><span class="trade-plan-value trade-pnl-stop" style="color:#dc2626;">-$${Math.abs(pnlStopUsd).toFixed(2)} (${pnlStopPct.toFixed(1)}% of stake)</span></div>
         </div>
@@ -1756,7 +1803,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
         const entryNum = inferEntry(item, dir.action);
         if (entryNum !== null) {
           const sizeNum = inferSize(item);
-          const exits = inferExit(entryNum);
+          const bidBasis = (item.bestBidNum > 0) ? item.bestBidNum : null;
+          const exits = inferExit(entryNum, bidBasis);
           if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
             executeCards.push(item);
             continue;
@@ -2362,13 +2410,14 @@ function renderExplorePage(data) {
       const entryNum = inferEntry(item, dir.action);
       if (entryNum !== null) {
         const sizeNum = inferSize(item);
-        const exits = inferExit(entryNum);
+        const bidBasis = (item.bestBidNum > 0) ? item.bestBidNum : null;
+        const exits = inferExit(entryNum, bidBasis);
         if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
           return `<div style="margin-top:8px;padding:8px 10px;background:rgba(22,101,52,.15);border:1px solid rgba(34,197,94,.2);border-radius:6px;font-size:0.78rem;">
             <span style="font-weight:700;color:#22c55e;">⚡ EXECUTE</span>
-            <span style="margin-left:10px;"><span style="color:#6b7280;">ENTRY LIMIT</span> <strong>$${entryNum.toFixed(2)}</strong></span>
-            <span style="margin-left:10px;"><span style="color:#6b7280;">TAKE PROFIT</span> <strong>$${exits.tp.toFixed(2)}</strong></span>
-            <span style="margin-left:10px;"><span style="color:#6b7280;">RISK EXIT LIMIT</span> <strong>$${exits.stop.toFixed(2)}</strong></span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">ENTRY (ask)</span> <strong>$${entryNum.toFixed(2)}</strong></span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">TP (bid-based)</span> <strong>$${exits.tp.toFixed(2)}</strong></span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">SL (bid-based)</span> <strong>$${exits.stop.toFixed(2)}</strong></span>
           </div>`;
         }
       }
@@ -3178,7 +3227,7 @@ function renderHistoryPage(closedTickets, activeRange, customFrom, customTo) {
         ${pnlBadgeHtml}
         ${pnlPctHtml}
         <div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:0.78rem;color:#64748b;">
-          <span>Entry ${entry}</span>
+          <span>Entry (ask) ${entry}</span>
           <span>·</span>
           <span>${escHtml(displayAction)}${simBadgeHtml}</span>
           <span>·</span>
@@ -3646,7 +3695,7 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
   const actionDisplay = displayLabel ? displayLabel + " " + displayAction : displayAction;
   const pillIcon = isExec ? "\u26A1" : "\uD83D\uDC41";
   const pillCls = isExec ? "background:#166534;color:#bbf7d0;" : "background:#374151;color:#94a3b8;";
-  const entryAtPrice = typeof t.entryLimit === "number" ? ` @ $${t.entryLimit.toFixed(2)}` : "";
+  const entryAtPrice = typeof t.entryLimit === "number" ? ` @ $${t.entryLimit.toFixed(2)} (ask)` : "";
 
   // Status badge
   const statusColors = { OPEN: "#166534", CLOSING: "#854d0e", CLOSED: "#374151", ERROR: "#7f1d1d" };
@@ -3767,14 +3816,16 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
         <div class="td-section">
           <div class="td-section-title">\u{1F4B0} Trade Plan</div>
           <div class="td-grid">
-            <div class="td-row"><span class="td-label">Entry</span><span class="td-val">${fmtPrice(t.entryLimit)}</span></div>
-            <div class="td-row"><span class="td-label">Take Profit</span><span class="td-val" id="td-tp-val">${fmtPrice(t.takeProfit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="takeProfit" title="Edit Take Profit">\u{270F}\u{FE0F}</span>' : ""}</span></div>
-            <div class="td-row"><span class="td-label">Exit (risk)</span><span class="td-val" id="td-exit-val">${fmtPrice(t.riskExitLimit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="riskExitLimit" title="Edit Exit (risk)">\u{270F}\u{FE0F}</span>' : ""}</span></div>
+            <div class="td-row"><span class="td-label">Entry (ask)</span><span class="td-val">${fmtPrice(t.entryLimit)}</span></div>
+            <div class="td-row"><span class="td-label">Entry closeable (bid)</span><span class="td-val">${fmtPrice(t.entryBid)}</span></div>
+            <div class="td-row"><span class="td-label">Take Profit (bid-based)</span><span class="td-val" id="td-tp-val">${fmtPrice(t.takeProfit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="takeProfit" title="Edit Take Profit">\u{270F}\u{FE0F}</span>' : ""}</span></div>
+            <div class="td-row"><span class="td-label">Exit / risk (bid-based)</span><span class="td-val" id="td-exit-val">${fmtPrice(t.riskExitLimit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="riskExitLimit" title="Edit Exit (risk)">\u{270F}\u{FE0F}</span>' : ""}</span></div>
             <div class="td-row"><span class="td-label">Size (USD)</span><span class="td-val">${fmtUsd(t.maxSizeUsd)}</span></div>
             <div class="td-row"><span class="td-label">Bankroll</span><span class="td-val">${fmtUsd(t.bankrollUsd)}</span></div>
             <div class="td-row"><span class="td-label">Risk %</span><span class="td-val">${fmtPct(t.riskPct)}</span></div>
             <div class="td-row"><span class="td-label">Max trade cap</span><span class="td-val">${fmtUsd(t.maxTradeCapUsd)}</span></div>
             <div class="td-row"><span class="td-label">Min limit order</span><span class="td-val">${fmtUsd(t.minLimitOrderUsd)}</span></div>
+            ${typeof t.entrySpreadPct === "number" ? `<div class="td-row"><span class="td-label">Entry spread</span><span class="td-val">${(t.entrySpreadPct * 100).toFixed(1)}%</span></div>` : ""}
           </div>
         </div>
 
