@@ -2,6 +2,54 @@
 
 const { formatHoursLeft, formatVolume } = require("./normalizer");
 
+// ---------------------------------------------------------------------------
+// Canonical diagnostic reasons — operator-facing copywriting
+// ---------------------------------------------------------------------------
+const DIAGNOSTIC_REASONS = {
+  MISSING_TOKEN_ID: {
+    label: "Token ID missing",
+    explanation: "This ticket was created before CLOB token IDs were stored. Auto-close is disabled for safety.",
+    whatToDo: "Create a new ticket (or re-save) so token IDs are captured.",
+    queryParam: "blockedReason",
+  },
+  NO_ORDERBOOK: {
+    label: "CLOB 404 (no book)",
+    explanation: "CLOB returned 404 for this token. There is no orderbook to close against.",
+    whatToDo: "Ignore it, disable auto-close, or choose a different market.",
+    queryParam: "blockedReason",
+  },
+  NO_BIDS: {
+    label: "No bids",
+    explanation: "There are no bids at the top of the book, so you cannot sell to close.",
+    whatToDo: "Wait for liquidity or close manually when bids appear.",
+    queryParam: "monitorReason",
+  },
+  INVALID_TOP_BID: {
+    label: "Invalid top bid",
+    explanation: "The top bid on the orderbook is invalid or unparseable.",
+    whatToDo: "Wait for a valid bid or close manually.",
+    queryParam: "monitorReason",
+  },
+  IDENTITY_SKIP: {
+    label: "Identity skip",
+    explanation: "This ticket lacks a valid conditionId (0x…). The monitor skips it as a fail-closed safety measure.",
+    whatToDo: "Re-save the ticket from a market with a valid conditionId, or close manually.",
+    queryParam: "monitorReason",
+  },
+  SETTLED: {
+    label: "Settled markets",
+    explanation: "The market outcome has been resolved/settled.",
+    whatToDo: "Close the ticket manually at the settled outcome price, or wait for auto-close if enabled.",
+    queryParam: "monitorReason",
+  },
+  ENDED: {
+    label: "Ended markets",
+    explanation: "The market end date has passed or the market is no longer active.",
+    whatToDo: "Close the ticket manually, or wait for settlement.",
+    queryParam: "monitorReason",
+  },
+};
+
 function renderBreakdown(item) {
   return [
     `moveTerm=${item.moveTerm.toFixed(1)}`,
@@ -2451,6 +2499,23 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
     `;
   }
 
+  /** Render a drillable diagnostic metric row with explanation, action, and link to tickets. */
+  function diagMetricRow(reasonCode, count) {
+    const info = DIAGNOSTIC_REASONS[reasonCode] || { label: reasonCode, explanation: "", whatToDo: "", queryParam: "monitorReason" };
+    const countColor = count > 0 ? "#ef4444" : "#6b7280";
+    const ticketLink = count > 0
+      ? ` <a href="/tickets?${escHtml(info.queryParam)}=${escHtml(reasonCode)}" style="color:#60a5fa;font-size:0.75rem;text-decoration:none;font-weight:600;margin-left:8px;" title="View affected tickets">View tickets →</a>`
+      : "";
+    return `<div style="background:#1e293b;border-radius:6px;padding:8px 10px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">
+        <span style="font-size:0.82rem;font-weight:600;color:#e2e8f0;">${escHtml(info.label)}</span>
+        <span><strong style="color:${countColor};font-size:0.9rem;">${count}</strong>${ticketLink}</span>
+      </div>
+      <div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;"><strong>What is this?</strong> ${escHtml(info.explanation)}</div>
+      <div style="font-size:0.75rem;color:#818cf8;margin-top:2px;"><strong>What to do:</strong> ${escHtml(info.whatToDo)}</div>
+    </div>`;
+  }
+
   const togglesPanel = `
     <div class="card" style="margin-top:16px;">
       <h2 style="margin-top:0;">⚙️ Operator Toggles</h2>
@@ -2531,7 +2596,9 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         <div title="Tickets closed with other/unknown reason"><span class="label">Other</span> <strong>${ticketCloseStats.other}</strong></div>` : ""}
       </div>
       <hr style="border-color:#1e293b;margin:12px 0;">
-      <div style="font-size:0.82rem;color:#94a3b8;margin-bottom:6px;font-weight:600;">🔬 Last Tick Diagnostics</div>
+      <div style="font-size:0.82rem;color:#94a3b8;margin-bottom:6px;font-weight:600;">🔬 Last Tick Diagnostics
+        <span style="font-size:0.7rem;color:#64748b;font-weight:400;margin-left:8px;">(per-tick counters — drill-down queries persisted state, counts may differ)</span>
+      </div>
       <div class="grid-2" style="gap:6px 24px;">
         <div title="Number of open tickets with autoClose enabled that were checked in this tick"><span class="label">Batch size</span> <strong>${autoModeStatus.lastTickBatchSize || 0}</strong></div>
         <div title="Tickets where the current market price was successfully fetched"><span class="label">Price OK</span> <strong style="color:#22c55e;">${autoModeStatus.lastTickPriceOk || 0}</strong></div>
@@ -2542,18 +2609,25 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         <div title="Tickets where price was fetched OK but has NOT reached TP or Exit level yet — no action needed, still monitoring"><span class="label">Trigger miss</span> <strong>${autoModeStatus.lastTickTriggerMiss || 0}</strong></div>
         <div title="Trigger condition met but held by debounce — requires 2 consecutive checks or 15+ seconds to confirm (prevents false triggers from price noise)"><span class="label">Debounce hold</span> <strong style="color:${(autoModeStatus.lastTickDebounceHold || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickDebounceHold || 0}</strong></div>
         <div title="Actual auto-close attempts made after debounce confirmed the trigger"><span class="label">Close attempt</span> <strong style="color:${(autoModeStatus.lastTickCloseAttempt || 0) > 0 ? "#22c55e" : "inherit"};">${autoModeStatus.lastTickCloseAttempt || 0}</strong></div>
-        <div title="Tickets skipped because they lack a valid conditionId (0x…) — fail-closed identity gate"><span class="label">Identity skip</span> <strong style="color:${(autoModeStatus.lastTickIdentitySkip || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickIdentitySkip || 0}</strong></div>
-        <div title="Tickets where the market has ended (past end date or inactive)"><span class="label">Ended markets</span> <strong style="color:${(autoModeStatus.lastTickEndedMarkets || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickEndedMarkets || 0}</strong></div>
-        <div title="Tickets where the market has been settled/resolved"><span class="label">Settled markets</span> <strong style="color:${(autoModeStatus.lastTickSettledMarkets || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickSettledMarkets || 0}</strong></div>
+      </div>
+      <hr style="border-color:#1e293b;margin:12px 0;">
+      <div style="font-size:0.82rem;color:#94a3b8;margin-bottom:6px;font-weight:600;">⚠️ Problem / Blocked Reasons
+        <span style="font-size:0.7rem;color:#64748b;font-weight:400;margin-left:8px;">(click "View tickets" to drill down to affected tickets)</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${diagMetricRow("IDENTITY_SKIP", autoModeStatus.lastTickIdentitySkip || 0)}
+        ${diagMetricRow("MISSING_TOKEN_ID", autoModeStatus.lastTickClobTokenIdMissing || 0)}
+        ${diagMetricRow("NO_ORDERBOOK", autoModeStatus.lastTickClobPrice404 || 0)}
+        ${diagMetricRow("NO_BIDS", autoModeStatus.lastTickClobPriceNull || 0)}
+        ${diagMetricRow("SETTLED", autoModeStatus.lastTickSettledMarkets || 0)}
+        ${diagMetricRow("ENDED", autoModeStatus.lastTickEndedMarkets || 0)}
       </div>
       <hr style="border-color:#1e293b;margin:12px 0;">
       <div style="font-size:0.82rem;color:#94a3b8;margin-bottom:6px;font-weight:600;">📡 CLOB Orderbook Diagnostics <span style="background:#166534;color:#bbf7d0;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:700;">PRIMARY</span></div>
       <div class="grid-2" style="gap:6px 24px;">
         <div title="Tickets where CLOB orderbook returned a valid top-of-book bid price"><span class="label">CLOB Price OK</span> <strong style="color:#22c55e;">${autoModeStatus.lastTickClobPriceOk || 0}</strong></div>
         <div title="Tickets where CLOB returned no usable price (no bids, invalid data)"><span class="label">CLOB Price NULL</span> <strong style="color:${(autoModeStatus.lastTickClobPriceNull || 0) > 0 ? "#f59e0b" : "inherit"};">${autoModeStatus.lastTickClobPriceNull || 0}</strong></div>
-        <div title="Tickets where CLOB /book returned 404 — no orderbook exists for this token"><span class="label">CLOB 404 (no book)</span> <strong style="color:${(autoModeStatus.lastTickClobPrice404 || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickClobPrice404 || 0}</strong></div>
         <div title="Tickets where CLOB returned 429 — rate limited"><span class="label">CLOB rate limit</span> <strong style="color:${(autoModeStatus.lastTickClobRateLimit || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickClobRateLimit || 0}</strong></div>
-        <div title="Tickets blocked because they lack CLOB token IDs (yesTokenId/noTokenId)"><span class="label">Token ID missing</span> <strong style="color:${(autoModeStatus.lastTickClobTokenIdMissing || 0) > 0 ? "#ef4444" : "inherit"};">${autoModeStatus.lastTickClobTokenIdMissing || 0}</strong></div>
         <div title="Price monitoring source"><span class="label">Source</span> <strong style="color:#22c55e;">CLOB</strong></div>
       </div>${autoModeStatus.lastTickNullPriceSample ? `
       <div style="margin-top:8px;font-size:0.78rem;color:#94a3b8;background:#1e293b;padding:6px 10px;border-radius:6px;">
@@ -2729,7 +2803,11 @@ function renderWatchlistPage(items, highlightId) {
 }
 
 /** Render the /tickets page body. */
-function renderTicketsPage(tickets, highlightId) {
+function renderTicketsPage(tickets, highlightId, filterCtx) {
+  filterCtx = filterCtx || {};
+  const activeBlockedReason = filterCtx.blockedReason || null;
+  const activeMonitorReason = filterCtx.monitorReason || null;
+  const hasActiveFilter = !!(activeBlockedReason || activeMonitorReason);
   const openTickets = tickets.filter((t) => t.status === "OPEN" || t.status === "CLOSING" || t.status === "ERROR").sort((a, b) => {
     const ea = a.endDate ? new Date(a.endDate).getTime() : Infinity;
     const eb = b.endDate ? new Date(b.endDate).getTime() : Infinity;
@@ -2852,6 +2930,44 @@ function renderTicketsPage(tickets, highlightId) {
           <div class="tk-summary-value">${winRate.toFixed(1)}% <span class="tk-wr-sub">(${wins}/${closedWithPnl.length})</span></div>
         </div>
       </div>
+    </div>
+  `;
+
+  // --- Reason badges for tickets ---
+  function reasonBadgesHtml(t) {
+    const badges = [];
+    if (t.autoCloseBlockedReason) {
+      const info = DIAGNOSTIC_REASONS[t.autoCloseBlockedReason] || {};
+      badges.push(`<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#7f1d1d;color:#fecaca;font-size:0.72rem;font-weight:600;margin-right:4px;" title="${escHtml(info.explanation || t.autoCloseBlockedReason)}">⛔ ${escHtml(t.autoCloseBlockedReason)}</span>`);
+    }
+    if (t.lastMonitorBlockedReason) {
+      const info = DIAGNOSTIC_REASONS[t.lastMonitorBlockedReason] || {};
+      badges.push(`<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#854d0e;color:#fef08a;font-size:0.72rem;font-weight:600;margin-right:4px;" title="${escHtml(info.explanation || t.lastMonitorBlockedReason)}">⚠ ${escHtml(t.lastMonitorBlockedReason)}</span>`);
+    }
+    return badges.length > 0 ? `<div style="margin:4px 0;display:flex;flex-wrap:wrap;gap:2px;">${badges.join("")}</div>` : "";
+  }
+
+  // --- Filter bar (reason dropdown) ---
+  const allReasonCodes = Object.keys(DIAGNOSTIC_REASONS);
+  const filterBarHtml = `
+    <div style="margin:10px 0;padding:8px 12px;background:#1e293b;border-radius:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span style="font-size:0.8rem;color:#94a3b8;font-weight:600;">🔍 Filter by reason:</span>
+      <select id="tk-reason-filter" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px 8px;font-size:0.78rem;">
+        <option value="">All tickets</option>
+        <optgroup label="Blocked (autoClose)">
+          ${allReasonCodes.filter((r) => DIAGNOSTIC_REASONS[r].queryParam === "blockedReason").map((r) => {
+            const sel = activeBlockedReason === r ? " selected" : "";
+            return `<option value="blockedReason:${escHtml(r)}"${sel}>${escHtml(DIAGNOSTIC_REASONS[r].label)}</option>`;
+          }).join("")}
+        </optgroup>
+        <optgroup label="Monitor (runtime)">
+          ${allReasonCodes.filter((r) => DIAGNOSTIC_REASONS[r].queryParam === "monitorReason").map((r) => {
+            const sel = activeMonitorReason === r ? " selected" : "";
+            return `<option value="monitorReason:${escHtml(r)}"${sel}>${escHtml(DIAGNOSTIC_REASONS[r].label)}</option>`;
+          }).join("")}
+        </optgroup>
+      </select>
+      ${hasActiveFilter ? '<a href="/tickets" style="color:#60a5fa;font-size:0.78rem;text-decoration:none;">✕ Clear filter</a>' : ""}
     </div>
   `;
 
@@ -2981,6 +3097,7 @@ function renderTicketsPage(tickets, highlightId) {
         ${pnlBadgeHtml}
         ${simBadgeHtml}
         ${actionPillHtml}
+        ${reasonBadgesHtml(t)}
         <div class="tk-meta-row">
           <span>\u{1F552} ${utcSpan(t.createdAt)}</span>
           ${timeLeftHtml}
@@ -3013,6 +3130,7 @@ function renderTicketsPage(tickets, highlightId) {
     <div class="tk-page">
       ${summaryHtml}
       ${equityChartHtml}
+      ${filterBarHtml}
       <div class="tk-section-hdr">OPEN <span class="tk-badge">${openCount}</span>
         <span class="tk-sort-row">
           <button class="tk-sort-btn tk-sort-active" data-sort="end" data-section="open" title="Sort by end date">End ↑</button>
@@ -3035,6 +3153,16 @@ function renderTicketsPage(tickets, highlightId) {
     </div>
     <script>
     (function() {
+      // --- Reason filter dropdown ---
+      var filterEl = document.getElementById("tk-reason-filter");
+      if (filterEl) {
+        filterEl.addEventListener("change", function() {
+          var val = filterEl.value;
+          if (!val) { window.location.href = "/tickets"; return; }
+          var parts = val.split(":");
+          window.location.href = "/tickets?" + encodeURIComponent(parts[0]) + "=" + encodeURIComponent(parts[1]);
+        });
+      }
       // --- Close ticket (preserve scroll position) ---
       document.addEventListener("click", function(e) {
         var btn = e.target.closest(".close-ticket-btn");
@@ -3384,10 +3512,24 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
     const lastCheck = t.lastPriceCheckAt ? utcSpan(t.lastPriceCheckAt) : "\u2014";
     const intentAt = t.autoCloseIntentAt ? utcSpan(t.autoCloseIntentAt) : "\u2014";
     const intentReason = t.autoCloseIntentReason || "\u2014";
+    const blockedReasonInfo = t.autoCloseBlockedReason ? DIAGNOSTIC_REASONS[t.autoCloseBlockedReason] || {} : null;
+    const monitorReasonInfo = t.lastMonitorBlockedReason ? DIAGNOSTIC_REASONS[t.lastMonitorBlockedReason] || {} : null;
+    const blockedBadgeHtml = t.autoCloseBlockedReason
+      ? `<div class="td-row"><span class="td-label">Blocked reason</span><span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#7f1d1d;color:#fecaca;font-size:0.75rem;font-weight:600;">⛔ ${escHtml(t.autoCloseBlockedReason)}</span></div>
+         ${blockedReasonInfo.explanation ? `<div class="td-row"><span class="td-label"></span><span class="td-val" style="font-size:0.75rem;color:#94a3b8;">${escHtml(blockedReasonInfo.explanation)}</span></div>` : ""}
+         ${blockedReasonInfo.whatToDo ? `<div class="td-row"><span class="td-label"></span><span class="td-val" style="font-size:0.75rem;color:#818cf8;">→ ${escHtml(blockedReasonInfo.whatToDo)}</span></div>` : ""}`
+      : "";
+    const monitorBadgeHtml = t.lastMonitorBlockedReason
+      ? `<div class="td-row"><span class="td-label">Monitor reason</span><span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#854d0e;color:#fef08a;font-size:0.75rem;font-weight:600;">⚠ ${escHtml(t.lastMonitorBlockedReason)}</span>${t.lastMonitorBlockedAt ? ` <span style="font-size:0.72rem;color:#64748b;">${utcSpan(t.lastMonitorBlockedAt)}</span>` : ""}</div>
+         ${monitorReasonInfo.explanation ? `<div class="td-row"><span class="td-label"></span><span class="td-val" style="font-size:0.75rem;color:#94a3b8;">${escHtml(monitorReasonInfo.explanation)}</span></div>` : ""}
+         ${monitorReasonInfo.whatToDo ? `<div class="td-row"><span class="td-label"></span><span class="td-val" style="font-size:0.75rem;color:#818cf8;">→ ${escHtml(monitorReasonInfo.whatToDo)}</span></div>` : ""}`
+      : "";
     autoCloseHtml = `
       <div class="td-section">
         <div class="td-section-title">\u{1F916} Auto-Close</div>
         <div class="td-row"><span class="td-label">Auto-close</span><span style="display:inline-block;padding:1px 6px;border-radius:4px;background:${acBg};color:${acColor};font-size:0.75rem;font-weight:600;">${acEnabled}</span></div>
+        ${blockedBadgeHtml}
+        ${monitorBadgeHtml}
         <div class="td-row"><span class="td-label">Last observed price</span><span class="td-val">${lastPrice}</span></div>
         <div class="td-row"><span class="td-label">Last price check</span><span class="td-val">${lastCheck}</span></div>
         <div class="td-row"><span class="td-label">Intent at</span><span class="td-val">${intentAt}</span></div>
@@ -3526,6 +3668,7 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
 }
 
 module.exports = {
+  DIAGNOSTIC_REASONS,
   renderBreakdown,
   computeWhyPick,
   computeTradeability,

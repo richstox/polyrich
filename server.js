@@ -1132,6 +1132,90 @@ if (url.pathname === "/trade") {
     return;
   }
 
+  // ── GET /api/system/diagnostics/tickets ─────────────────────────────
+  if (url.pathname === "/api/system/diagnostics/tickets" && req.method === "GET") {
+    try {
+      const reason = url.searchParams.get("reason");
+      const statusFilter = url.searchParams.get("status"); // OPEN, CLOSING, or omit
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "100", 10) || 100, 500);
+
+      if (!reason) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing required query param: reason" }));
+        return;
+      }
+
+      const VALID_REASONS = [
+        "MISSING_TOKEN_ID", "NO_ORDERBOOK",
+        "NO_BIDS", "INVALID_TOP_BID",
+        "IDENTITY_SKIP",
+        "SETTLED", "ENDED",
+      ];
+      if (!VALID_REASONS.includes(reason)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `Invalid reason. Valid: ${VALID_REASONS.join(", ")}` }));
+        return;
+      }
+
+      const query = {};
+
+      // Reason routing: some reasons live in autoCloseBlockedReason, others in lastMonitorBlockedReason
+      if (reason === "MISSING_TOKEN_ID" || reason === "NO_ORDERBOOK") {
+        // Match either field — autoCloseBlockedReason is set by the monitor when it blocks,
+        // lastMonitorBlockedReason is the runtime diagnostic
+        query.$or = [
+          { autoCloseBlockedReason: reason },
+          { lastMonitorBlockedReason: reason },
+        ];
+      } else if (reason === "SETTLED") {
+        // Settled markets: check lastMonitorBlockedReason OR closeReason
+        query.$or = [
+          { lastMonitorBlockedReason: "MARKET_SETTLED" },
+          { closeReason: "MARKET_SETTLED" },
+        ];
+      } else if (reason === "ENDED") {
+        // Ended markets: check lastMonitorBlockedReason OR closeReason
+        query.$or = [
+          { lastMonitorBlockedReason: "MARKET_ENDED" },
+          { closeReason: "MARKET_ENDED" },
+        ];
+      } else {
+        // Runtime reasons: NO_BIDS, INVALID_TOP_BID, IDENTITY_SKIP
+        query.lastMonitorBlockedReason = reason;
+      }
+
+      // Status filter — for SETTLED/ENDED, include CLOSED too for operator visibility
+      if (statusFilter && ["OPEN", "CLOSING", "CLOSED", "ERROR"].includes(statusFilter)) {
+        query.status = statusFilter;
+      } else if (reason === "SETTLED" || reason === "ENDED") {
+        // Include all statuses for ended/settled so operator can see them
+      } else {
+        // Default: show OPEN and CLOSING tickets (actively monitored)
+        query.status = { $in: ["OPEN", "CLOSING"] };
+      }
+
+      const projection = {
+        _id: 1, question: 1, marketSlug: 1, conditionId: 1, action: 1,
+        autoCloseEnabled: 1, autoCloseBlockedReason: 1,
+        lastMonitorBlockedReason: 1, lastMonitorBlockedAt: 1,
+        yesTokenId: 1, noTokenId: 1, status: 1, closeReason: 1,
+        updatedAt: 1, createdAt: 1,
+      };
+
+      const tickets = await TradeTicket.find(query, projection)
+        .sort({ updatedAt: -1 })
+        .limit(limit)
+        .lean();
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ reason, count: tickets.length, tickets }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
   // ── POST /api/tickets/autoclose ────────────────────────────────────
   if (url.pathname === "/api/tickets/autoclose" && req.method === "POST") {
     let body = "";
@@ -1421,9 +1505,14 @@ if (url.pathname === "/trade") {
   // ── /tickets ───────────────────────────────────────────────────────────
   if (url.pathname === "/tickets") {
     try {
-      const tickets = await TradeTicket.find({ tradeability: { $ne: "WATCH" } }).sort({ createdAt: -1 }).limit(500).lean();
+      const query = { tradeability: { $ne: "WATCH" } };
+      const blockedReason = url.searchParams.get("blockedReason");
+      const monitorReason = url.searchParams.get("monitorReason");
+      if (blockedReason) query.autoCloseBlockedReason = blockedReason;
+      if (monitorReason) query.lastMonitorBlockedReason = monitorReason;
+      const tickets = await TradeTicket.find(query).sort({ createdAt: -1 }).limit(500).lean();
       const highlightId = url.searchParams.get("highlight") || null;
-      const body = renderTicketsPage(tickets, highlightId);
+      const body = renderTicketsPage(tickets, highlightId, { blockedReason, monitorReason });
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(pageShell("Tickets", "/tickets", body));
       return;
