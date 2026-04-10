@@ -82,9 +82,6 @@ module.exports = {
   // ---------------------------------------------------------------------------
   // Admission gates — market quality checks at ticket creation
   // ---------------------------------------------------------------------------
-  // Max entry spread (pct of midpoint): markets wider than this get autoCloseEnabled=false
-  // with blockedReason SPREAD_TOO_WIDE.  Default 15% — typical small-cap Polymarket threshold.
-  MAX_ENTRY_SPREAD_PCT: parseFloat(process.env.MAX_ENTRY_SPREAD_PCT || "0.15"),
   // Min top-of-book bid size (USD notional at bid price) to enable auto-close.
   // If close-side liquidity is below this, autoClose is blocked with INSUFFICIENT_BID_SIZE.
   MIN_BID_SIZE_USD: parseFloat(process.env.MIN_BID_SIZE_USD || "20"),
