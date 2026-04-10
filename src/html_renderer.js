@@ -48,12 +48,6 @@ const DIAGNOSTIC_REASONS = {
     whatToDo: "Close the ticket manually, or wait for settlement.",
     queryParam: "monitorReason",
   },
-  SPREAD_TOO_WIDE: {
-    label: "Spread too wide",
-    explanation: "The bid-ask spread at entry exceeded MAX_ENTRY_SPREAD_PCT. Auto-close is disabled because the stop/TP distance would be consumed by spread.",
-    whatToDo: "Wait for tighter spread or close manually. Increase MAX_ENTRY_SPREAD_PCT if comfortable.",
-    queryParam: "blockedReason",
-  },
   INSUFFICIENT_BID_SIZE: {
     label: "Insufficient bid size",
     explanation: "Top-of-book bid notional (USD) at entry was below MIN_BID_SIZE_USD. Not enough close-side liquidity.",

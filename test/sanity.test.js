@@ -2122,43 +2122,6 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// Spread gate: blocks auto-close when spread too wide
-// ---------------------------------------------------------------------------
-{
-  console.log("\nSpread gate: blocks auto-close on wide spread");
-  const cfg = require("../src/config");
-
-  // Default MAX_ENTRY_SPREAD_PCT = 0.15 (15%)
-  assert(typeof cfg.MAX_ENTRY_SPREAD_PCT === "number",
-    "MAX_ENTRY_SPREAD_PCT config exists");
-  assert(cfg.MAX_ENTRY_SPREAD_PCT > 0 && cfg.MAX_ENTRY_SPREAD_PCT <= 1,
-    "MAX_ENTRY_SPREAD_PCT is between 0 and 1");
-
-  // Simulate server-side admission gate logic for auto-save
-  // Market: ask=0.30, bid=0.20 → mid=0.25, spreadPct = (0.30 - 0.20) / 0.25 = 0.40
-  const entryAsk = 0.30, entryBid = 0.20;
-  const mid = (entryAsk + entryBid) / 2;
-  const spreadPct = (entryAsk - entryBid) / mid;
-  assert(spreadPct > cfg.MAX_ENTRY_SPREAD_PCT,
-    "40% spread exceeds MAX_ENTRY_SPREAD_PCT (15%)");
-
-  // Gate should block
-  let effectiveAutoClose = true;
-  let blockedReason = null;
-  if (spreadPct > cfg.MAX_ENTRY_SPREAD_PCT) {
-    effectiveAutoClose = false;
-    blockedReason = "SPREAD_TOO_WIDE";
-  }
-  assert(!effectiveAutoClose, "Auto-close is disabled when spread exceeds threshold");
-  assert(blockedReason === "SPREAD_TOO_WIDE",
-    "Blocked reason is SPREAD_TOO_WIDE");
-
-  // Narrow spread: ask=0.50, bid=0.48 → mid=0.49, spreadPct ≈ 4.08%
-  const narrow = (0.50 - 0.48) / 0.49;
-  assert(narrow < cfg.MAX_ENTRY_SPREAD_PCT,
-    "4% spread is below MAX_ENTRY_SPREAD_PCT → auto-close allowed");
-}
-
 // ---------------------------------------------------------------------------
 // Liquidity gate: blocks auto-close when bid size too small
 // ---------------------------------------------------------------------------
@@ -2212,13 +2175,13 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// DIAGNOSTIC_REASONS: new admission-gate reasons
+// DIAGNOSTIC_REASONS: admission-gate reasons (liquidity + fail-closed)
 // ---------------------------------------------------------------------------
 {
-  console.log("\nDIAGNOSTIC_REASONS: admission gate reasons");
+  console.log("\nDIAGNOSTIC_REASONS: admission gate reasons (liquidity + fail-closed)");
   const { DIAGNOSTIC_REASONS } = require("../src/html_renderer");
 
-  const newReasons = ["SPREAD_TOO_WIDE", "INSUFFICIENT_BID_SIZE", "MISSING_ENTRY_EXEC_PRICES"];
+  const newReasons = ["INSUFFICIENT_BID_SIZE", "MISSING_ENTRY_EXEC_PRICES"];
   for (const reason of newReasons) {
     assert(reason in DIAGNOSTIC_REASONS,
       `${reason} is defined in DIAGNOSTIC_REASONS`);

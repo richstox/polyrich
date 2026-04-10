@@ -442,12 +442,7 @@ async function autoSaveExecuteTickets(scanId) {
     const spreadAbs = (entryBidNum && entryAskNum) ? (entryAskNum - entryBidNum) : null;
     const spreadPct = (midNum && midNum > 0 && spreadAbs !== null) ? spreadAbs / midNum : null;
 
-    // --- Admission gates: spread + liquidity ---
-    // Gate precedence: identity > missing-bid > spread > liquidity (first failure wins)
-    if (effectiveAutoClose && spreadPct !== null && spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
-      effectiveAutoClose = false;
-      autoCloseBlockedReason = "SPREAD_TOO_WIDE";
-    }
+    // --- Admission gates: liquidity ---
     // Liquidity gate: close-side = bid (selling shares). Check notional at top bid.
     if (effectiveAutoClose && entryBidNum && bidSizeRaw !== null) {
       const bidNotionalUsd = entryBidNum * bidSizeRaw;
@@ -1539,12 +1534,7 @@ if (url.pathname === "/trade") {
             data.autoCloseBlockedReason = data.autoCloseBlockedReason || "MISSING_ENTRY_EXEC_PRICES";
           }
         }
-        // Admission gates for auto-close: spread + liquidity
-        // Gate precedence: identity > missing-bid > spread > liquidity (first failure wins)
-        if (data.autoCloseEnabled && typeof data.entrySpreadPct === "number" && data.entrySpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
-          data.autoCloseEnabled = false;
-          data.autoCloseBlockedReason = "SPREAD_TOO_WIDE";
-        }
+        // Admission gates for auto-close: liquidity
         if (data.autoCloseEnabled && typeof data.entryBid === "number" && typeof data.entryBidSize === "number") {
           const bidNotionalUsd = data.entryBid * data.entryBidSize;
           if (bidNotionalUsd < config.MIN_BID_SIZE_USD) {
