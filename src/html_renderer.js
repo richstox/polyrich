@@ -317,7 +317,7 @@ function renderTopPick(item) {
   const link = polymarketUrl(item);
   const qText = safeQuestion(item);
   const questionHtml = link
-    ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;">${escHtml(qText)}</a>`
+    ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none;font-weight:600;">${escHtml(qText)}</a>`
     : `<strong>${escHtml(qText)}</strong>`;
   const reasonTags = (item.reasonCodes || []).map((r) => {
     const c = r === "novel" ? "#059669" : r === "near-expiry" ? "#d97706" : r === "filtered" ? "#ef4444" : "#6b7280";
@@ -343,8 +343,8 @@ function renderTopPick(item) {
       </div>
       <div class="why-pick-card">
         <div class="${trade.cls}" style="margin-bottom:6px;font-weight:600;font-size:0.85rem;">${trade.icon} ${escHtml(trade.label)}</div>
-        <p style="margin:0 0 4px;font-weight:600;font-size:0.82rem;color:#1d1d1f;">Why this is a pick</p>
-        <ul style="margin:0;padding-left:18px;font-size:0.82rem;color:#374151;">
+        <p style="margin:0 0 4px;font-weight:600;font-size:0.82rem;color:#e2e8f0;">Why this is a pick</p>
+        <ul style="margin:0;padding-left:18px;font-size:0.82rem;color:#cbd5e1;">
           ${whyBullets.map((b) => `<li>${escHtml(b)}</li>`).join("")}
         </ul>
       </div>
@@ -398,7 +398,7 @@ function renderTodayActions(scanStatus, funnel, signalsCount, relaxedMode) {
     <div class="card" style="border-left:4px solid ${scanStatus.lastError ? "#dc2626" : "#059669"};">
       <h2 style="margin-top:0;font-size:1.1rem;">Today's Actions</h2>
       <p style="font-size:0.92rem;">${statusIcon} Status: <strong>${statusText}</strong></p>
-      <div style="margin:8px 0;padding:8px 12px;border-radius:8px;background:#eff6ff;font-size:0.88rem;color:#1e40af;">
+      <div style="margin:8px 0;padding:8px 12px;border-radius:8px;background:rgba(37,99,235,.15);font-size:0.88rem;color:#60a5fa;">
         🌐 Universe scanned this run: <strong>${scanStatus.lastEventsFetched || 0}</strong> events →
         <strong>${scanStatus.lastMarketsFlattened || 0}</strong> markets
         (<strong>${scanStatus.lastPagesFetched || 0}</strong> pages)
@@ -415,7 +415,7 @@ function renderTodayActions(scanStatus, funnel, signalsCount, relaxedMode) {
         <p><span style="color:#6b7280;">mispricing:</span> <strong>${funnel.mispricing || 0}</strong></p>
         <p><span style="color:#6b7280;">Mode:</span> ${modeLabel}</p>
       </div>
-      <p style="font-size:0.95rem;font-weight:600;margin-top:10px;padding:8px 12px;border-radius:8px;background:#f0fdf4;color:#166534;">${recommendation}</p>
+      <p style="font-size:0.95rem;font-weight:600;margin-top:10px;padding:8px 12px;border-radius:8px;background:rgba(22,101,52,.2);color:#22c55e;">${recommendation}</p>
     </div>
   `;
 }
@@ -432,7 +432,7 @@ function renderWhyNoMovers(thresholds, closestToThreshold) {
 
   return `
     <div class="card" style="border-left:4px solid #d97706;">
-      <h2 style="margin-top:0;font-size:1rem;color:#92400e;">Why no movers?</h2>
+      <h2 style="margin-top:0;font-size:1rem;color:#eab308;">Why no movers?</h2>
       <p style="font-size:0.85rem;color:#6b7280;">No markets met the momentum/breakout thresholds this run.</p>
       <div class="grid-2" style="margin:8px 0;">
         <p><span class="label">globalMedianMove:</span> <strong>${thresholds.globalMedianMove.toFixed(6)}</strong></p>
@@ -443,7 +443,7 @@ function renderWhyNoMovers(thresholds, closestToThreshold) {
       <h3 style="font-size:0.9rem;margin:12px 0 6px;">Top 3 closest to threshold</h3>
       <table style="width:100%;border-collapse:collapse;">
         <thead>
-          <tr style="border-bottom:1px solid #e5e7eb;">
+          <tr style="border-bottom:1px solid #1e293b;">
             <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#6b7280;">Market</th>
             <th style="padding:4px 8px;text-align:right;font-size:0.78rem;color:#6b7280;">absMove</th>
             <th style="padding:4px 8px;text-align:right;font-size:0.78rem;color:#6b7280;">volatility</th>
@@ -471,7 +471,7 @@ function renderHealthUi(healthData) {
         <p><span style="color:#6b7280;">Timestamp:</span> <strong>${utcSpan(healthData.ts)}</strong></p>
       </div>
     </div>
-    <p style="font-size:0.8rem;color:#6b7280;margin-top:12px;">Raw JSON: <a href="/health" style="color:#2563eb;">/health</a></p>
+    <p style="font-size:0.8rem;color:#6b7280;margin-top:12px;">Raw JSON: <a href="/health" style="color:#60a5fa;">/health</a></p>
   `;
 }
 
@@ -510,7 +510,7 @@ function renderMetricsUi(metrics) {
         <p><span style="color:#6b7280;">eligible mispricing:</span> <strong>${metrics.eligibleForMispricing}</strong></p>
       </div>
     </div>
-    ${metrics.lastError ? `<div class="card" style="border-left:4px solid #dc2626;"><p style="color:#b91c1c;"><strong>Last error:</strong> ${escHtml(metrics.lastError)}</p></div>` : ""}
+    ${metrics.lastError ? `<div class="card" style="border-left:4px solid #dc2626;"><p style="color:#ef4444;"><strong>Last error:</strong> ${escHtml(metrics.lastError)}</p></div>` : ""}
     <div class="card">
       <h2 style="margin-top:0;">Database</h2>
       <div class="grid-2">
@@ -522,7 +522,7 @@ function renderMetricsUi(metrics) {
       <h2 style="margin-top:0;">Last 3 Scans</h2>
       <table style="width:100%;border-collapse:collapse;">
         <thead>
-          <tr style="border-bottom:1px solid #e5e7eb;">
+          <tr style="border-bottom:1px solid #1e293b;">
             <th style="padding:4px 8px;text-align:left;font-size:0.78rem;color:#6b7280;">Scan ID</th>
             <th style="padding:4px 8px;text-align:right;font-size:0.78rem;color:#6b7280;">Duration</th>
           </tr>
@@ -530,7 +530,7 @@ function renderMetricsUi(metrics) {
         <tbody>${scanRows}</tbody>
       </table>
     </div>
-    <p style="font-size:0.8rem;color:#6b7280;margin-top:12px;">Raw JSON: <a href="/metrics" style="color:#2563eb;">/metrics</a></p>
+    <p style="font-size:0.8rem;color:#6b7280;margin-top:12px;">Raw JSON: <a href="/metrics" style="color:#60a5fa;">/metrics</a></p>
   `;
 }
 
@@ -544,7 +544,7 @@ function renderCandidate(item) {
   const link = polymarketUrl(item);
   const qText = safeQuestion(item);
   const questionHtml = link
-    ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;flex:1;font-size:0.95rem;line-height:1.3;">${escHtml(qText)}</a>`
+    ? `<a href="${escHtml(link)}" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none;font-weight:600;flex:1;font-size:0.95rem;line-height:1.3;">${escHtml(qText)}</a>`
     : `<strong style="flex:1;font-size:0.95rem;line-height:1.3;">${escHtml(qText)}</strong>`;
   const whyBullets = computeWhyPick(item);
   const trade = computeTradeability(item);
@@ -554,7 +554,7 @@ function renderCandidate(item) {
     <li class="candidate-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
         ${questionHtml}
-        <span style="margin-left:12px;font-size:1.1rem;font-weight:700;color:#111;white-space:nowrap;">${item.signalScore2.toFixed(1)}</span>
+        <span style="margin-left:12px;font-size:1.1rem;font-weight:700;color:#e2e8f0;white-space:nowrap;">${item.signalScore2.toFixed(1)}</span>
       </div>
       <div style="margin-bottom:6px;">${signalBadge(item.signalType)} ${reasonTags}${item.category ? ` <span class="cat-badge">${escHtml(item.category)}</span>` : ""}${item.subcategory ? ` <span class="cat-badge sub">${escHtml(item.subcategory)}</span>` : ""}</div>
       <div class="candidate-grid">
@@ -566,8 +566,8 @@ function renderCandidate(item) {
       </div>
       <div class="why-pick-card">
         <div class="${trade.cls}" style="margin-bottom:6px;font-weight:600;font-size:0.85rem;">${trade.icon} ${escHtml(trade.label)}</div>
-        <p style="margin:0 0 4px;font-weight:600;font-size:0.82rem;color:#1d1d1f;">Why this is a pick</p>
-        <ul style="margin:0;padding-left:18px;font-size:0.82rem;color:#374151;">
+        <p style="margin:0 0 4px;font-weight:600;font-size:0.82rem;color:#e2e8f0;">Why this is a pick</p>
+        <ul style="margin:0;padding-left:18px;font-size:0.82rem;color:#cbd5e1;">
           ${whyBullets.map((b) => `<li>${escHtml(b)}</li>`).join("")}
         </ul>
       </div>
@@ -612,7 +612,7 @@ function sharedStyles() {
   body {
     margin: 0; padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    background: #f5f5f7; color: #1d1d1f; line-height: 1.5;
+    background: #0b1120; color: #e2e8f0; line-height: 1.5;
   }
   .top-bar {
     background: #1d1d1f; color: #f5f5f7; padding: 10px 0;
@@ -627,10 +627,10 @@ function sharedStyles() {
   .top-bar a:hover { color: #fff; }
   .container { max-width: 900px; margin: 0 auto; padding: 24px 20px; }
   h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 16px; }
-  h2 { font-size: 1.15rem; font-weight: 600; margin: 24px 0 10px; color: #1d1d1f; }
+  h2 { font-size: 1.15rem; font-weight: 600; margin: 24px 0 10px; color: #e2e8f0; }
   .card {
-    background: #fff; border-radius: 12px; padding: 20px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 16px;
+    background: #131b2e; border: 1px solid #1e293b; border-radius: 12px; padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2); margin-bottom: 16px;
   }
   .card p { margin: 4px 0; font-size: 0.88rem; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; }
@@ -639,12 +639,12 @@ function sharedStyles() {
   }
   .nav-card {
     display: flex; align-items: center; justify-content: center;
-    background: #fff; border-radius: 12px; padding: 20px 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.08); text-decoration: none;
-    color: #1d1d1f; font-weight: 600; font-size: 0.95rem;
+    background: #131b2e; border: 1px solid #1e293b; border-radius: 12px; padding: 20px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2); text-decoration: none;
+    color: #e2e8f0; font-weight: 600; font-size: 0.95rem;
     transition: box-shadow .15s, transform .15s;
   }
-  .nav-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.12); transform: translateY(-2px); }
+  .nav-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.3); transform: translateY(-2px); }
   .nav-card .icon { font-size: 1.4rem; margin-right: 10px; }
   ol.candidates { list-style: none; padding: 0; counter-reset: cand; }
   ol.candidates li::before {
@@ -655,8 +655,8 @@ function sharedStyles() {
     float: left; margin-top: 2px;
   }
   .candidate-card {
-    background: #fff; border-radius: 10px; padding: 14px 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 10px;
+    background: #131b2e; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2); margin-bottom: 10px;
     overflow: hidden;
   }
   .candidate-grid {
@@ -664,18 +664,18 @@ function sharedStyles() {
     gap: 2px 12px; font-size: 0.78rem;
   }
   .candidate-grid .label { color: #6b7280; margin-right: 4px; }
-  .candidate-grid .val { font-weight: 500; color: #111; }
+  .candidate-grid .val { font-weight: 500; color: #e2e8f0; }
   .candidate-grid .val.bold { font-weight: 700; }
   .breakdown {
     font-family: "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.72rem; background: #f9fafb; padding: 8px 10px;
+    font-size: 0.72rem; background: #0f172a; padding: 8px 10px;
     border-radius: 6px; margin: 6px 0 0; white-space: pre-wrap;
-    line-height: 1.6; color: #374151;
+    line-height: 1.6; color: #94a3b8;
   }
   .section-toggle { width: 100%; }
   .section-toggle summary {
     cursor: pointer; list-style: none; padding: 12px 16px;
-    background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    background: #131b2e; border: 1px solid #1e293b; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.2);
     font-weight: 600; font-size: 1rem; margin-bottom: 8px;
     display: flex; align-items: center; gap: 8px;
   }
@@ -688,8 +688,8 @@ function sharedStyles() {
     background: #e5e7eb; font-size: 0.75rem; font-weight: 600; padding: 0 6px;
   }
   .snapshot-item {
-    background: #fff; border-radius: 10px; padding: 14px 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 10px;
+    background: #131b2e; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2); margin-bottom: 10px;
   }
   .snapshot-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -698,20 +698,20 @@ function sharedStyles() {
   .snapshot-grid .label { color: #6b7280; margin-right: 4px; }
   .snapshot-grid .val { font-weight: 500; }
   .error-banner {
-    background: #fef2f2; border: 1px solid #fca5a5; border-radius: 10px;
-    padding: 12px 16px; color: #b91c1c; font-weight: 600; margin-bottom: 16px;
+    background: rgba(127,29,29,.3); border: 1px solid #7f1d1d; border-radius: 10px;
+    padding: 12px 16px; color: #fecaca; font-weight: 600; margin-bottom: 16px;
   }
   .info-banner {
-    background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px;
-    padding: 10px 16px; color: #92400e; font-size: 0.88rem; margin-bottom: 16px;
+    background: rgba(133,77,14,.2); border: 1px solid #854d0e; border-radius: 10px;
+    padding: 10px 16px; color: #fef3c7; font-size: 0.88rem; margin-bottom: 16px;
   }
   .why-pick-card {
-    background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;
+    background: rgba(22,101,52,.15); border: 1px solid rgba(34,197,94,.2); border-radius: 8px;
     padding: 10px 14px; margin-top: 8px;
   }
-  .tradeability-ok { color: #166534; }
-  .tradeability-watch { color: #92400e; }
-  .tradeability-excluded { color: #b91c1c; }
+  .tradeability-ok { color: #22c55e; }
+  .tradeability-watch { color: #eab308; }
+  .tradeability-excluded { color: #ef4444; }
   .cta-row {
     display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;
   }
@@ -725,34 +725,34 @@ function sharedStyles() {
   .cta-secondary {
     display: inline-flex; align-items: center; justify-content: center;
     padding: 7px 16px; border-radius: 8px; font-size: 0.85rem; font-weight: 600;
-    background: #fff; color: #2563eb; border: 1px solid #2563eb; cursor: pointer;
+    background: #1e293b; color: #60a5fa; border: 1px solid #334155; cursor: pointer;
     transition: background .15s;
   }
-  .cta-secondary:hover { background: #eff6ff; }
+  .cta-secondary:hover { background: #334155; }
   .cat-badge {
     display: inline-block; padding: 1px 6px; border-radius: 3px;
-    background: #dbeafe; color: #1e40af; font-size: 0.7rem;
-    border: 1px solid #93c5fd; margin-left: 3px;
+    background: rgba(37,99,235,.15); color: #60a5fa; font-size: 0.7rem;
+    border: 1px solid rgba(37,99,235,.3); margin-left: 3px;
   }
-  .cat-badge.sub { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+  .cat-badge.sub { background: rgba(234,179,8,.15); color: #eab308; border-color: rgba(234,179,8,.3); }
   .filter-bar {
     display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;
     align-items: center; font-size: 0.85rem;
   }
   .filter-bar select, .filter-bar input {
-    padding: 5px 10px; border-radius: 6px; border: 1px solid #d1d5db;
-    font-size: 0.85rem; background: #fff;
+    padding: 5px 10px; border-radius: 6px; border: 1px solid #334155;
+    font-size: 0.85rem; background: #0f172a; color: #e2e8f0;
   }
 
   /* Trade page styles */
   .status-bar {
     display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center;
-    background: #fff; border-radius: 12px; padding: 14px 20px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 8px;
+    background: #131b2e; border: 1px solid #1e293b; border-radius: 12px; padding: 14px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2); margin-bottom: 8px;
   }
   .status-item { display: flex; flex-direction: column; font-size: 0.82rem; }
-  .status-label { color: #6b7280; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
-  .status-value { font-weight: 600; color: #1d1d1f; }
+  .status-label { color: #64748b; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .status-value { font-weight: 600; color: #e2e8f0; }
   .mode-normal { color: #059669; }
   .mode-relaxed { color: #d97706; }
 
@@ -764,13 +764,13 @@ function sharedStyles() {
   }
 
   .trade-card {
-    background: #fff; border-radius: 12px; padding: 20px;
-    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    background: #131b2e; border: 1px solid #1e293b; border-radius: 12px; padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.2);
   }
   .trade-card-header { margin-bottom: 10px; }
   .trade-card-title {
     font-weight: 700; font-size: 0.95rem; line-height: 1.35;
-    color: #2563eb; text-decoration: none;
+    color: #60a5fa; text-decoration: none;
   }
   .trade-card-title:hover { text-decoration: underline; }
 
@@ -779,9 +779,9 @@ function sharedStyles() {
     font-weight: 700; font-size: 0.9rem; letter-spacing: 0.03em;
     margin-bottom: 12px;
   }
-  .pill-buy-yes { background: #dcfce7; color: #166534; }
-  .pill-buy-no { background: #fef3c7; color: #92400e; }
-  .pill-watch { background: #f3f4f6; color: #6b7280; }
+  .pill-buy-yes { background: rgba(34,197,94,.15); color: #22c55e; }
+  .pill-buy-no { background: rgba(234,179,8,.15); color: #eab308; }
+  .pill-watch { background: rgba(100,116,139,.18); color: #94a3b8; }
 
   .trade-plan-grid {
     display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px;
@@ -792,12 +792,12 @@ function sharedStyles() {
     font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
     letter-spacing: 0.05em; color: #6b7280;
   }
-  .trade-plan-value { font-size: 0.92rem; font-weight: 700; color: #1d1d1f; }
+  .trade-plan-value { font-size: 0.92rem; font-weight: 700; color: #e2e8f0; }
 
   .why-now {
-    font-size: 0.82rem; color: #374151; margin: 0 0 10px;
-    padding: 6px 10px; background: #f9fafb; border-radius: 6px;
-    border-left: 3px solid #2563eb;
+    font-size: 0.82rem; color: #cbd5e1; margin: 0 0 10px;
+    padding: 6px 10px; background: #0f172a; border-radius: 6px;
+    border-left: 3px solid #3b82f6;
   }
 
   .trade-details { margin-top: 8px; }
@@ -809,21 +809,21 @@ function sharedStyles() {
   /* Ticket card styles (mobile-first) */
   .ticket-list { display: flex; flex-direction: column; gap: 10px; }
   .ticket-card {
-    background: #fff; border-radius: 10px; padding: 14px 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+    background: #131b2e; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2);
   }
   .ticket-meta-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
     gap: 4px 12px; font-size: 0.82rem;
   }
   .ticket-meta-label { display: block; color: #6b7280; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; }
-  .ticket-meta-value { display: block; font-weight: 600; color: #1d1d1f; }
+  .ticket-meta-value { display: block; font-weight: 600; color: #e2e8f0; }
   .type-badge {
     display: inline-block; padding: 2px 8px; border-radius: 10px;
     font-size: 0.72rem; font-weight: 700;
   }
-  .type-badge-exec { background: #dcfce7; color: #166534; }
-  .type-badge-watch { background: #f3f4f6; color: #6b7280; }
+  .type-badge-exec { background: rgba(34,197,94,.15); color: #22c55e; }
+  .type-badge-watch { background: rgba(100,116,139,.18); color: #94a3b8; }
 
   /* ── Tickets page dark theme ────────────────────────────────── */
   .tk-page {
@@ -1527,7 +1527,7 @@ function renderTradeCard(item) {
       <summary>Details</summary>
       <div class="trade-details-inner">
         <p style="font-weight:600;font-size:0.82rem;margin:0 0 6px;">Why this is a pick</p>
-        <ul style="margin:0 0 8px;padding-left:18px;font-size:0.82rem;color:#374151;">
+        <ul style="margin:0 0 8px;padding-left:18px;font-size:0.82rem;color:#cbd5e1;">
           ${computeWhyPick(item).map((b) => `<li>${escHtml(b)}</li>`).join("")}
         </ul>
         <p style="font-weight:600;font-size:0.82rem;margin:0 0 4px;">Debug / scoring</p>
@@ -1595,7 +1595,7 @@ function renderTradeCard(item) {
         <div class="trade-plan-grid">
           <div class="trade-plan-item"><span class="trade-plan-label">TAKE PROFIT</span><span class="trade-plan-value">$${tpNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">STOP-LOSS</span><span class="trade-plan-value">$${stopNum.toFixed(2)}</span></div>
-          <div class="trade-plan-item"><span class="trade-plan-label">PnL @ TP (approx)</span><span class="trade-plan-value trade-pnl-tp" style="color:#166534;">+$${pnlTpUsd.toFixed(2)} (+${pnlTpPct.toFixed(1)}% of stake)</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">PnL @ TP (approx)</span><span class="trade-plan-value trade-pnl-tp" style="color:#22c55e;">+$${pnlTpUsd.toFixed(2)} (+${pnlTpPct.toFixed(1)}% of stake)</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">PnL @ SL (approx)</span><span class="trade-plan-value trade-pnl-stop" style="color:#dc2626;">-$${Math.abs(pnlStopUsd).toFixed(2)} (${pnlStopPct.toFixed(1)}% of stake)</span></div>
         </div>
         <p class="bankroll-note" style="font-size:0.75rem;color:#6b7280;margin:0 0 8px;">\u2139\uFE0F Set bankroll to get % sizing</p>
@@ -1663,17 +1663,17 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
   const defaultAutoClose = (systemSettings && systemSettings.defaultAutoCloseEnabled) || false;
   const acToggleChecked = defaultAutoClose ? "checked" : "";
   const acBadgeStyle = defaultAutoClose
-    ? "background:#dcfce7;color:#166534;"
-    : "background:#fee2e2;color:#991b1b;";
+    ? "background:rgba(34,197,94,.15);color:#22c55e;"
+    : "background:rgba(239,68,68,.15);color:#ef4444;";
   const acBadgeText = defaultAutoClose ? "ON" : "OFF";
 
   const autoSaveEnabled = (systemSettings && systemSettings.autoSaveExecuteEnabled) || false;
   const asBadgeStyle = autoSaveEnabled
-    ? "background:#dcfce7;color:#166534;"
-    : "background:#fee2e2;color:#991b1b;";
+    ? "background:rgba(34,197,94,.15);color:#22c55e;"
+    : "background:rgba(239,68,68,.15);color:#ef4444;";
   const asBadgeText = autoSaveEnabled ? "ON" : "OFF";
   const autoSaveStatusLine = autoSaveEnabled
-    ? '<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#166534;">💾 Auto‑Save ON: will save new EXECUTE ideas after each scan.</div>'
+    ? '<div style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#22c55e;">💾 Auto‑Save ON: will save new EXECUTE ideas after each scan.</div>'
     : "";
 
   return `
@@ -1684,7 +1684,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
       <div class="status-item"><span class="status-label">Ready</span><span class="status-value" style="font-weight:700;">${candidateCount} candidates</span></div>
       <div class="status-item">
         <label class="status-label" for="risk-profile-select">Risk Profile</label>
-        <select id="risk-profile-select" style="padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
+        <select id="risk-profile-select" style="padding:3px 6px;border:1px solid #334155;border-radius:6px;font-size:0.85rem;font-weight:600;background:#0f172a;color:#e2e8f0;">
           <option value="conservative">Conservative</option>
           <option value="default" selected>Default (Polyrich)</option>
           <option value="aggressive">Aggressive</option>
@@ -1695,18 +1695,18 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
       <div class="status-item">
         <label class="status-label" for="bankroll-input">Bankroll (USD) <small style="text-transform:none;letter-spacing:0;">(optional)</small></label>
         <input id="bankroll-input" type="number" min="0" step="1" placeholder="e.g. 1000"
-          style="width:100px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
+          style="width:100px;padding:3px 6px;border:1px solid #334155;border-radius:6px;font-size:0.85rem;font-weight:600;background:#0f172a;color:#e2e8f0;">
       </div>
       <div class="status-item">
-        <label class="status-label" for="risk-pct-input">Risk per trade (%) <span id="risk-badge" style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:0.7rem;font-weight:700;vertical-align:middle;margin-left:4px;background:#dcfce7;color:#166534;">Conservative (default)</span></label>
+        <label class="status-label" for="risk-pct-input">Risk per trade (%) <span id="risk-badge" style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:0.7rem;font-weight:700;vertical-align:middle;margin-left:4px;background:rgba(34,197,94,.15);color:#22c55e;">Conservative (default)</span></label>
         <input id="risk-pct-input" type="number" min="0.1" max="100" step="0.1" placeholder="1"
-          style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
+          style="width:80px;padding:3px 6px;border:1px solid #334155;border-radius:6px;font-size:0.85rem;font-weight:600;background:#0f172a;color:#e2e8f0;">
         <span style="display:block;font-size:0.68rem;color:#6b7280;margin-top:2px;">Default is 1.00%. Aggressive starts at 1.50%.</span>
       </div>
       <div class="status-item">
         <label class="status-label" for="max-cap-input">Max trade cap (USD) <span class="info-tooltip" style="position:relative;cursor:pointer;font-size:0.78rem;color:#6b7280;">ℹ️<span class="info-tooltip-text" style="display:none;position:absolute;bottom:120%;left:50%;transform:translateX(-50%);background:#1f2937;color:#fff;padding:8px 12px;border-radius:8px;font-size:0.78rem;white-space:normal;width:260px;z-index:10;font-weight:400;line-height:1.4;box-shadow:0 2px 8px rgba(0,0,0,.18);">LIMIT orders (recommended) require at least $5 per order. If computed max size is &lt; $5, cards will show WATCH.</span></span></label>
         <input id="max-cap-input" type="number" min="1" step="1" placeholder="50"
-          style="width:80px;padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;font-weight:600;">
+          style="width:80px;padding:3px 6px;border:1px solid #334155;border-radius:6px;font-size:0.85rem;font-weight:600;background:#0f172a;color:#e2e8f0;">
       </div>
       <div class="status-item">
         <label class="status-label">Default Auto-Close <span style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:0.7rem;font-weight:700;vertical-align:middle;margin-left:4px;${acBadgeStyle}">${acBadgeText}</span></label>
@@ -1733,9 +1733,9 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
       <a href="/scan?returnTo=/trade" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
     ${autoSaveStatusLine}
-    <div id="limit-order-warning" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#991b1b;">
+    <div id="limit-order-warning" style="display:none;background:rgba(127,29,29,.3);border:1px solid #7f1d1d;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#fecaca;">
       ⚠️ Max trade cap must be at least $5 for limit orders.
-      <button id="set-cap-5-btn" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #991b1b;background:#fff;color:#991b1b;font-weight:600;font-size:0.82rem;cursor:pointer;">Set cap to $5</button>
+      <button id="set-cap-5-btn" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #991b1b;background:#1e293b;color:#fecaca;font-weight:600;font-size:0.82rem;cursor:pointer;">Set cap to $5</button>
     </div>
   `;
 }
@@ -1776,14 +1776,14 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
     ? '<p style="color:#6b7280;font-size:0.92rem;padding:12px 0;">No executable trades right now. Check WATCH list or run a new scan.</p>'
     : `<div class="trade-grid">${execSlice.map((item) => {
         try { return renderTradeCard(item); }
-        catch (_) { return `<div class="trade-card"><p style="color:#b91c1c;">Render error: ${escHtml((item && item.marketSlug) || "unknown")}</p></div>`; }
+        catch (_) { return `<div class="trade-card"><p style="color:#ef4444;">Render error: ${escHtml((item && item.marketSlug) || "unknown")}</p></div>`; }
       }).join("")}</div>`;
 
   const watchHtml = watchSlice.length === 0
     ? '<p style="color:#6b7280;font-size:0.92rem;padding:12px 0;">No watch items this scan.</p>'
     : `<div class="trade-grid">${watchSlice.map((item) => {
         try { return renderTradeCard(item); }
-        catch (_) { return `<div class="trade-card"><p style="color:#b91c1c;">Render error: ${escHtml((item && item.marketSlug) || "unknown")}</p></div>`; }
+        catch (_) { return `<div class="trade-card"><p style="color:#ef4444;">Render error: ${escHtml((item && item.marketSlug) || "unknown")}</p></div>`; }
       }).join("")}</div>`;
 
   const noDataHtml = cards.length === 0
@@ -1922,16 +1922,16 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
         if (!badge) return;
         if (riskDec <= 0.01) {
           badge.textContent = 'Conservative (default)';
-          badge.style.background = '#dcfce7'; badge.style.color = '#166534';
+          badge.style.background = 'rgba(34,197,94,.15)'; badge.style.color = '#22c55e';
         } else if (riskDec <= 0.015) {
           badge.textContent = 'Slightly aggressive (above default)';
-          badge.style.background = '#fef9c3'; badge.style.color = '#854d0e';
+          badge.style.background = 'rgba(234,179,8,.15)'; badge.style.color = '#eab308';
         } else if (riskDec <= 0.05) {
           badge.textContent = 'Aggressive';
-          badge.style.background = '#fde68a'; badge.style.color = '#92400e';
+          badge.style.background = 'rgba(234,179,8,.25)'; badge.style.color = '#eab308';
         } else {
           badge.textContent = 'Very aggressive \\u2014 high risk';
-          badge.style.background = '#fee2e2'; badge.style.color = '#991b1b';
+          badge.style.background = 'rgba(239,68,68,.15)'; badge.style.color = '#ef4444';
         }
       }
 
@@ -2231,9 +2231,9 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
             var b = items[m].btn;
             var ticketId = openDedupeKeys[key];
             b.textContent = 'Saved \u2713';
-            b.style.background = '#dcfce7';
-            b.style.color = '#166534';
-            b.style.borderColor = '#bbf7d0';
+            b.style.background = 'rgba(34,197,94,.15)';
+            b.style.color = '#22c55e';
+            b.style.borderColor = 'rgba(34,197,94,.3)';
             b.style.cursor = 'pointer';
             b.disabled = false;
             b.removeAttribute('data-save-ticket');
@@ -2364,8 +2364,8 @@ function renderExplorePage(data) {
         const sizeNum = inferSize(item);
         const exits = inferExit(entryNum);
         if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
-          return `<div style="margin-top:8px;padding:8px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;font-size:0.78rem;">
-            <span style="font-weight:700;color:#166534;">⚡ EXECUTE</span>
+          return `<div style="margin-top:8px;padding:8px 10px;background:rgba(22,101,52,.15);border:1px solid rgba(34,197,94,.2);border-radius:6px;font-size:0.78rem;">
+            <span style="font-weight:700;color:#22c55e;">⚡ EXECUTE</span>
             <span style="margin-left:10px;"><span style="color:#6b7280;">ENTRY LIMIT</span> <strong>$${entryNum.toFixed(2)}</strong></span>
             <span style="margin-left:10px;"><span style="color:#6b7280;">TAKE PROFIT</span> <strong>$${exits.tp.toFixed(2)}</strong></span>
             <span style="margin-left:10px;"><span style="color:#6b7280;">RISK EXIT LIMIT</span> <strong>$${exits.stop.toFixed(2)}</strong></span>
@@ -2373,7 +2373,7 @@ function renderExplorePage(data) {
         }
       }
     }
-    return '<div style="margin-top:8px;padding:6px 10px;background:#f3f4f6;border-radius:6px;font-size:0.78rem;color:#6b7280;"><span style="font-weight:600;">👁 WATCH</span> — Plan: TBD</div>';
+    return '<div style="margin-top:8px;padding:6px 10px;background:rgba(100,116,139,.15);border-radius:6px;font-size:0.78rem;color:#94a3b8;"><span style="font-weight:600;">👁 WATCH</span> — Plan: TBD</div>';
   }
 
   // Wrap renderCandidate to add plan preview
@@ -2734,10 +2734,10 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
     <div class="card">
       <h2 style="margin-top:0;">Quick Links</h2>
       <div class="grid-2">
-        <p><a href="/scan" style="color:#2563eb;font-weight:600;">Run scan</a></p>
-        <p><a href="/snapshots" style="color:#2563eb;font-weight:600;">Snapshots</a></p>
-        <p><a href="/health" style="color:#2563eb;font-weight:600;">Health JSON</a></p>
-        <p><a href="/metrics" style="color:#2563eb;font-weight:600;">Metrics JSON</a></p>
+        <p><a href="/scan" style="color:#60a5fa;font-weight:600;">Run scan</a></p>
+        <p><a href="/snapshots" style="color:#60a5fa;font-weight:600;">Snapshots</a></p>
+        <p><a href="/health" style="color:#60a5fa;font-weight:600;">Health JSON</a></p>
+        <p><a href="/metrics" style="color:#60a5fa;font-weight:600;">Metrics JSON</a></p>
       </div>
     </div>
 
@@ -2946,7 +2946,6 @@ function renderWatchlistPage(items, highlightId) {
           setTimeout(function() { el.style.borderColor = ""; }, 3000);
         }
       }
-      document.body.style.background = "#0b1120";
     })();
     </script>
   `;
@@ -3211,7 +3210,6 @@ function renderHistoryPage(closedTickets, activeRange, customFrom, customTo) {
     </div>
     <script>
     (function() {
-      document.body.style.background = "#0b1120";
 
       // Custom range toggle
       var customBtn = document.querySelector('[data-range="custom"]');
@@ -3395,6 +3393,9 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
       : "";
     const timeLeftCls = ticketHoursLeft !== null && ticketHoursLeft <= 24 && ticketHoursLeft > 0 ? "color:#f59e0b;font-weight:600;" : "color:#64748b;";
 
+    // Created date
+    const createdLabel = t.createdAt ? utcSpan(t.createdAt) : "";
+
     // Status badge for non-OPEN
     const statusBadge = t.status !== "OPEN"
       ? `<span style="display:inline-block;padding:1px 5px;border-radius:3px;background:${t.status === "ERROR" ? "#7f1d1d" : "#854d0e"};color:${t.status === "ERROR" ? "#fecaca" : "#fef3c7"};font-size:0.68rem;font-weight:600;">${escHtml(t.status)}</span>`
@@ -3431,6 +3432,7 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
               ${entry ? `<span style="color:#e2e8f0;font-weight:600;font-family:var(--tk-mono);">${entry}</span>` : ""}
               ${size ? `<span style="color:#64748b;">\u00B7 ${size}</span>` : ""}
               ${timeLeftLabel ? `<span style="${timeLeftCls}">\u23F3 ${escHtml(timeLeftLabel)}</span>` : ""}
+              ${createdLabel ? `<span style="color:#64748b;">\u{1F4C5} ${createdLabel}</span>` : ""}
               ${reasonBadges ? `<span>${reasonBadges}</span>` : ""}
             </div>
           </div>
@@ -3579,7 +3581,6 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
           setTimeout(function() { el.style.borderColor = ""; }, 3000);
         }
       }
-      document.body.style.background = "#0b1120";
     })();
     </script>
   `;
@@ -3747,8 +3748,8 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
           <div class="td-section-title">\u{1F4B0} Trade Plan</div>
           <div class="td-grid">
             <div class="td-row"><span class="td-label">Entry</span><span class="td-val">${fmtPrice(t.entryLimit)}</span></div>
-            <div class="td-row"><span class="td-label">Take Profit</span><span class="td-val">${fmtPrice(t.takeProfit)}</span></div>
-            <div class="td-row"><span class="td-label">Exit (risk)</span><span class="td-val">${fmtPrice(t.riskExitLimit)}</span></div>
+            <div class="td-row"><span class="td-label">Take Profit</span><span class="td-val" id="td-tp-val">${fmtPrice(t.takeProfit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="takeProfit" title="Edit Take Profit">\u{270F}\u{FE0F}</span>' : ""}</span></div>
+            <div class="td-row"><span class="td-label">Exit (risk)</span><span class="td-val" id="td-exit-val">${fmtPrice(t.riskExitLimit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="riskExitLimit" title="Edit Exit (risk)">\u{270F}\u{FE0F}</span>' : ""}</span></div>
             <div class="td-row"><span class="td-label">Size (USD)</span><span class="td-val">${fmtUsd(t.maxSizeUsd)}</span></div>
             <div class="td-row"><span class="td-label">Bankroll</span><span class="td-val">${fmtUsd(t.bankrollUsd)}</span></div>
             <div class="td-row"><span class="td-label">Risk %</span><span class="td-val">${fmtPct(t.riskPct)}</span></div>
@@ -3768,7 +3769,7 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
         ${isClosed ? `<div class="td-section">
           <div class="td-section-title">\u{2705} Close Result</div>
           <div class="td-grid">
-            <div class="td-row"><span class="td-label">Close price</span><span class="td-val">${fmtPrice(t.closePrice)}</span></div>
+            <div class="td-row"><span class="td-label">Close price</span><span class="td-val" id="td-cp-val">${fmtPrice(t.closePrice)} <span class="tk-edit-icon" data-edit-field="closePrice" title="Edit Close Price">\u{270F}\u{FE0F}</span></span></div>
             <div class="td-row"><span class="td-label">Closed at</span><span class="td-val">${t.closedAt ? utcSpan(t.closedAt) : "\u2014"}</span></div>
             ${pnlHtml}
           </div>
@@ -3822,7 +3823,6 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
       .td-val { color:#e2e8f0; text-align:right; word-break:break-all; }
       .pnl-pos { color:#22c55e; }
       .pnl-neg { color:#ef4444; }
-      body { background:#0b1120; }
     </style>
     <script>
     (function() {
@@ -3857,7 +3857,52 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
           }).catch(function() { closeBtn.textContent = "Error"; closeBtn.disabled = false; });
         });
       }
-      document.body.style.background = "#0b1120";
+      // Inline edit for TP, Exit, Close Price
+      var TICKET_ID = "${escHtml(String(t._id))}";
+      document.addEventListener("click", function(e) {
+        var icon = e.target.closest(".tk-edit-icon");
+        if (!icon) return;
+        var field = icon.getAttribute("data-edit-field");
+        if (!field) return;
+        var valSpan = icon.closest(".td-val");
+        if (!valSpan) return;
+        // Prevent duplicate edit forms
+        if (valSpan.querySelector(".tk-inline-edit")) return;
+        var currentText = valSpan.childNodes[0].textContent.trim().replace("$", "");
+        var currentVal = parseFloat(currentText);
+        var origHtml = valSpan.innerHTML;
+        valSpan.innerHTML = '<div class="tk-inline-edit">' +
+          '<input type="number" step="0.01" min="0" max="1" value="' + (isNaN(currentVal) ? "" : currentVal) + '" inputmode="decimal" placeholder="0\u20131">' +
+          '<button class="tk-inline-save">Save</button>' +
+          '<button class="tk-inline-cancel">Cancel</button>' +
+          '</div>';
+        var inp = valSpan.querySelector("input");
+        var saveBtn = valSpan.querySelector(".tk-inline-save");
+        var cancelBtn = valSpan.querySelector(".tk-inline-cancel");
+        inp.focus();
+        inp.select();
+        cancelBtn.addEventListener("click", function() { valSpan.innerHTML = origHtml; });
+        inp.addEventListener("keydown", function(ev) {
+          if (ev.key === "Escape") { valSpan.innerHTML = origHtml; }
+          if (ev.key === "Enter") { saveBtn.click(); }
+        });
+        saveBtn.addEventListener("click", function() {
+          var v = parseFloat(inp.value);
+          if (isNaN(v) || v < 0) { alert("Enter a valid price (0\u20131)"); return; }
+          saveBtn.disabled = true;
+          saveBtn.textContent = "Saving\u2026";
+          var payload = { ticketId: TICKET_ID };
+          payload[field] = v;
+          fetch("/api/tickets/edit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }).then(function(r) { return r.json(); }).then(function(d) {
+            if (d.error) { alert(d.error); valSpan.innerHTML = origHtml; return; }
+            location.reload();
+          }).catch(function() { alert("Network error"); valSpan.innerHTML = origHtml; });
+        });
+      });
     })();
     </script>
   `;
