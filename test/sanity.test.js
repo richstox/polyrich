@@ -999,6 +999,87 @@ console.log("\nfinalizeItem: mispricing eligibility gate");
 }
 
 // ---------------------------------------------------------------------------
+// finalizeItem: yesTokenId / noTokenId passthrough
+// ---------------------------------------------------------------------------
+console.log("\nfinalizeItem: yesTokenId / noTokenId passthrough");
+
+{
+  const { finalizeItem } = require("../src/signal_engine");
+
+  function makeItem(overrides) {
+    return {
+      question: "Test?",
+      category: "",
+      subcategory: "",
+      marketSlug: "test",
+      eventSlug: "test-event",
+      conditionId: "0xabc",
+      tagIds: [],
+      tagSlugs: [],
+      eventGroup: "test-event",
+      categoryGroup: "uncategorized",
+      latestYes: 0.5,
+      previousYes: 0.5,
+      delta1: 0,
+      delta2: 0,
+      absMove: 0.005,
+      volatility: 0.005,
+      spread: 0.02,
+      spreadPct: 0.04,
+      liquidity: 10000,
+      volume24hr: 5000,
+      bestBidNum: 0.48,
+      bestAskNum: 0.52,
+      mid: 0.5,
+      microEdge: 0,
+      orderbookQualityPenalty: 0,
+      endDate: "",
+      hoursLeft: 48,
+      liquidityScore: Math.log(10001),
+      volumeScore: Math.log(5001),
+      moveTerm: 50,
+      volTerm: 25,
+      costPenalty: 80,
+      activityTerm: 600,
+      extremePenalty: 0,
+      timePenalty: 0,
+      timeBonus: 60,
+      momentum: true,
+      breakout: false,
+      reversal: false,
+      historyPoints: 5,
+      recentSeries: [0.5, 0.5, 0.5, 0.5, 0.5],
+      medianRecentMove: 0.001,
+      noveltyBonus: 0,
+      _filtered: false,
+      eventInconsistencyScore: 0,
+      peerZScore: 0,
+      ...overrides,
+    };
+  }
+
+  // Token IDs present → survive finalizeItem
+  {
+    const item = makeItem({ yesTokenId: "tok_yes_abc", noTokenId: "tok_no_xyz" });
+    const result = finalizeItem(item, 5, 2);
+    assert(result.yesTokenId === "tok_yes_abc",
+      "yesTokenId survives finalizeItem passthrough");
+    assert(result.noTokenId === "tok_no_xyz",
+      "noTokenId survives finalizeItem passthrough");
+  }
+
+  // Token IDs null → still present as null after finalizeItem
+  {
+    const item = makeItem({ yesTokenId: null, noTokenId: null });
+    const result = finalizeItem(item, 5, 2);
+    assert(result.yesTokenId === null,
+      "null yesTokenId preserved through finalizeItem");
+    assert(result.noTokenId === null,
+      "null noTokenId preserved through finalizeItem");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Final selection: mispricing quota enforcement
 // ---------------------------------------------------------------------------
 console.log("\nfinal selection: mispricing quota");
