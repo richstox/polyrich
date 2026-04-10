@@ -3393,6 +3393,9 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
       : "";
     const timeLeftCls = ticketHoursLeft !== null && ticketHoursLeft <= 24 && ticketHoursLeft > 0 ? "color:#f59e0b;font-weight:600;" : "color:#64748b;";
 
+    // Created date
+    const createdLabel = t.createdAt ? utcSpan(t.createdAt) : "";
+
     // Status badge for non-OPEN
     const statusBadge = t.status !== "OPEN"
       ? `<span style="display:inline-block;padding:1px 5px;border-radius:3px;background:${t.status === "ERROR" ? "#7f1d1d" : "#854d0e"};color:${t.status === "ERROR" ? "#fecaca" : "#fef3c7"};font-size:0.68rem;font-weight:600;">${escHtml(t.status)}</span>`
@@ -3429,6 +3432,7 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
               ${entry ? `<span style="color:#e2e8f0;font-weight:600;font-family:var(--tk-mono);">${entry}</span>` : ""}
               ${size ? `<span style="color:#64748b;">\u00B7 ${size}</span>` : ""}
               ${timeLeftLabel ? `<span style="${timeLeftCls}">\u23F3 ${escHtml(timeLeftLabel)}</span>` : ""}
+              ${createdLabel ? `<span style="color:#64748b;">\u{1F4C5} ${createdLabel}</span>` : ""}
               ${reasonBadges ? `<span>${reasonBadges}</span>` : ""}
             </div>
           </div>
@@ -3744,8 +3748,8 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
           <div class="td-section-title">\u{1F4B0} Trade Plan</div>
           <div class="td-grid">
             <div class="td-row"><span class="td-label">Entry</span><span class="td-val">${fmtPrice(t.entryLimit)}</span></div>
-            <div class="td-row"><span class="td-label">Take Profit</span><span class="td-val">${fmtPrice(t.takeProfit)}</span></div>
-            <div class="td-row"><span class="td-label">Exit (risk)</span><span class="td-val">${fmtPrice(t.riskExitLimit)}</span></div>
+            <div class="td-row"><span class="td-label">Take Profit</span><span class="td-val" id="td-tp-val">${fmtPrice(t.takeProfit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="takeProfit" title="Edit Take Profit">\u{270F}\u{FE0F}</span>' : ""}</span></div>
+            <div class="td-row"><span class="td-label">Exit (risk)</span><span class="td-val" id="td-exit-val">${fmtPrice(t.riskExitLimit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="riskExitLimit" title="Edit Exit (risk)">\u{270F}\u{FE0F}</span>' : ""}</span></div>
             <div class="td-row"><span class="td-label">Size (USD)</span><span class="td-val">${fmtUsd(t.maxSizeUsd)}</span></div>
             <div class="td-row"><span class="td-label">Bankroll</span><span class="td-val">${fmtUsd(t.bankrollUsd)}</span></div>
             <div class="td-row"><span class="td-label">Risk %</span><span class="td-val">${fmtPct(t.riskPct)}</span></div>
@@ -3765,7 +3769,7 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
         ${isClosed ? `<div class="td-section">
           <div class="td-section-title">\u{2705} Close Result</div>
           <div class="td-grid">
-            <div class="td-row"><span class="td-label">Close price</span><span class="td-val">${fmtPrice(t.closePrice)}</span></div>
+            <div class="td-row"><span class="td-label">Close price</span><span class="td-val" id="td-cp-val">${fmtPrice(t.closePrice)} <span class="tk-edit-icon" data-edit-field="closePrice" title="Edit Close Price">\u{270F}\u{FE0F}</span></span></div>
             <div class="td-row"><span class="td-label">Closed at</span><span class="td-val">${t.closedAt ? utcSpan(t.closedAt) : "\u2014"}</span></div>
             ${pnlHtml}
           </div>
@@ -3853,6 +3857,52 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
           }).catch(function() { closeBtn.textContent = "Error"; closeBtn.disabled = false; });
         });
       }
+      // Inline edit for TP, Exit, Close Price
+      var TICKET_ID = "${escHtml(String(t._id))}";
+      document.addEventListener("click", function(e) {
+        var icon = e.target.closest(".tk-edit-icon");
+        if (!icon) return;
+        var field = icon.getAttribute("data-edit-field");
+        if (!field) return;
+        var valSpan = icon.closest(".td-val");
+        if (!valSpan) return;
+        // Prevent duplicate edit forms
+        if (valSpan.querySelector(".tk-inline-edit")) return;
+        var currentText = valSpan.childNodes[0].textContent.trim().replace("$", "");
+        var currentVal = parseFloat(currentText);
+        var origHtml = valSpan.innerHTML;
+        valSpan.innerHTML = '<div class="tk-inline-edit">' +
+          '<input type="number" step="0.01" min="0" max="1" value="' + (isNaN(currentVal) ? "" : currentVal) + '" inputmode="decimal" placeholder="0\u20131">' +
+          '<button class="tk-inline-save">Save</button>' +
+          '<button class="tk-inline-cancel">Cancel</button>' +
+          '</div>';
+        var inp = valSpan.querySelector("input");
+        var saveBtn = valSpan.querySelector(".tk-inline-save");
+        var cancelBtn = valSpan.querySelector(".tk-inline-cancel");
+        inp.focus();
+        inp.select();
+        cancelBtn.addEventListener("click", function() { valSpan.innerHTML = origHtml; });
+        inp.addEventListener("keydown", function(ev) {
+          if (ev.key === "Escape") { valSpan.innerHTML = origHtml; }
+          if (ev.key === "Enter") { saveBtn.click(); }
+        });
+        saveBtn.addEventListener("click", function() {
+          var v = parseFloat(inp.value);
+          if (isNaN(v) || v < 0) { alert("Enter a valid price (0\u20131)"); return; }
+          saveBtn.disabled = true;
+          saveBtn.textContent = "Saving\u2026";
+          var payload = { ticketId: TICKET_ID };
+          payload[field] = v;
+          fetch("/api/tickets/edit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }).then(function(r) { return r.json(); }).then(function(d) {
+            if (d.error) { alert(d.error); valSpan.innerHTML = origHtml; return; }
+            location.reload();
+          }).catch(function() { alert("Network error"); valSpan.innerHTML = origHtml; });
+        });
+      });
     })();
     </script>
   `;
