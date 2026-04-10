@@ -1419,15 +1419,17 @@ function inferSize(item) {
 
 /**
  * Infer exit plan (take profit + stop-loss).
- * When `bidBasis` is provided (not null and > 0), TP/SL are computed relative to the
- * bid price (sell-to-close basis) so that monitoring against the current bid is
- * apples-to-apples.  When `bidBasis` is null/undefined, falls back to `entryNum`
- * (legacy ask-based behaviour — only used for rendering, NOT for auto-close triggers).
+ * TP/SL are computed relative to the bid price (sell-to-close basis) so that
+ * monitoring against the current bid is apples-to-apples.
+ *
+ * When `bidBasis` is null/undefined/zero, returns { tp: null, stop: null } —
+ * the caller must handle this as "cannot compute exits" (fail-closed).
+ * There is no fallback to the ask-based entry price.
  *
  * Returns { tp, stop } as numbers or null.
  */
 function inferExit(entryNum, bidBasis) {
-  const basis = (typeof bidBasis === "number" && bidBasis > 0) ? bidBasis : entryNum;
+  const basis = (typeof bidBasis === "number" && bidBasis > 0) ? bidBasis : null;
   if (basis === null || basis <= 0 || basis >= PRICE_CEILING) return { tp: null, stop: null };
   const tp = Math.min(basis * TP_MULTIPLIER, PRICE_CEILING);
   const stop = Math.max(basis * STOP_MULTIPLIER, PRICE_FLOOR);
