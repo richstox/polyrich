@@ -1636,7 +1636,7 @@ if (url.pathname === "/trade") {
   // ── GET /api/system/danger-zone/counts ──────────────────────────────
   if (url.pathname === "/api/system/danger-zone/counts" && req.method === "GET") {
     try {
-      const [allTickets, closedTickets, openClosingTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches] = await Promise.all([
+      const [allTickets, closedTickets, openClosingTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches, monitorLeases] = await Promise.all([
         TradeTicket.countDocuments({}),
         TradeTicket.countDocuments({ status: "CLOSED" }),
         TradeTicket.countDocuments({ status: { $in: ["OPEN", "CLOSING"] } }),
@@ -1646,6 +1646,7 @@ if (url.pathname === "/trade") {
         Scan.estimatedDocumentCount(),
         ShownCandidate.estimatedDocumentCount(),
         TagCache.estimatedDocumentCount(),
+        MonitorLease.estimatedDocumentCount(),
       ]);
       const closedTicketIds = await TradeTicket.find({ status: "CLOSED" }).select("_id").lean();
       const closedCloseAttempts = closedTicketIds.length > 0
@@ -1657,7 +1658,7 @@ if (url.pathname === "/trade") {
         DELETE_CLOSED: { tickets: closedTickets, closeAttempts: closedCloseAttempts },
         DELETE_OPEN: { tickets: openClosingTickets },
         RESET_TRADES: { tickets: allTickets, closeAttempts },
-        FACTORY_RESET: { tickets: allTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches },
+        FACTORY_RESET: { tickets: allTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches, monitorLeases },
       }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });

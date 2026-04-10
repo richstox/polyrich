@@ -2743,7 +2743,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         </button>
         <button class="dz-action-btn" data-action="RESET_TRADES" disabled
           style="background:#9f1239;color:#ffe4e6;border:none;padding:8px 18px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:not-allowed;opacity:0.5;">
-          📊 Reset statistiky (smazat tardy)
+          📊 Reset statistiky (smazat tikety)
         </button>
         <button class="dz-action-btn" data-action="FACTORY_RESET" disabled
           style="background:#581c87;color:#f3e8ff;border:none;padding:8px 18px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:not-allowed;opacity:0.5;">
@@ -2793,7 +2793,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         btn.addEventListener("click", function() {
           if (btn.disabled) return;
           var action = btn.getAttribute("data-action");
-          var labels = { RESET_ALL: "Reset ALL data", DELETE_CLOSED: "Delete all CLOSED tickets", DELETE_OPEN: "Delete all OPEN tickets", RESET_TRADES: "RESET STATISTIKY — smazat všechny tardy a close attempts (zachová logy, scany, snapshoty)", FACTORY_RESET: "FACTORY RESET — smazat úplně vše a začít z nuly" };
+          var labels = { RESET_ALL: "Reset ALL data", DELETE_CLOSED: "Delete all CLOSED tickets", DELETE_OPEN: "Delete all OPEN tickets", RESET_TRADES: "RESET STATISTIKY — smazat všechny tikety a close attempts (zachová logy, scany, snapshoty)", FACTORY_RESET: "FACTORY RESET — smazat úplně vše a začít z nuly" };
           if (!confirm("Are you sure you want to: " + (labels[action] || action) + "? This cannot be undone.")) return;
           btn.disabled = true;
           btn.textContent = "Working…";
