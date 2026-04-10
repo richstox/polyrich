@@ -2852,7 +2852,7 @@ console.log("\nfinal selection: mispricing quota");
   // Shares = maxSizeUsd / entryPrice
   const shares = maxSizeUsd / entryPrice;
   assert(shares > 0, `Shares = ${shares.toFixed(2)} (${maxSizeUsd} / ${entryPrice})`);
-  assert(Math.abs(shares - maxSizeUsd / 0.50) < 0.001,
+  assert(Math.abs(shares - maxSizeUsd / entryPrice) < 0.001,
     `Shares = maxSizeUsd / askPrice (${shares.toFixed(2)})`);
 
   // Cost basis check
