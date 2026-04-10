@@ -289,6 +289,8 @@ async function getCurrentCloseablePrice(ticket) {
     bestAskRaw: null,
     bestBidValid: false,
     bestAskValid: false,
+    outcomePricesRaw: null,
+    lastTradePriceRaw: null,
     marketEndState: null,         // { ended, settled, closed }
     nullReason: null,             // classified cause
   };
@@ -336,6 +338,8 @@ async function getCurrentCloseablePrice(ticket) {
     diag.bestAskRaw = data.bestAsk ?? null;
     diag.bestBidValid = Number.isFinite(bestBid) && bestBid > 0;
     diag.bestAskValid = Number.isFinite(bestAsk);
+    diag.outcomePricesRaw = data.outcomePrices ?? null;
+    diag.lastTradePriceRaw = data.lastTradePrice ?? null;
 
     if (ticket.action === "BUY_YES" && Number.isFinite(bestBid) && bestBid > 0) {
       // Selling YES shares → receive bestBid price
@@ -350,7 +354,7 @@ async function getCurrentCloseablePrice(ticket) {
       }
     }
 
-    // Fallback: use outcomePrices if available (approximation only)
+    // Fallback 1: use outcomePrices if available (approximation only)
     let outcomePrices = data.outcomePrices;
     if (typeof outcomePrices === "string") {
       try { outcomePrices = JSON.parse(outcomePrices); } catch (_) { outcomePrices = null; }
@@ -366,6 +370,23 @@ async function getCurrentCloseablePrice(ticket) {
         const noPrice = parseFloat(outcomePrices[1]);
         if (Number.isFinite(noPrice) && noPrice > 0) {
           return { price: noPrice, source: "gamma_outcomePrices_approx", marketEndState: endState };
+        }
+      }
+    }
+
+    // Fallback 2: use lastTradePrice — most recent executed trade price.
+    // Crucial for live sports markets where orderbook dries up but trades
+    // still occur, so lastTradePrice reflects the current probability.
+    const ltp = parseFloat(data.lastTradePrice);
+    if (Number.isFinite(ltp) && ltp > 0) {
+      if (ticket.action === "BUY_YES") {
+        return { price: ltp, source: "gamma_lastTradePrice", marketEndState: endState };
+      }
+      if (ticket.action === "BUY_NO") {
+        // lastTradePrice is YES-side; NO-side ≈ 1 - lastTradePrice
+        const noLtp = 1 - ltp;
+        if (noLtp > 0) {
+          return { price: noLtp, source: "gamma_lastTradePrice_no_derived", marketEndState: endState };
         }
       }
     }

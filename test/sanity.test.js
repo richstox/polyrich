@@ -1423,6 +1423,72 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// Price fallback chain documentation tests (auto_monitor)
+// ---------------------------------------------------------------------------
+// These tests verify the price extraction helpers and fallback chain contract.
+// getCurrentCloseablePrice is async (requires fetch), so we test the building
+// blocks and document the chain: bestBid → outcomePrices → lastTradePrice.
+{
+  console.log("\nPrice fallback chain contract");
+
+  // Verify matchMarketFromArray still returns the data object with all fields
+  const { matchMarketFromArray } = require("../src/auto_monitor");
+
+  // Market with all price fields (bestBid, bestAsk, outcomePrices, lastTradePrice)
+  const fullMarket = {
+    conditionId: "0xABC",
+    bestBid: "0.65",
+    bestAsk: "0.67",
+    outcomePrices: '["0.66","0.34"]',
+    lastTradePrice: "0.66",
+    resolved: false,
+    closed: false,
+  };
+  const matched = matchMarketFromArray([fullMarket], { conditionId: "0xABC" });
+  assert(matched === fullMarket, "matched market preserves all price fields");
+  assert(matched.bestBid === "0.65", "bestBid accessible on matched market");
+  assert(matched.lastTradePrice === "0.66", "lastTradePrice accessible on matched market");
+
+  // Market with NO bestBid/bestAsk but WITH lastTradePrice (live sports scenario)
+  const sportsLive = {
+    conditionId: "0xSPORT",
+    bestBid: null,
+    bestAsk: null,
+    outcomePrices: null,
+    lastTradePrice: "0.72",
+    resolved: false,
+    closed: false,
+  };
+  const sportMatch = matchMarketFromArray([sportsLive], { conditionId: "0xSPORT" });
+  assert(sportMatch === sportsLive, "sports market matched despite null orderbook");
+  assert(sportMatch.lastTradePrice === "0.72", "lastTradePrice is the only price available");
+  // Verify bestBid would fail the parseFloat check → fallback chain needed
+  const bestBid = parseFloat(sportMatch.bestBid);
+  assert(!Number.isFinite(bestBid) || bestBid <= 0,
+    "bestBid null → parseFloat fails → triggers fallback chain");
+  const ltp = parseFloat(sportMatch.lastTradePrice);
+  assert(Number.isFinite(ltp) && ltp > 0,
+    "lastTradePrice parses to valid number → fallback succeeds");
+
+  // Settled market: bestBid null, outcomePrices present, lastTradePrice stale
+  const settled = {
+    conditionId: "0xSETTLED",
+    bestBid: null,
+    bestAsk: null,
+    outcomePrices: '["1.0","0.0"]',
+    lastTradePrice: "0.95",
+    resolved: true,
+  };
+  const settledMatch = matchMarketFromArray([settled], { conditionId: "0xSETTLED" });
+  assert(settledMatch.resolved === true, "settled market resolved flag preserved");
+  let opStr = settledMatch.outcomePrices;
+  let op;
+  try { op = JSON.parse(opStr); } catch (_) { op = null; }
+  assert(Array.isArray(op) && parseFloat(op[0]) === 1.0,
+    "outcomePrices [1.0, 0.0] → fallback 1 catches settled market");
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -2549,8 +2549,11 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         · ticket …${escHtml(String(autoModeStatus.lastTickNullPriceSample.ticketId || "—"))}
         · reason: <strong style="color:#ef4444;">${escHtml(String(autoModeStatus.lastTickNullPriceSample.nullReason || "—"))}</strong>
         · HTTP ${escHtml(String(autoModeStatus.lastTickNullPriceSample.httpStatus ?? "—"))}
-        · bestBid: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestBidValid ? "✓" : "✗"))} bestAsk: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestAskValid ? "✓" : "✗"))}${autoModeStatus.lastTickNullPriceSample.marketEndState ? `
-        · ended: ${autoModeStatus.lastTickNullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${autoModeStatus.lastTickNullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${autoModeStatus.lastTickNullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
+        <br>bestBid: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestBidRaw ?? "null"))} (${autoModeStatus.lastTickNullPriceSample.bestBidValid ? "✓" : "✗"})
+        · bestAsk: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.bestAskRaw ?? "null"))} (${autoModeStatus.lastTickNullPriceSample.bestAskValid ? "✓" : "✗"})
+        · outcomePrices: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.outcomePricesRaw ?? "null"))}
+        · lastTradePrice: ${escHtml(String(autoModeStatus.lastTickNullPriceSample.lastTradePriceRaw ?? "null"))}${autoModeStatus.lastTickNullPriceSample.marketEndState ? `
+        <br>ended: ${autoModeStatus.lastTickNullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${autoModeStatus.lastTickNullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${autoModeStatus.lastTickNullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
       </div>` : ""}${debugSnapshot && debugSnapshot.nullPriceSample ? `
       <div style="margin-top:8px;font-size:0.78rem;color:#94a3b8;background:#1a2332;padding:8px 10px;border-radius:6px;border:1px solid #334155;">
         <span style="color:#818cf8;">💾 Persisted debug sample</span> <span style="color:#64748b;">(${escHtml(String(debugSnapshot.capturedAt || "—"))})</span><br>
@@ -2559,8 +2562,11 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         · ticket …${escHtml(String(debugSnapshot.nullPriceSample.ticketId || "—"))}
         · reason: <strong style="color:#ef4444;">${escHtml(String(debugSnapshot.nullPriceSample.nullReason || "—"))}</strong>
         · HTTP ${escHtml(String(debugSnapshot.nullPriceSample.httpStatus ?? "—"))}
-        · bestBid: ${debugSnapshot.nullPriceSample.bestBidValid ? "✓" : "✗"} bestAsk: ${debugSnapshot.nullPriceSample.bestAskValid ? "✓" : "✗"}${debugSnapshot.nullPriceSample.marketEndState ? `
-        · ended: ${debugSnapshot.nullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${debugSnapshot.nullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${debugSnapshot.nullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
+        <br>bestBid: ${escHtml(String(debugSnapshot.nullPriceSample.bestBidRaw ?? "null"))} (${debugSnapshot.nullPriceSample.bestBidValid ? "✓" : "✗"})
+        · bestAsk: ${escHtml(String(debugSnapshot.nullPriceSample.bestAskRaw ?? "null"))} (${debugSnapshot.nullPriceSample.bestAskValid ? "✓" : "✗"})
+        · outcomePrices: ${escHtml(String(debugSnapshot.nullPriceSample.outcomePricesRaw ?? "null"))}
+        · lastTradePrice: ${escHtml(String(debugSnapshot.nullPriceSample.lastTradePriceRaw ?? "null"))}${debugSnapshot.nullPriceSample.marketEndState ? `
+        <br>ended: ${debugSnapshot.nullPriceSample.marketEndState.ended ? "yes" : "no"} · settled: ${debugSnapshot.nullPriceSample.marketEndState.settled ? "yes" : "no"} · closed: ${debugSnapshot.nullPriceSample.marketEndState.closed ? "yes" : "no"}` : ""}
         <br><span style="color:#64748b;">Tick: priceNull=${debugSnapshot.tickSummary.priceNull} priceOk=${debugSnapshot.tickSummary.priceOk} priceErr=${debugSnapshot.tickSummary.priceError} ended=${debugSnapshot.tickSummary.endedMarkets} settled=${debugSnapshot.tickSummary.settledMarkets}</span>
       </div>` : ""}
     </div>
