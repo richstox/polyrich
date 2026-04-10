@@ -930,7 +930,7 @@ async function monitorTick() {
     if (ticket.createdAt) {
       const ageMs = Date.now() - new Date(ticket.createdAt).getTime();
       if (ageMs < config.AUTO_MODE_MIN_HOLD_SEC * 1000) {
-        monitorState.lastTickMinHoldSkip = (monitorState.lastTickMinHoldSkip || 0) + 1;
+        monitorState.lastTickMinHoldSkip++;
         continue;
       }
     }

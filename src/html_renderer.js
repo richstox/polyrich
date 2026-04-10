@@ -3168,6 +3168,7 @@ function renderHistoryPage(closedTickets, activeRange, customFrom, customTo) {
 
     return `
       <div class="tk-ticket history-card"
+         tabindex="0" role="link"
          style="position:relative;cursor:pointer;"
          data-detail-url="/tickets/${escHtml(String(t._id))}"
          data-question="${escHtml(headline.toLowerCase())}"
@@ -3215,13 +3216,19 @@ function renderHistoryPage(closedTickets, activeRange, customFrom, customTo) {
       // Navigate to detail on card click (excluding inner links)
       var listEl = document.getElementById("history-list");
       if (listEl) {
-        listEl.addEventListener("click", function(e) {
+        function navigateCard(e) {
           var card = e.target.closest(".history-card");
           if (!card) return;
-          // Don't navigate if clicking on an inner link or button
           if (e.target.closest("a[target]") || e.target.closest("button")) return;
           var url = card.getAttribute("data-detail-url");
           if (url) window.location.href = url;
+        }
+        listEl.addEventListener("click", navigateCard);
+        listEl.addEventListener("keydown", function(e) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            navigateCard(e);
+          }
         });
       }
 
