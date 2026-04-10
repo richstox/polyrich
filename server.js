@@ -368,9 +368,11 @@ async function autoSaveExecuteTickets(scanId) {
       // Skip if below min limit order ($5)
       if (sizeNum < 5) continue;
 
-      const exits = inferExit(entryNum);
+      // Bid-based TP/SL: use bestBidNum as close-price basis
+      const entryBidNum = (item.bestBidNum > 0) ? item.bestBidNum : null;
+      const exits = inferExit(entryNum, entryBidNum);
       if (exits.tp === null || exits.stop === null) continue;
-      executeItems.push({ item, dir, entryNum, sizeNum, tpNum: exits.tp, stopNum: exits.stop });
+      executeItems.push({ item, dir, entryNum, sizeNum, tpNum: exits.tp, stopNum: exits.stop, entryBidNum });
     } catch (_) { /* skip */ }
   }
 
@@ -382,7 +384,7 @@ async function autoSaveExecuteTickets(scanId) {
   let created = 0;
   let dupes = 0;
 
-  for (const { item, dir, entryNum, sizeNum, tpNum, stopNum } of toSave) {
+  for (const { item, dir, entryNum, sizeNum, tpNum, stopNum, entryBidNum } of toSave) {
     const qText = safeQuestion(item);
     const link = polymarketUrl(item);
     const actionEnum = dir.action === "BUY YES" ? "BUY_YES" : dir.action === "BUY NO" ? "BUY_NO" : "WATCH";
@@ -398,6 +400,28 @@ async function autoSaveExecuteTickets(scanId) {
     if (!hasCanonicalId) {
       effectiveAutoClose = false;
       autoCloseBlockedReason = "no_conditionId";
+    }
+
+    // --- Entry microstructure snapshot ---
+    const entryAskNum = entryNum; // inferEntry returns bestAsk
+    const midNum = (entryBidNum && entryAskNum) ? (entryAskNum + entryBidNum) / 2 : null;
+    const spreadAbs = (entryBidNum && entryAskNum) ? (entryAskNum - entryBidNum) : null;
+    const spreadPct = (midNum && midNum > 0 && spreadAbs !== null) ? spreadAbs / midNum : null;
+    const bidSizeRaw = (typeof item.bestBidSize === "number" && item.bestBidSize > 0) ? item.bestBidSize : null;
+    const askSizeRaw = (typeof item.bestAskSize === "number" && item.bestAskSize > 0) ? item.bestAskSize : null;
+
+    // --- Admission gates: spread + liquidity ---
+    if (effectiveAutoClose && spreadPct !== null && spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
+      effectiveAutoClose = false;
+      autoCloseBlockedReason = "SPREAD_TOO_WIDE";
+    }
+    // Liquidity gate: close-side = bid (selling shares). Check notional at top bid.
+    if (effectiveAutoClose && entryBidNum && bidSizeRaw !== null) {
+      const bidNotionalUsd = entryBidNum * bidSizeRaw;
+      if (bidNotionalUsd < config.MIN_BID_SIZE_USD) {
+        effectiveAutoClose = false;
+        autoCloseBlockedReason = autoCloseBlockedReason || "INSUFFICIENT_BID_SIZE";
+      }
     }
 
     const pnlTpPct = (tpNum - entryNum) / entryNum * 100;
@@ -436,6 +460,16 @@ async function autoSaveExecuteTickets(scanId) {
       pnlExitUsd: Math.round(pnlStopUsd * 100) / 100,
       pnlExitPct: Math.round(pnlStopPct * 10) / 1000,
       endDate: item.endDate || null,
+      // Entry microstructure snapshot
+      entryBid: entryBidNum,
+      entryAsk: entryAskNum,
+      entryMid: midNum ? Math.round(midNum * 10000) / 10000 : null,
+      entrySpreadAbs: spreadAbs !== null ? Math.round(spreadAbs * 10000) / 10000 : null,
+      entrySpreadPct: spreadPct !== null ? Math.round(spreadPct * 10000) / 10000 : null,
+      entryBidSize: bidSizeRaw,
+      entryAskSize: askSizeRaw,
+      entryExecutionBasis: "ASK",
+      triggerReferenceBasis: "BID",
       autoCloseEnabled: effectiveAutoClose,
       autoCloseBlockedReason,
     };
@@ -1434,6 +1468,18 @@ if (url.pathname === "/trade") {
           if (!cid || !cid.startsWith("0x")) {
             data.autoCloseEnabled = false;
             data.autoCloseBlockedReason = "no_conditionId";
+          }
+        }
+        // Admission gates for auto-close: spread + liquidity
+        if (data.autoCloseEnabled && typeof data.entrySpreadPct === "number" && data.entrySpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
+          data.autoCloseEnabled = false;
+          data.autoCloseBlockedReason = "SPREAD_TOO_WIDE";
+        }
+        if (data.autoCloseEnabled && typeof data.entryBid === "number" && typeof data.entryBidSize === "number") {
+          const bidNotionalUsd = data.entryBid * data.entryBidSize;
+          if (bidNotionalUsd < config.MIN_BID_SIZE_USD) {
+            data.autoCloseEnabled = false;
+            data.autoCloseBlockedReason = data.autoCloseBlockedReason || "INSUFFICIENT_BID_SIZE";
           }
         }
         // Snapshot-level idempotency via dedupeKey

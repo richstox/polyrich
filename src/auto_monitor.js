@@ -914,6 +914,21 @@ async function monitorTick() {
       continue;
     }
 
+    // Backward compatibility: block tickets without bid-based entry microstructure.
+    // Pre-migration tickets have ask-derived TP/SL — monitoring against bid would
+    // create an apples-to-oranges comparison. Fail closed.
+    if (typeof ticket.entryBid !== "number" || ticket.entryBid <= 0) {
+      await TradeTicket.updateOne(
+        { _id: ticket._id },
+        { $set: { autoCloseEnabled: false, autoCloseBlockedReason: "MISSING_ENTRY_EXEC_PRICES" } }
+      ).catch(() => {});
+      await persistMonitorReason(ticket, "MISSING_ENTRY_EXEC_PRICES", {
+        entryBid: ticket.entryBid || null,
+        entryAsk: ticket.entryAsk || null,
+      });
+      continue;
+    }
+
     // Rate limiting: space out requests (min ~50ms gap = max ~20 rps within burst,
     // but overall avg is well under 1 rps due to 15s tick interval)
     await new Promise((r) => setTimeout(r, 50));
