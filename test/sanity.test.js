@@ -1844,6 +1844,140 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// TradeTicket schema: diagnostic fields
+// ---------------------------------------------------------------------------
+{
+  console.log("\nTradeTicket schema: diagnostic fields");
+  const TradeTicket = require("../models/TradeTicket");
+  const schemaPaths = TradeTicket.schema.paths;
+
+  assert("lastMonitorBlockedReason" in schemaPaths,
+    "lastMonitorBlockedReason field exists in TradeTicket schema");
+  assert("lastMonitorBlockedAt" in schemaPaths,
+    "lastMonitorBlockedAt field exists in TradeTicket schema");
+  assert("lastMonitorMeta" in schemaPaths,
+    "lastMonitorMeta field exists in TradeTicket schema");
+
+  // Verify defaults
+  assert(schemaPaths.lastMonitorBlockedReason.defaultValue === null,
+    "lastMonitorBlockedReason defaults to null");
+  assert(schemaPaths.lastMonitorBlockedAt.defaultValue === null,
+    "lastMonitorBlockedAt defaults to null");
+  assert(schemaPaths.lastMonitorMeta.defaultValue === null,
+    "lastMonitorMeta defaults to null");
+
+  // Verify indexes exist (sparse indexes on reason fields)
+  const indexDefs = TradeTicket.schema._indexes;
+  const hasBlockedReasonIdx = indexDefs.some(
+    (idx) => idx[0] && idx[0].autoCloseBlockedReason === 1
+  );
+  assert(hasBlockedReasonIdx, "autoCloseBlockedReason index exists");
+  const hasMonitorReasonIdx = indexDefs.some(
+    (idx) => idx[0] && idx[0].lastMonitorBlockedReason === 1
+  );
+  assert(hasMonitorReasonIdx, "lastMonitorBlockedReason index exists");
+}
+
+// ---------------------------------------------------------------------------
+// DIAGNOSTIC_REASONS: canonical set
+// ---------------------------------------------------------------------------
+{
+  console.log("\nDIAGNOSTIC_REASONS: canonical set");
+  const { DIAGNOSTIC_REASONS } = require("../src/html_renderer");
+
+  assert(typeof DIAGNOSTIC_REASONS === "object" && DIAGNOSTIC_REASONS !== null,
+    "DIAGNOSTIC_REASONS is exported as an object");
+
+  const expectedReasons = [
+    "MISSING_TOKEN_ID", "NO_ORDERBOOK", "NO_BIDS", "INVALID_TOP_BID",
+    "IDENTITY_SKIP", "SETTLED", "ENDED",
+  ];
+  for (const reason of expectedReasons) {
+    assert(reason in DIAGNOSTIC_REASONS, `${reason} is a defined diagnostic reason`);
+    const info = DIAGNOSTIC_REASONS[reason];
+    assert(typeof info.label === "string" && info.label.length > 0,
+      `${reason} has a non-empty label`);
+    assert(typeof info.explanation === "string" && info.explanation.length > 0,
+      `${reason} has a non-empty explanation`);
+    assert(typeof info.whatToDo === "string" && info.whatToDo.length > 0,
+      `${reason} has a non-empty whatToDo`);
+    assert(info.queryParam === "blockedReason" || info.queryParam === "monitorReason",
+      `${reason} has a valid queryParam`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// persistMonitorReason export
+// ---------------------------------------------------------------------------
+{
+  console.log("\npersistMonitorReason: export check");
+  const { persistMonitorReason } = require("../src/auto_monitor");
+  assert(typeof persistMonitorReason === "function",
+    "persistMonitorReason is exported as a function");
+}
+
+// ---------------------------------------------------------------------------
+// /tickets monitorReason translation map (SETTLED/ENDED → MARKET_*)
+// ---------------------------------------------------------------------------
+{
+  console.log("\n/tickets monitorReason reason-code translation");
+
+  // Mirror of the REASON_MAP used in server.js /tickets route
+  const REASON_MAP = { SETTLED: "MARKET_SETTLED", ENDED: "MARKET_ENDED" };
+
+  function resolveMonitorReason(monitorReason) {
+    const mapped = REASON_MAP[monitorReason] || monitorReason;
+    if (REASON_MAP[monitorReason]) {
+      return { $or: [{ lastMonitorBlockedReason: mapped }, { closeReason: mapped }] };
+    }
+    return { lastMonitorBlockedReason: mapped };
+  }
+
+  // SETTLED → MARKET_SETTLED with $or (includes closeReason)
+  const settled = resolveMonitorReason("SETTLED");
+  assert(settled.$or, "SETTLED produces $or query");
+  assert(settled.$or[0].lastMonitorBlockedReason === "MARKET_SETTLED",
+    "SETTLED maps lastMonitorBlockedReason to MARKET_SETTLED");
+  assert(settled.$or[1].closeReason === "MARKET_SETTLED",
+    "SETTLED maps closeReason to MARKET_SETTLED");
+  passed++;
+
+  // ENDED → MARKET_ENDED with $or (includes closeReason)
+  const ended = resolveMonitorReason("ENDED");
+  assert(ended.$or, "ENDED produces $or query");
+  assert(ended.$or[0].lastMonitorBlockedReason === "MARKET_ENDED",
+    "ENDED maps lastMonitorBlockedReason to MARKET_ENDED");
+  assert(ended.$or[1].closeReason === "MARKET_ENDED",
+    "ENDED maps closeReason to MARKET_ENDED");
+  passed++;
+
+  // Passthrough: NO_BIDS → NO_BIDS (no translation)
+  const noBids = resolveMonitorReason("NO_BIDS");
+  assert(!noBids.$or, "NO_BIDS does not produce $or");
+  assert(noBids.lastMonitorBlockedReason === "NO_BIDS",
+    "NO_BIDS passes through unchanged");
+  passed++;
+
+  // Passthrough: INVALID_TOP_BID
+  const invalid = resolveMonitorReason("INVALID_TOP_BID");
+  assert(invalid.lastMonitorBlockedReason === "INVALID_TOP_BID",
+    "INVALID_TOP_BID passes through unchanged");
+  passed++;
+
+  // Passthrough: IDENTITY_SKIP
+  const skip = resolveMonitorReason("IDENTITY_SKIP");
+  assert(skip.lastMonitorBlockedReason === "IDENTITY_SKIP",
+    "IDENTITY_SKIP passes through unchanged");
+  passed++;
+
+  // Passthrough: arbitrary unknown reason
+  const unknown = resolveMonitorReason("SOME_FUTURE_REASON");
+  assert(unknown.lastMonitorBlockedReason === "SOME_FUTURE_REASON",
+    "Unknown reasons pass through unchanged");
+  passed++;
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);

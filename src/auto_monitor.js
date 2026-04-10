@@ -105,6 +105,23 @@ function resetTickDiagnostics() {
   monitorState.lastTickNullPriceSample = null;
 }
 
+/**
+ * Persist lastMonitorBlockedReason on a ticket, only when the reason changes.
+ * Avoids excessive writes by checking the current value first.
+ * @param {object} ticket - lean TradeTicket doc
+ * @param {string} reason - canonical reason code (e.g. "IDENTITY_SKIP", "NO_BIDS")
+ * @param {object|null} [meta] - optional diagnostic metadata
+ */
+async function persistMonitorReason(ticket, reason, meta) {
+  if (ticket.lastMonitorBlockedReason === reason) return; // no change
+  const $set = {
+    lastMonitorBlockedReason: reason,
+    lastMonitorBlockedAt: new Date(),
+  };
+  if (meta !== undefined) $set.lastMonitorMeta = meta;
+  await TradeTicket.updateOne({ _id: ticket._id }, { $set }).catch(() => {});
+}
+
 function jitteredTick() {
   const base = config.AUTO_MODE_TICK_MS;
   const jitter = base * config.AUTO_MODE_JITTER_PCT;
@@ -885,6 +902,7 @@ async function monitorTick() {
     // Strict identity gate: skip tickets without a valid conditionId (fail-closed)
     if (!hasValidConditionId(ticket)) {
       monitorState.lastTickIdentitySkip++;
+      await persistMonitorReason(ticket, "IDENTITY_SKIP", { conditionId: ticket.conditionId });
       console.warn(JSON.stringify({
         msg: "monitor-identity-skip",
         reason: "missing_conditionId",
@@ -947,6 +965,11 @@ async function monitorTick() {
             { _id: ticket._id },
             { $set: { autoCloseEnabled: false, autoCloseBlockedReason: "NO_ORDERBOOK" } }
           ).catch(() => {});
+          await persistMonitorReason(ticket, "NO_ORDERBOOK", { tokenId: clobDiag.tokenId, httpStatus: clobDiag.httpStatus });
+        } else if (clobDiag && (clobDiag.nullReason === "NO_BIDS" || clobDiag.nullReason === "INVALID_TOP_BID")) {
+          await persistMonitorReason(ticket, clobDiag.nullReason, { tokenId: clobDiag.tokenId, bidsCount: clobDiag.bidsCount });
+        } else if (clobDiag && clobDiag.nullReason) {
+          await persistMonitorReason(ticket, clobDiag.nullReason, { tokenId: clobDiag.tokenId, httpStatus: clobDiag.httpStatus });
         }
         if (!monitorState.lastTickNullPriceSample && clobDiag) {
           monitorState.lastTickNullPriceSample = { ...clobDiag, capturedAt: new Date().toISOString() };
@@ -963,6 +986,7 @@ async function monitorTick() {
         { _id: ticket._id },
         { $set: { autoCloseEnabled: false, autoCloseBlockedReason: "MISSING_TOKEN_ID" } }
       ).catch(() => {});
+      await persistMonitorReason(ticket, "MISSING_TOKEN_ID", { yesTokenId: ticket.yesTokenId || null, noTokenId: ticket.noTokenId || null });
       continue;
     }
 
@@ -970,9 +994,16 @@ async function monitorTick() {
     monitorState.lastTickPriceOk++;
 
     // Update last observed price + price source on the ticket
+    // Clear any stale monitor blocked reason since price was fetched OK
+    const priceUpdate = { lastPriceCheckAt: new Date(), lastObservedPrice: priceResult.price, priceSource: "CLOB" };
+    if (ticket.lastMonitorBlockedReason) {
+      priceUpdate.lastMonitorBlockedReason = null;
+      priceUpdate.lastMonitorBlockedAt = null;
+      priceUpdate.lastMonitorMeta = null;
+    }
     await TradeTicket.updateOne(
       { _id: ticket._id },
-      { $set: { lastPriceCheckAt: new Date(), lastObservedPrice: priceResult.price, priceSource: "CLOB" } }
+      { $set: priceUpdate }
     ).catch(() => {});
 
     const { triggered, reason } = checkTrigger(ticket, priceResult.price);
@@ -1175,5 +1206,6 @@ module.exports = {
   checkTrigger,
   debounceCheck,
   attemptAutoClose,
+  persistMonitorReason,
   monitorState,
 };

@@ -72,6 +72,11 @@ const tradeTicketSchema = new mongoose.Schema(
     lastObservedPrice: { type: Number, default: null },
     autoCloseIntentAt: { type: Date, default: null },
     autoCloseIntentReason: { type: String, default: null },
+
+    // Diagnostic: last-known monitor blocked reason (runtime skips persisted for drill-down)
+    lastMonitorBlockedReason: { type: String, default: null },
+    lastMonitorBlockedAt: { type: Date, default: null },
+    lastMonitorMeta: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { timestamps: true }
 );
@@ -80,6 +85,9 @@ tradeTicketSchema.index({ createdAt: -1 });
 tradeTicketSchema.index({ marketId: 1 });
 tradeTicketSchema.index({ conditionId: 1 });
 tradeTicketSchema.index({ status: 1 });
+tradeTicketSchema.index({ autoCloseBlockedReason: 1 }, { sparse: true });
+tradeTicketSchema.index({ lastMonitorBlockedReason: 1 }, { sparse: true });
+tradeTicketSchema.index({ status: 1, autoCloseEnabled: 1 });
 // Snapshot-level deduplication: same card snapshot cannot be saved twice
 tradeTicketSchema.index({ dedupeKey: 1 }, { unique: true, sparse: true });
 
