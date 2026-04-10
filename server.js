@@ -1572,6 +1572,92 @@ if (url.pathname === "/trade") {
     }
   }
 
+  // ── GET /api/system/danger-zone/counts ──────────────────────────────
+  if (url.pathname === "/api/system/danger-zone/counts" && req.method === "GET") {
+    try {
+      const [allTickets, closedTickets, openClosingTickets, closeAttempts, autoSaveLogs] = await Promise.all([
+        TradeTicket.countDocuments({}),
+        TradeTicket.countDocuments({ status: "CLOSED" }),
+        TradeTicket.countDocuments({ status: { $in: ["OPEN", "CLOSING"] } }),
+        CloseAttempt.countDocuments({}),
+        AutoSaveLog.countDocuments({}),
+      ]);
+      const closedTicketIds = await TradeTicket.find({ status: "CLOSED" }).select("_id").lean();
+      const closedCloseAttempts = closedTicketIds.length > 0
+        ? await CloseAttempt.countDocuments({ ticketId: { $in: closedTicketIds.map(t => t._id) } })
+        : 0;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        RESET_ALL: { tickets: allTickets, closeAttempts, autoSaveLogs },
+        DELETE_CLOSED: { tickets: closedTickets, closeAttempts: closedCloseAttempts },
+        DELETE_OPEN: { tickets: openClosingTickets },
+      }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // ── POST /api/system/danger-zone ──────────────────────────────────────
+  if (url.pathname === "/api/system/danger-zone" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", async () => {
+      try {
+        const data = JSON.parse(body);
+        const { action, confirmation } = data;
+
+        const VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN"];
+        if (!VALID_ACTIONS.includes(action)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `Invalid action. Must be one of: ${VALID_ACTIONS.join(", ")}` }));
+          return;
+        }
+
+        if (confirmation !== "RESET") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: 'confirmation must be exactly "RESET"' }));
+          return;
+        }
+
+        const deleted = {};
+
+        if (action === "RESET_ALL") {
+          const [ticketResult, closeAttemptResult, autoSaveResult] = await Promise.all([
+            TradeTicket.deleteMany({}),
+            CloseAttempt.deleteMany({}),
+            AutoSaveLog.deleteMany({}),
+          ]);
+          deleted.tickets = ticketResult.deletedCount;
+          deleted.closeAttempts = closeAttemptResult.deletedCount;
+          deleted.autoSaveLogs = autoSaveResult.deletedCount;
+        } else if (action === "DELETE_CLOSED") {
+          const closedTickets = await TradeTicket.find({ status: "CLOSED" }).select("_id").lean();
+          const closedIds = closedTickets.map(t => t._id);
+          const [ticketResult, closeAttemptResult] = await Promise.all([
+            TradeTicket.deleteMany({ status: "CLOSED" }),
+            closedIds.length > 0
+              ? CloseAttempt.deleteMany({ ticketId: { $in: closedIds } })
+              : Promise.resolve({ deletedCount: 0 }),
+          ]);
+          deleted.tickets = ticketResult.deletedCount;
+          deleted.closeAttempts = closeAttemptResult.deletedCount;
+        } else if (action === "DELETE_OPEN") {
+          const ticketResult = await TradeTicket.deleteMany({ status: { $in: ["OPEN", "CLOSING"] } });
+          deleted.tickets = ticketResult.deletedCount;
+        }
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, action, deleted }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
   res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("not found");
 });
