@@ -35,6 +35,7 @@ const {
   renderTradePage,
   renderExplorePage,
   renderSystemPage,
+  renderHistoryPage,
   renderTicketsPage,
   renderTicketDetailPage,
   renderWatchlistPage,
@@ -48,6 +49,8 @@ const {
   whyNowSummary,
 } = require("./src/html_renderer");
 const { startMonitorLoop, getMonitorStatus } = require("./src/auto_monitor");
+
+const DANGER_ZONE_VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN"];
 
 // ---------------------------------------------------------------------------
 // Node version check — warn-only, never crash
@@ -1503,10 +1506,47 @@ if (url.pathname === "/trade") {
     }
   }
 
+  // ── /history ────────────────────────────────────────────────────────────
+  if (url.pathname === "/history") {
+    try {
+      const rangeParam = url.searchParams.get("range") || "all";
+      const customFrom = url.searchParams.get("from") || "";
+      const customTo = url.searchParams.get("to") || "";
+
+      const query = { status: "CLOSED", tradeability: { $ne: "WATCH" } };
+
+      // Apply time filter
+      if (rangeParam === "24h") {
+        query.closedAt = { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) };
+      } else if (rangeParam === "7d") {
+        query.closedAt = { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) };
+      } else if (rangeParam === "30d") {
+        query.closedAt = { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) };
+      } else if (rangeParam === "custom" && customFrom) {
+        const fromDate = new Date(customFrom);
+        const toDateRaw = customTo ? new Date(customTo + "T23:59:59.999Z") : new Date();
+        const toDate = isNaN(toDateRaw.getTime()) ? new Date() : toDateRaw;
+        if (!isNaN(fromDate.getTime())) {
+          query.closedAt = { $gte: fromDate, $lte: toDate };
+        }
+      }
+
+      const tickets = await TradeTicket.find(query).sort({ closedAt: -1 }).limit(500).lean();
+      const body = renderHistoryPage(tickets, rangeParam, customFrom, customTo);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(pageShell("History", "/history", body));
+      return;
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(`history error: ${err.message}`);
+      return;
+    }
+  }
+
   // ── /tickets ───────────────────────────────────────────────────────────
   if (url.pathname === "/tickets") {
     try {
-      const query = { tradeability: { $ne: "WATCH" } };
+      const query = { tradeability: { $ne: "WATCH" }, status: { $in: ["OPEN", "CLOSING", "ERROR"] } };
       const blockedReason = url.searchParams.get("blockedReason");
       const monitorReason = url.searchParams.get("monitorReason");
       if (blockedReason) query.autoCloseBlockedReason = blockedReason;
@@ -1516,7 +1556,6 @@ if (url.pathname === "/trade") {
         const REASON_MAP = { SETTLED: "MARKET_SETTLED", ENDED: "MARKET_ENDED" };
         const mapped = REASON_MAP[monitorReason] || monitorReason;
         if (REASON_MAP[monitorReason]) {
-          // For settled/ended, also include closeReason so CLOSED tickets are visible
           query.$or = [
             { lastMonitorBlockedReason: mapped },
             { closeReason: mapped },
@@ -1525,9 +1564,28 @@ if (url.pathname === "/trade") {
           query.lastMonitorBlockedReason = mapped;
         }
       }
-      const tickets = await TradeTicket.find(query).sort({ createdAt: -1 }).limit(500).lean();
+      // Fetch active tickets + closed stats in parallel
+      const [tickets, closedStats] = await Promise.all([
+        TradeTicket.find(query).sort({ createdAt: -1 }).limit(500).lean(),
+        TradeTicket.aggregate([
+          { $match: { status: "CLOSED", tradeability: { $ne: "WATCH" } } },
+          { $group: {
+            _id: null,
+            count: { $sum: 1 },
+            totalPnl: { $sum: { $ifNull: ["$realizedPnlUsd", 0] } },
+            wins: { $sum: { $cond: [{ $gt: ["$realizedPnlUsd", 0] }, 1, 0] } },
+            withPnl: { $sum: { $cond: [{ $ne: [{ $type: "$realizedPnlUsd" }, "missing"] }, 1, 0] } },
+          }},
+        ]),
+      ]);
+      const cs = closedStats[0] || { count: 0, totalPnl: 0, wins: 0, withPnl: 0 };
       const highlightId = url.searchParams.get("highlight") || null;
-      const body = renderTicketsPage(tickets, highlightId, { blockedReason, monitorReason });
+      const body = renderTicketsPage(tickets, highlightId, {
+        blockedReason, monitorReason,
+        closedCount: cs.count,
+        realizedPnlSumUsd: cs.totalPnl,
+        winRate: cs.withPnl > 0 ? (cs.wins / cs.withPnl * 100) : 0,
+      });
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(pageShell("Tickets", "/tickets", body));
       return;
@@ -1570,6 +1628,91 @@ if (url.pathname === "/trade") {
       res.end(`ticket detail error: ${err.message}`);
       return;
     }
+  }
+
+  // ── GET /api/system/danger-zone/counts ──────────────────────────────
+  if (url.pathname === "/api/system/danger-zone/counts" && req.method === "GET") {
+    try {
+      const [allTickets, closedTickets, openClosingTickets, closeAttempts, autoSaveLogs] = await Promise.all([
+        TradeTicket.countDocuments({}),
+        TradeTicket.countDocuments({ status: "CLOSED" }),
+        TradeTicket.countDocuments({ status: { $in: ["OPEN", "CLOSING"] } }),
+        CloseAttempt.countDocuments({}),
+        AutoSaveLog.countDocuments({}),
+      ]);
+      const closedTicketIds = await TradeTicket.find({ status: "CLOSED" }).select("_id").lean();
+      const closedCloseAttempts = closedTicketIds.length > 0
+        ? await CloseAttempt.countDocuments({ ticketId: { $in: closedTicketIds.map(t => t._id) } })
+        : 0;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        RESET_ALL: { tickets: allTickets, closeAttempts, autoSaveLogs },
+        DELETE_CLOSED: { tickets: closedTickets, closeAttempts: closedCloseAttempts },
+        DELETE_OPEN: { tickets: openClosingTickets },
+      }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // ── POST /api/system/danger-zone ──────────────────────────────────────
+  if (url.pathname === "/api/system/danger-zone" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", async () => {
+      try {
+        const data = JSON.parse(body);
+        const { action, confirmation } = data;
+
+        if (!DANGER_ZONE_VALID_ACTIONS.includes(action)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `Invalid action. Must be one of: ${DANGER_ZONE_VALID_ACTIONS.join(", ")}` }));
+          return;
+        }
+
+        if (confirmation !== "RESET") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: 'confirmation must be exactly "RESET"' }));
+          return;
+        }
+
+        const deleted = {};
+
+        if (action === "RESET_ALL") {
+          const [ticketResult, closeAttemptResult, autoSaveResult] = await Promise.all([
+            TradeTicket.deleteMany({}),
+            CloseAttempt.deleteMany({}),
+            AutoSaveLog.deleteMany({}),
+          ]);
+          deleted.tickets = ticketResult.deletedCount;
+          deleted.closeAttempts = closeAttemptResult.deletedCount;
+          deleted.autoSaveLogs = autoSaveResult.deletedCount;
+        } else if (action === "DELETE_CLOSED") {
+          const closedTickets = await TradeTicket.find({ status: "CLOSED" }).select("_id").lean();
+          const closedIds = closedTickets.map(t => t._id);
+          const [ticketResult, closeAttemptResult] = await Promise.all([
+            TradeTicket.deleteMany({ status: "CLOSED" }),
+            closedIds.length > 0
+              ? CloseAttempt.deleteMany({ ticketId: { $in: closedIds } })
+              : Promise.resolve({ deletedCount: 0 }),
+          ]);
+          deleted.tickets = ticketResult.deletedCount;
+          deleted.closeAttempts = closeAttemptResult.deletedCount;
+        } else if (action === "DELETE_OPEN") {
+          const ticketResult = await TradeTicket.deleteMany({ status: { $in: ["OPEN", "CLOSING"] } });
+          deleted.tickets = ticketResult.deletedCount;
+        }
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, action, deleted }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
   }
 
   res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });

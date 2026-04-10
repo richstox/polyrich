@@ -1070,6 +1070,7 @@ function renderNav(active) {
     { href: "/explore", label: "Explore" },
     { href: "/watchlist", label: "Watchlist" },
     { href: "/tickets", label: "Tickets" },
+    { href: "/history", label: "History" },
     { href: "/system", label: "System" },
   ];
   const items = links.map((l) => {
@@ -2715,6 +2716,116 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         <p><a href="/metrics" style="color:#2563eb;font-weight:600;">Metrics JSON</a></p>
       </div>
     </div>
+
+    <div class="card" style="border: 2px solid #dc2626; margin-top:24px;">
+      <h2 style="margin-top:0;color:#dc2626;">⚠️ Danger Zone</h2>
+      <p style="font-size:0.82rem;color:#94a3b8;margin:0 0 12px;">
+        Destructive actions. Type <strong style="color:#ef4444;">RESET</strong> to unlock. These cannot be undone.
+      </p>
+      <div id="dz-counts" style="margin-bottom:12px;font-size:0.82rem;color:#94a3b8;">Loading counts…</div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:0.82rem;color:#94a3b8;display:block;margin-bottom:4px;">Type RESET to confirm:</label>
+        <input id="dz-confirm" type="text" placeholder="RESET" autocomplete="off" spellcheck="false"
+          style="width:160px;padding:6px 10px;border-radius:6px;border:2px solid #374151;background:#0f172a;color:#e2e8f0;font-size:0.88rem;font-family:monospace;letter-spacing:0.1em;">
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        <button class="dz-action-btn" data-action="RESET_ALL" disabled
+          style="background:#7f1d1d;color:#fecaca;border:none;padding:8px 18px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:not-allowed;opacity:0.5;">
+          🗑 Reset all data
+        </button>
+        <button class="dz-action-btn" data-action="DELETE_CLOSED" disabled
+          style="background:#854d0e;color:#fef3c7;border:none;padding:8px 18px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:not-allowed;opacity:0.5;">
+          🗑 Delete CLOSED only
+        </button>
+        <button class="dz-action-btn" data-action="DELETE_OPEN" disabled
+          style="background:#1e40af;color:#dbeafe;border:none;padding:8px 18px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:not-allowed;opacity:0.5;">
+          🗑 Delete OPEN only
+        </button>
+      </div>
+      <div id="dz-result" style="margin-top:10px;font-size:0.82rem;display:none;"></div>
+    </div>
+    <script>
+    (function() {
+      var confirmInput = document.getElementById("dz-confirm");
+      var buttons = document.querySelectorAll(".dz-action-btn");
+      var countsEl = document.getElementById("dz-counts");
+      var resultEl = document.getElementById("dz-result");
+
+      function updateButtons() {
+        var valid = confirmInput && confirmInput.value.trim() === "RESET";
+        buttons.forEach(function(btn) {
+          btn.disabled = !valid;
+          btn.style.opacity = valid ? "1" : "0.5";
+          btn.style.cursor = valid ? "pointer" : "not-allowed";
+        });
+      }
+
+      if (confirmInput) {
+        confirmInput.addEventListener("input", updateButtons);
+      }
+
+      // Fetch counts
+      fetch("/api/system/danger-zone/counts")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.error) { countsEl.textContent = "Could not load counts."; return; }
+          var html = '<div style="display:flex;flex-wrap:wrap;gap:16px;">';
+          html += '<div><strong style="color:#ef4444;">Reset all:</strong> ' + data.RESET_ALL.tickets + ' tickets, ' + data.RESET_ALL.closeAttempts + ' close attempts, ' + data.RESET_ALL.autoSaveLogs + ' auto-save logs</div>';
+          html += '<div><strong style="color:#eab308;">CLOSED only:</strong> ' + data.DELETE_CLOSED.tickets + ' tickets, ' + data.DELETE_CLOSED.closeAttempts + ' close attempts</div>';
+          html += '<div><strong style="color:#3b82f6;">OPEN only:</strong> ' + data.DELETE_OPEN.tickets + ' tickets</div>';
+          html += '</div>';
+          countsEl.innerHTML = html;
+        })
+        .catch(function() { countsEl.textContent = "Could not load counts."; });
+
+      // Action buttons
+      buttons.forEach(function(btn) {
+        btn.addEventListener("click", function() {
+          if (btn.disabled) return;
+          var action = btn.getAttribute("data-action");
+          var labels = { RESET_ALL: "Reset ALL data", DELETE_CLOSED: "Delete all CLOSED tickets", DELETE_OPEN: "Delete all OPEN tickets" };
+          if (!confirm("Are you sure you want to: " + (labels[action] || action) + "? This cannot be undone.")) return;
+          btn.disabled = true;
+          btn.textContent = "Working…";
+          fetch("/api/system/danger-zone", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: action, confirmation: "RESET" })
+          })
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            if (d.error) {
+              resultEl.style.display = "block";
+              resultEl.style.color = "#ef4444";
+              resultEl.textContent = "Error: " + d.error;
+              btn.textContent = "Error";
+              btn.disabled = false;
+              updateButtons();
+              return;
+            }
+            resultEl.style.display = "block";
+            resultEl.style.color = "#22c55e";
+            var parts = [];
+            if (d.deleted.tickets !== undefined) parts.push(d.deleted.tickets + " tickets");
+            if (d.deleted.closeAttempts !== undefined) parts.push(d.deleted.closeAttempts + " close attempts");
+            if (d.deleted.autoSaveLogs !== undefined) parts.push(d.deleted.autoSaveLogs + " auto-save logs");
+            resultEl.textContent = "✓ " + action + " complete. Deleted: " + parts.join(", ");
+            // Refresh counts
+            confirmInput.value = "";
+            updateButtons();
+            setTimeout(function() { location.reload(); }, 1500);
+          })
+          .catch(function() {
+            resultEl.style.display = "block";
+            resultEl.style.color = "#ef4444";
+            resultEl.textContent = "Network error";
+            btn.disabled = false;
+            updateButtons();
+          });
+        });
+      });
+    })();
+    </script>
   `;
 }
 
@@ -2802,36 +2913,86 @@ function renderWatchlistPage(items, highlightId) {
   `;
 }
 
-/** Render the /tickets page body. */
-function renderTicketsPage(tickets, highlightId, filterCtx) {
-  filterCtx = filterCtx || {};
-  const activeBlockedReason = filterCtx.blockedReason || null;
-  const activeMonitorReason = filterCtx.monitorReason || null;
-  const hasActiveFilter = !!(activeBlockedReason || activeMonitorReason);
-  const openTickets = tickets.filter((t) => t.status === "OPEN" || t.status === "CLOSING" || t.status === "ERROR").sort((a, b) => {
-    const ea = a.endDate ? new Date(a.endDate).getTime() : Infinity;
-    const eb = b.endDate ? new Date(b.endDate).getTime() : Infinity;
-    return ea - eb;
-  });
-  const closedTickets = tickets.filter((t) => t.status === "CLOSED");
-  const openCount = openTickets.length;
-  const closedCount = closedTickets.length;
-  const autoClosedCount = closedTickets.filter((t) => t.closeReason === "TP_HIT" || t.closeReason === "EXIT_HIT").length;
-  const manualClosedCount = closedTickets.filter((t) => t.closeReason === "MANUAL").length;
-  const otherClosedCount = closedCount - autoClosedCount - manualClosedCount;
-  const closedWithPnl = closedTickets.filter((t) => typeof t.realizedPnlUsd === "number");
-  const realizedPnlSumUsd = closedWithPnl.reduce((s, t) => s + t.realizedPnlUsd, 0);
-  const wins = closedWithPnl.filter((t) => t.realizedPnlUsd > 0).length;
-  const winRate = closedWithPnl.length > 0 ? (wins / closedWithPnl.length * 100) : 0;
+/** Render the /history page body (closed tickets + stats + equity curve with time filters). */
+function renderHistoryPage(closedTickets, activeRange, customFrom, customTo) {
+  activeRange = activeRange || "all";
+
+  const extIcon = '<svg class="tk-ext-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3"/><path d="M9 1h6v6"/><path d="M15 1L7 9"/></svg>';
 
   function pnlCls(val) {
     if (typeof val !== "number") return "pnl-zero";
     return val > 0 ? "pnl-pos" : val < 0 ? "pnl-neg" : "pnl-zero";
   }
 
-  const extIcon = '<svg class="tk-ext-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3"/><path d="M9 1h6v6"/><path d="M15 1L7 9"/></svg>';
+  // --- Stats ---
+  const closedCount = closedTickets.length;
+  const closedWithPnl = closedTickets.filter((t) => typeof t.realizedPnlUsd === "number");
+  const realizedPnlSumUsd = closedWithPnl.reduce((s, t) => s + t.realizedPnlUsd, 0);
+  const wins = closedWithPnl.filter((t) => t.realizedPnlUsd > 0).length;
+  const winRate = closedWithPnl.length > 0 ? (wins / closedWithPnl.length * 100) : 0;
+  const autoClosedCount = closedTickets.filter((t) => t.closeReason === "TP_HIT" || t.closeReason === "EXIT_HIT").length;
+  const manualClosedCount = closedTickets.filter((t) => t.closeReason === "MANUAL").length;
 
-  // --- Equity chart ---
+  // --- Time filter bar ---
+  const ranges = [
+    { value: "24h", label: "24h" },
+    { value: "7d", label: "7d" },
+    { value: "30d", label: "30d" },
+    { value: "all", label: "All time" },
+    { value: "custom", label: "Custom" },
+  ];
+  const filterBtns = ranges.map((r) => {
+    const isActive = r.value === activeRange;
+    if (r.value === "custom") {
+      return `<a href="#" class="tk-sort-btn${isActive ? " tk-sort-active" : ""}" data-range="custom">Custom</a>`;
+    }
+    return `<a href="/history?range=${r.value}" class="tk-sort-btn${isActive ? " tk-sort-active" : ""}" style="text-decoration:none;">${r.label}</a>`;
+  }).join("");
+
+  const customFormStyle = activeRange === "custom" ? "" : "display:none;";
+  const customFromVal = customFrom || "";
+  const customToVal = customTo || "";
+
+  const filterBarHtml = `
+    <div style="margin:10px 0;padding:10px 12px;background:#1e293b;border-radius:8px;">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
+        <span style="font-size:0.78rem;color:#94a3b8;font-weight:600;">📅 Period:</span>
+        ${filterBtns}
+      </div>
+      <form id="history-custom-form" method="get" action="/history" style="${customFormStyle}display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+        <input type="hidden" name="range" value="custom">
+        <label style="font-size:0.78rem;color:#94a3b8;">From <input type="date" name="from" value="${escHtml(customFromVal)}" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:3px 6px;font-size:0.82rem;"></label>
+        <label style="font-size:0.78rem;color:#94a3b8;">To <input type="date" name="to" value="${escHtml(customToVal)}" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:3px 6px;font-size:0.82rem;"></label>
+        <button type="submit" style="background:#3b82f6;color:#fff;border:none;padding:4px 12px;border-radius:4px;font-size:0.78rem;font-weight:600;cursor:pointer;">Apply</button>
+      </form>
+    </div>
+  `;
+
+  // --- Stats cards ---
+  const pnlSign = realizedPnlSumUsd >= 0 ? "+" : "";
+  const rangeLabel = activeRange === "all" ? "All time" : activeRange === "custom" ? "Custom range" : "Last " + activeRange;
+  const statsHtml = `
+    <div class="tk-card">
+      <p class="tk-card-title">Archive · ${escHtml(rangeLabel)}</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;text-align:center;">
+        <div>
+          <div style="font-size:0.68rem;color:#64748b;text-transform:uppercase;letter-spacing:0.06em;">Total</div>
+          <div style="font-size:1.3rem;font-weight:700;font-family:var(--tk-mono);">${closedCount}</div>
+        </div>
+        <div>
+          <div style="font-size:0.68rem;color:#64748b;text-transform:uppercase;letter-spacing:0.06em;">Win Rate</div>
+          <div style="font-size:1.3rem;font-weight:700;font-family:var(--tk-mono);">${winRate.toFixed(0)}%</div>
+          <div style="font-size:0.72rem;color:#94a3b8;">(${wins}/${closedWithPnl.length})</div>
+        </div>
+        <div>
+          <div style="font-size:0.68rem;color:#64748b;text-transform:uppercase;letter-spacing:0.06em;">PnL</div>
+          <div class="tk-summary-value ${pnlCls(realizedPnlSumUsd)}" style="font-size:1.3rem;">${pnlSign}$${realizedPnlSumUsd.toFixed(2)}</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // --- Equity chart (reuse logic from tickets page) ---
   const MIN_CLOSED_FOR_CHART = 2;
   let equityChartHtml;
   if (closedWithPnl.length < MIN_CLOSED_FOR_CHART) {
@@ -2865,7 +3026,6 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
     const strokeColor = cumPnl >= 0 ? "#22c55e" : "#ef4444";
     const fillColor = cumPnl >= 0 ? "rgba(34,197,94,.12)" : "rgba(239,68,68,.12)";
 
-    // Y-axis ticks (4-5 values)
     const niceStep = Math.pow(10, Math.floor(Math.log10(range))) || 1;
     let step = niceStep;
     if (range / step < 3) step = niceStep / 2;
@@ -2875,7 +3035,6 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
       yTicks.push(Math.round(v * 100) / 100);
     }
 
-    // X-axis labels
     const xLabels = [];
     const labelIdxs = [0, Math.floor(points.length / 3), Math.floor(2 * points.length / 3), points.length - 1];
     const seen = new Set();
@@ -2884,7 +3043,7 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
     const yGridLines = yTicks.map((v) =>
       `<line x1="${padL}" y1="${yOf(v).toFixed(1)}" x2="${chartW - padR}" y2="${yOf(v).toFixed(1)}" stroke="#1e293b" stroke-width="0.5"/>`
     ).join("");
-    const yLabels = yTicks.map((v) =>
+    const yLabelsEl = yTicks.map((v) =>
       `<text x="${padL - 6}" y="${yOf(v).toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="#64748b" font-size="10" font-family="SF Mono,SFMono-Regular,Menlo,Consolas,monospace">$${v}</text>`
     ).join("");
     const xLabelEls = xLabels.map((idx) => {
@@ -2895,10 +3054,10 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
     }).join("");
 
     equityChartHtml = `<div class="tk-card">
-      <p class="tk-card-title">Equity Curve</p>
+      <p class="tk-card-title">Equity Curve · ${escHtml(rangeLabel)}</p>
       <svg viewBox="0 0 ${chartW} ${chartH}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block;">
         ${yGridLines}
-        ${yLabels}
+        ${yLabelsEl}
         <polygon points="${areaPoints}" fill="${fillColor}" />
         <polyline points="${linePoints}" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
         ${xLabelEls}
@@ -2906,52 +3065,241 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
     </div>`;
   }
 
-  // --- Summary card ---
+  // --- Search bar ---
+  const searchBarHtml = `
+    <div style="margin:10px 0;">
+      <input id="history-search" type="text" placeholder="Search by name…"
+        style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:0.88rem;">
+    </div>
+  `;
+
+  // --- Sort / filter row ---
+  const sortFilterHtml = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
+      <select id="history-side-filter" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px 8px;font-size:0.78rem;">
+        <option value="">All sides</option>
+        <option value="BUY_YES">BUY YES</option>
+        <option value="BUY_NO">BUY NO</option>
+      </select>
+      <select id="history-result-filter" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px 8px;font-size:0.78rem;">
+        <option value="">All results</option>
+        <option value="win">Win</option>
+        <option value="loss">Loss</option>
+      </select>
+      <select id="history-sort" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px 8px;font-size:0.78rem;">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="pnl-high">PnL high → low</option>
+        <option value="pnl-low">PnL low → high</option>
+      </select>
+    </div>
+  `;
+
+  // --- Closed ticket card ---
+  function historyCard(t) {
+    const { headline, subtext } = cardHeadline(t);
+    const polyUrl = t.marketUrl || (t.eventSlug
+      ? `https://polymarket.com/event/${encodeURIComponent(t.eventSlug)}`
+      : null);
+    const subtextEl = subtext ? `<div style="font-size:0.78rem;color:#64748b;margin-top:2px;">${escHtml(subtext)}</div>` : "";
+    const questionLink = polyUrl
+      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" class="tk-q-link">${escHtml(headline)} ${extIcon}</a>${subtextEl}`
+      : `<span class="tk-q-link">${escHtml(headline)}</span>${subtextEl}`;
+
+    const actionLabel = (t.action || "\u2014").replace(/_/g, " ");
+    const ticketOutcome = (t.groupItemTitle || "").trim();
+    const { displayAction } = formatOutcomeAction(ticketOutcome, actionLabel, t.outcomes);
+    const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "\u2014";
+    const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "\u2014";
+
+    let pnlBadgeHtml = "";
+    let pnlPctHtml = "";
+    if (typeof t.realizedPnlUsd === "number") {
+      const sign = t.realizedPnlUsd >= 0 ? "+" : "";
+      const cls = t.realizedPnlUsd > 0 ? "tk-pnl-pos" : t.realizedPnlUsd < 0 ? "tk-pnl-neg" : "tk-pnl-zero";
+      pnlBadgeHtml = `<span class="tk-pnl-badge ${cls}">${sign}$${t.realizedPnlUsd.toFixed(2)}</span>`;
+      if (typeof t.realizedPnlPct === "number") {
+        pnlPctHtml = `<span style="font-size:0.72rem;color:${t.realizedPnlPct >= 0 ? "#22c55e" : "#ef4444"};font-weight:600;position:absolute;top:38px;right:18px;">${t.realizedPnlPct >= 0 ? "+" : ""}${(t.realizedPnlPct * 100).toFixed(1)}%</span>`;
+      }
+    }
+
+    const simBadgeHtml = t.isSimulated
+      ? '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.68rem;font-weight:700;background:rgba(234,179,8,.18);color:#eab308;margin-left:6px;">SIM</span>'
+      : "";
+
+    return `
+      <a href="/tickets/${escHtml(String(t._id))}" style="text-decoration:none;display:block;"
+         class="tk-ticket history-card"
+         style="position:relative;cursor:pointer;"
+         data-question="${escHtml(headline.toLowerCase())}"
+         data-action="${escHtml(t.action || "")}"
+         data-pnl="${typeof t.realizedPnlUsd === "number" ? t.realizedPnlUsd : 0}"
+         data-closed-at="${escHtml(t.closedAt || t.createdAt || "")}">
+        <div style="padding-right:80px;">${questionLink}</div>
+        ${pnlBadgeHtml}
+        ${pnlPctHtml}
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:0.78rem;color:#64748b;">
+          <span>Entry ${entry}</span>
+          <span>·</span>
+          <span>${escHtml(displayAction)}${simBadgeHtml}</span>
+          <span>·</span>
+          <span>${size}</span>
+          <span style="margin-left:auto;">${utcSpan(t.closedAt || t.createdAt)}</span>
+          <span style="color:#60a5fa;">→</span>
+        </div>
+      </a>
+    `;
+  }
+
+  const listHtml = closedTickets.length === 0
+    ? '<p class="tk-empty">No closed tickets in this period.</p>'
+    : closedTickets.map((t) => historyCard(t)).join("");
+
+  return `
+    <div class="tk-page">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+        <a href="/tickets" style="color:#60a5fa;text-decoration:none;font-size:0.88rem;">\u{2190} Back</a>
+        <h1 style="margin:0;font-size:1.2rem;">Archive</h1>
+        <span class="tk-badge" style="margin-left:4px;">${closedCount}</span>
+      </div>
+      ${filterBarHtml}
+      ${statsHtml}
+      ${equityChartHtml}
+      ${searchBarHtml}
+      ${sortFilterHtml}
+      <div style="font-size:0.78rem;color:#64748b;margin-bottom:8px;">${closedCount} positions</div>
+      <div id="history-list">${listHtml}</div>
+    </div>
+    <script>
+    (function() {
+      document.body.style.background = "#0b1120";
+
+      // Custom range toggle
+      var customBtn = document.querySelector('[data-range="custom"]');
+      var customForm = document.getElementById("history-custom-form");
+      if (customBtn && customForm) {
+        customBtn.addEventListener("click", function(e) {
+          e.preventDefault();
+          customForm.style.display = customForm.style.display === "none" ? "flex" : "none";
+        });
+      }
+
+      // Client-side search + filter
+      var searchInput = document.getElementById("history-search");
+      var sideFilter = document.getElementById("history-side-filter");
+      var resultFilter = document.getElementById("history-result-filter");
+      var sortSelect = document.getElementById("history-sort");
+      var listEl = document.getElementById("history-list");
+
+      function applyFilters() {
+        if (!listEl) return;
+        var cards = Array.prototype.slice.call(listEl.querySelectorAll(".history-card"));
+        var query = (searchInput ? searchInput.value : "").toLowerCase().trim();
+        var side = sideFilter ? sideFilter.value : "";
+        var result = resultFilter ? resultFilter.value : "";
+
+        cards.forEach(function(c) {
+          var q = c.getAttribute("data-question") || "";
+          var a = c.getAttribute("data-action") || "";
+          var pnl = parseFloat(c.getAttribute("data-pnl") || "0");
+          var show = true;
+          if (query && q.indexOf(query) === -1) show = false;
+          if (side && a !== side) show = false;
+          if (result === "win" && pnl <= 0) show = false;
+          if (result === "loss" && pnl >= 0) show = false;
+          c.style.display = show ? "" : "none";
+        });
+
+        // Sort
+        var sort = sortSelect ? sortSelect.value : "newest";
+        var visible = cards.filter(function(c) { return c.style.display !== "none"; });
+        visible.sort(function(a, b) {
+          if (sort === "pnl-high") return parseFloat(b.getAttribute("data-pnl")) - parseFloat(a.getAttribute("data-pnl"));
+          if (sort === "pnl-low") return parseFloat(a.getAttribute("data-pnl")) - parseFloat(b.getAttribute("data-pnl"));
+          if (sort === "oldest") return new Date(a.getAttribute("data-closed-at")) - new Date(b.getAttribute("data-closed-at"));
+          return new Date(b.getAttribute("data-closed-at")) - new Date(a.getAttribute("data-closed-at"));
+        });
+        visible.forEach(function(c) { listEl.appendChild(c); });
+      }
+
+      if (searchInput) searchInput.addEventListener("input", applyFilters);
+      if (sideFilter) sideFilter.addEventListener("change", applyFilters);
+      if (resultFilter) resultFilter.addEventListener("change", applyFilters);
+      if (sortSelect) sortSelect.addEventListener("change", applyFilters);
+    })();
+    </script>
+  `;
+}
+
+/** Render the /tickets page body — ACTIVE only (OPEN/CLOSING/ERROR). */
+function renderTicketsPage(tickets, highlightId, filterCtx) {
+  filterCtx = filterCtx || {};
+  const activeBlockedReason = filterCtx.blockedReason || null;
+  const activeMonitorReason = filterCtx.monitorReason || null;
+  const hasActiveFilter = !!(activeBlockedReason || activeMonitorReason);
+  const closedCount = filterCtx.closedCount || 0;
+  const realizedPnlSumUsd = filterCtx.realizedPnlSumUsd || 0;
+  const winRate = filterCtx.winRate || 0;
+  // Only active tickets
+  const openTickets = tickets.filter((t) => t.status === "OPEN" || t.status === "CLOSING" || t.status === "ERROR").sort((a, b) => {
+    const ea = a.endDate ? new Date(a.endDate).getTime() : Infinity;
+    const eb = b.endDate ? new Date(b.endDate).getTime() : Infinity;
+    return ea - eb;
+  });
+  const openCount = openTickets.length;
+
+  const extIcon = '<svg class="tk-ext-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3"/><path d="M9 1h6v6"/><path d="M15 1L7 9"/></svg>';
+
+  // --- Deterministic category icon ---
+  const CATEGORY_ICONS = {
+    sports: "\u26BD", crypto: "\u{1FA99}", politics: "\u{1F3DB}", science: "\u{1F52C}",
+    entertainment: "\u{1F3AC}", finance: "\u{1F4B9}", tech: "\u{1F4BB}", weather: "\u{1F326}",
+    culture: "\u{1F3A8}", "pop-culture": "\u{1F3A4}", economics: "\u{1F4CA}",
+    soccer: "\u26BD", basketball: "\u{1F3C0}", baseball: "\u26BE", hockey: "\u{1F3D2}",
+    football: "\u{1F3C8}", tennis: "\u{1F3BE}", mma: "\u{1F94A}", boxing: "\u{1F94A}",
+    esports: "\u{1F3AE}", "current-affairs": "\u{1F4F0}",
+  };
+  function categoryIcon(t) {
+    const cat = ((t.category || "") + " " + (t.subcategory || "")).toLowerCase().trim();
+    const tags = (t.reasonCodes || []).concat(t.tagSlugs || []).map((s) => s.toLowerCase());
+    for (const key of Object.keys(CATEGORY_ICONS)) {
+      if (cat.indexOf(key) !== -1 || tags.some((tag) => tag.indexOf(key) !== -1)) return CATEGORY_ICONS[key];
+    }
+    return "\u{1F4CA}"; // default chart icon
+  }
+
+  // --- Compact summary ---
   const pnlSign = realizedPnlSumUsd >= 0 ? "+" : "";
+  const pnlColor = realizedPnlSumUsd > 0 ? "#22c55e" : realizedPnlSumUsd < 0 ? "#ef4444" : "#94a3b8";
   const summaryHtml = `
-    <div class="tk-card">
-      <p class="tk-card-title">Portfolio Overview</p>
-      <div class="tk-summary-grid">
-        <div class="tk-summary-item">
-          <div class="tk-summary-label"><span>\u{1F4CA}</span> Open</div>
-          <div class="tk-summary-value">${openCount}</div>
+    <div class="tk-card" style="padding:14px 16px;">
+      <p class="tk-card-title" style="margin-bottom:8px;">Portfolio Overview</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;text-align:center;">
+        <div>
+          <div style="font-size:0.62rem;color:#64748b;text-transform:uppercase;letter-spacing:0.06em;">\u{1F4CA} Open</div>
+          <div style="font-size:1.15rem;font-weight:700;">${openCount}</div>
         </div>
-        <div class="tk-summary-item">
-          <div class="tk-summary-label"><span>\u{2705}</span> Closed</div>
-          <div class="tk-summary-value">${closedCount}</div>
-          <div class="tk-summary-sub" style="font-size:0.72rem;color:#94a3b8;margin-top:2px;" title="TP_HIT + EXIT_HIT = auto-closed by monitor; MANUAL = closed by user">\u{1F916} auto ${autoClosedCount} · \u{1F590} manual ${manualClosedCount}${otherClosedCount > 0 ? ` · other ${otherClosedCount}` : ""}</div>
+        <div>
+          <div style="font-size:0.62rem;color:#64748b;text-transform:uppercase;letter-spacing:0.06em;">\u{2705} Closed</div>
+          <div style="font-size:1.15rem;font-weight:700;">${closedCount}</div>
         </div>
-        <div class="tk-summary-item">
-          <div class="tk-summary-label"><span>\u{1F4C8}</span> Realized PnL</div>
-          <div class="tk-summary-value ${pnlCls(realizedPnlSumUsd)}">${pnlSign}$${realizedPnlSumUsd.toFixed(2)}</div>
+        <div>
+          <div style="font-size:0.62rem;color:#64748b;text-transform:uppercase;letter-spacing:0.06em;">\u{1F4C8} Realized PnL</div>
+          <div style="font-size:1.15rem;font-weight:700;color:${pnlColor};">${pnlSign}$${realizedPnlSumUsd.toFixed(2)}</div>
         </div>
-        <div class="tk-summary-item">
-          <div class="tk-summary-label"><span>\u{1F3AF}</span> Win rate</div>
-          <div class="tk-summary-value">${winRate.toFixed(1)}% <span class="tk-wr-sub">(${wins}/${closedWithPnl.length})</span></div>
+        <div>
+          <div style="font-size:0.62rem;color:#64748b;text-transform:uppercase;letter-spacing:0.06em;">\u{1F3AF} Win rate</div>
+          <div style="font-size:1.15rem;font-weight:700;">${winRate.toFixed(1)}%</div>
         </div>
       </div>
     </div>
   `;
 
-  // --- Reason badges for tickets ---
-  function reasonBadgesHtml(t) {
-    const badges = [];
-    if (t.autoCloseBlockedReason) {
-      const info = DIAGNOSTIC_REASONS[t.autoCloseBlockedReason] || {};
-      badges.push(`<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#7f1d1d;color:#fecaca;font-size:0.72rem;font-weight:600;margin-right:4px;" title="${escHtml(info.explanation || t.autoCloseBlockedReason)}">⛔ ${escHtml(t.autoCloseBlockedReason)}</span>`);
-    }
-    if (t.lastMonitorBlockedReason) {
-      const info = DIAGNOSTIC_REASONS[t.lastMonitorBlockedReason] || {};
-      badges.push(`<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#854d0e;color:#fef08a;font-size:0.72rem;font-weight:600;margin-right:4px;" title="${escHtml(info.explanation || t.lastMonitorBlockedReason)}">⚠ ${escHtml(t.lastMonitorBlockedReason)}</span>`);
-    }
-    return badges.length > 0 ? `<div style="margin:4px 0;display:flex;flex-wrap:wrap;gap:2px;">${badges.join("")}</div>` : "";
-  }
-
-  // --- Filter bar (reason dropdown) ---
+  // --- Reason filter bar ---
   const allReasonCodes = Object.keys(DIAGNOSTIC_REASONS);
   const filterBarHtml = `
     <div style="margin:10px 0;padding:8px 12px;background:#1e293b;border-radius:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <span style="font-size:0.8rem;color:#94a3b8;font-weight:600;">🔍 Filter by reason:</span>
+      <span style="font-size:0.8rem;color:#94a3b8;font-weight:600;">\u{1F50D} Filter:</span>
       <select id="tk-reason-filter" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px 8px;font-size:0.78rem;">
         <option value="">All tickets</option>
         <optgroup label="Blocked (autoClose)">
@@ -2967,152 +3315,94 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
           }).join("")}
         </optgroup>
       </select>
-      ${hasActiveFilter ? '<a href="/tickets" style="color:#60a5fa;font-size:0.78rem;text-decoration:none;">✕ Clear filter</a>' : ""}
+      ${hasActiveFilter ? '<a href="/tickets" style="color:#60a5fa;font-size:0.78rem;text-decoration:none;">\u2715 Clear filter</a>' : ""}
     </div>
   `;
 
-  // --- Ticket card renderer ---
-  function ticketCard(t, showClose) {
+  // --- Reason badges ---
+  function reasonBadgesHtml(t) {
+    const badges = [];
+    if (t.autoCloseBlockedReason) {
+      const info = DIAGNOSTIC_REASONS[t.autoCloseBlockedReason] || {};
+      badges.push(`<span style="display:inline-block;padding:1px 5px;border-radius:3px;background:#7f1d1d;color:#fecaca;font-size:0.68rem;font-weight:600;" title="${escHtml(info.explanation || t.autoCloseBlockedReason)}">\u26D4 ${escHtml(t.autoCloseBlockedReason)}</span>`);
+    }
+    if (t.lastMonitorBlockedReason) {
+      const info = DIAGNOSTIC_REASONS[t.lastMonitorBlockedReason] || {};
+      badges.push(`<span style="display:inline-block;padding:1px 5px;border-radius:3px;background:#854d0e;color:#fef08a;font-size:0.68rem;font-weight:600;" title="${escHtml(info.explanation || t.lastMonitorBlockedReason)}">\u26A0 ${escHtml(t.lastMonitorBlockedReason)}</span>`);
+    }
+    return badges.length > 0 ? badges.join(" ") : "";
+  }
+
+  // --- Compact active ticket card ---
+  function compactTicketCard(t) {
     const isExec = t.tradeability === "EXECUTE";
-    const actionLabel = t.action || "\u2014";
-    const ticketOutcome = (t.groupItemTitle || "").trim();
-    // Normalize stored BUY_YES/BUY_NO back to BUY YES/BUY NO for display
-    const actionNorm = actionLabel.replace(/_/g, " ");
-    const { displayLabel: tkDispLabel, displayAction: tkDispAction } = formatOutcomeAction(ticketOutcome, actionNorm, t.outcomes);
-    const actionDisplay = tkDispLabel
-      ? tkDispLabel + " " + tkDispAction
-      : tkDispAction;
-    const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "\u2014";
-    const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(2) : "\u2014";
-    const tp = typeof t.takeProfit === "number" ? "$" + t.takeProfit.toFixed(2) : "\u2014";
-    const sl = typeof t.riskExitLimit === "number" ? "$" + t.riskExitLimit.toFixed(2) : "\u2014";
-    // Action pill matching trade-card style (⚡ Buy 240-259 @ $0.40)
-    const entryAtPrice = typeof t.entryLimit === "number" ? ` @ $${t.entryLimit.toFixed(2)}` : "";
-    const pillIcon = isExec ? "\u26A1" : "\uD83D\uDC41";
-    const pillCls = isExec ? "tk-pill-buy" : "tk-pill-watch";
-    const actionPillHtml = `<div class="tk-action-pill ${pillCls}">${pillIcon} ${escHtml(actionDisplay)}${entryAtPrice}</div>`;
+    const { headline, subtext } = cardHeadline(t);
     const polyUrl = t.marketUrl || (t.eventSlug
       ? `https://polymarket.com/event/${encodeURIComponent(t.eventSlug)}`
       : null);
-    const { headline: ticketHeadline, subtext: ticketSubtext } = cardHeadline(t);
-    const subtextEl = ticketSubtext ? `<div style="font-size:0.78rem;color:#64748b;margin-top:2px;">${escHtml(ticketSubtext)}</div>` : "";
-    const questionLink = polyUrl
-      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" class="tk-q-link">${escHtml(ticketHeadline)} ${extIcon}</a>${subtextEl}`
-      : `<span class="tk-q-link">${escHtml(ticketHeadline)}</span>${subtextEl}`;
+    const icon = categoryIcon(t);
+
+    // Action label
+    const actionLabel = (t.action || "\u2014").replace(/_/g, " ");
+    const ticketOutcome = (t.groupItemTitle || "").trim();
+    const { displayAction } = formatOutcomeAction(ticketOutcome, actionLabel, t.outcomes);
+
+    // Entry price
+    const entry = typeof t.entryLimit === "number" ? "$" + t.entryLimit.toFixed(2) : "";
+    const size = typeof t.maxSizeUsd === "number" ? "$" + t.maxSizeUsd.toFixed(0) : "";
+
     // Time remaining
     const ticketEndDate = t.endDate || "";
     const ticketHoursLeft = ticketEndDate ? ((new Date(ticketEndDate).getTime() - Date.now()) / (1000 * 60 * 60)) : null;
     const timeLeftLabel = ticketHoursLeft !== null && Number.isFinite(ticketHoursLeft)
       ? (ticketHoursLeft <= 0 ? "ended" : formatHoursLeft(ticketHoursLeft))
       : "";
-    const timeLeftCls = ticketHoursLeft !== null && ticketHoursLeft <= 24 && ticketHoursLeft > 0
-      ? " tk-time-urgent"
-      : "";
-    const timeLeftHtml = timeLeftLabel
-      ? `<span class="tk-time-left${timeLeftCls}">\u23F3 ${escHtml(timeLeftLabel)}${ticketHoursLeft > 0 ? " left" : ""}</span>`
+    const timeLeftCls = ticketHoursLeft !== null && ticketHoursLeft <= 24 && ticketHoursLeft > 0 ? "color:#f59e0b;font-weight:600;" : "color:#64748b;";
+
+    // Status badge for non-OPEN
+    const statusBadge = t.status !== "OPEN"
+      ? `<span style="display:inline-block;padding:1px 5px;border-radius:3px;background:${t.status === "ERROR" ? "#7f1d1d" : "#854d0e"};color:${t.status === "ERROR" ? "#fecaca" : "#fef3c7"};font-size:0.68rem;font-weight:600;">${escHtml(t.status)}</span>`
       : "";
 
+    // Auto-close indicator
+    const acIndicator = isExec
+      ? (t.autoCloseEnabled
+        ? '<span style="font-size:0.68rem;color:#22c55e;" title="Auto-close ON">\u{1F916}\u2713</span>'
+        : '<span style="font-size:0.68rem;color:#64748b;" title="Auto-close OFF">\u{1F916}\u2717</span>')
+      : "";
+
+    const reasonBadges = reasonBadgesHtml(t);
     const isHighlighted = highlightId && String(t._id) === highlightId;
     const hlCls = isHighlighted ? " tk-highlight" : "";
 
-    // PnL badge for closed tickets (top-right)
-    let pnlBadgeHtml = "";
-    if (!showClose && typeof t.realizedPnlUsd === "number") {
-      const sign = t.realizedPnlUsd >= 0 ? "+" : "";
-      const cls = t.realizedPnlUsd > 0 ? "tk-pnl-pos" : t.realizedPnlUsd < 0 ? "tk-pnl-neg" : "tk-pnl-zero";
-      pnlBadgeHtml = `<span class="tk-pnl-badge ${cls}">${sign}$${t.realizedPnlUsd.toFixed(2)}</span>`;
-    }
-
-    // Simulated close badge
-    const simBadgeHtml = t.isSimulated
-      ? '<span class="tk-sim-badge" title="Simulated close (no on-chain execution)">SIM</span>'
-      : "";
-
-    const closeHtml = showClose ? `
-      <div class="tk-close-form">
-        <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="Close price" class="tk-close-input close-price-input" data-ticket-id="${escHtml(String(t._id))}" aria-label="Close price">
-        <p class="tk-close-helper">Enter close price (0\u20131). Example: 0.41</p>
-        <button class="tk-close-btn close-ticket-btn" data-ticket-id="${escHtml(String(t._id))}">Close</button>
-      </div>
-    ` : "";
-
-    // Per-ticket auto-close toggle (only for open EXECUTE tickets)
-    let autoCloseToggleHtml = "";
-    if (showClose && isExec) {
-      const acEnabled = t.autoCloseEnabled || false;
-      const acBadge = acEnabled
-        ? '<span class="ac-badge" style="background:#166534;color:#bbf7d0;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;">ON</span>'
-        : '<span class="ac-badge" style="background:#374151;color:#9ca3af;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;">OFF</span>';
-      const acNextVal = acEnabled ? "false" : "true";
-      const acBtnLabel = acEnabled ? "Disable" : "Enable";
-      const acBtnColor = acEnabled ? "#7f1d1d" : "#166534";
-      autoCloseToggleHtml = `
-        <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1e293b;display:flex;align-items:center;justify-content:space-between;">
-          <span style="font-size:0.78rem;color:#94a3b8;">🤖 Auto Close ${acBadge}</span>
-          <button class="autoclose-toggle-btn" data-ticket-id="${escHtml(String(t._id))}" data-value="${acNextVal}"
-            style="background:${acBtnColor};color:#fff;border:none;padding:4px 12px;border-radius:4px;font-size:0.75rem;font-weight:600;cursor:pointer;">
-            ${escHtml(acBtnLabel)}
-          </button>
-        </div>
-      `;
-    }
-
-    // Editable TP + Exit (risk) for open tickets
-    const tpCurrentEsc = escHtml(typeof t.takeProfit === "number" ? String(t.takeProfit) : "");
-    const slCurrentEsc = escHtml(typeof t.riskExitLimit === "number" ? String(t.riskExitLimit) : "");
-    const tpEditHtml = showClose
-      ? `<div>
-           <span class="tk-price-label">TP <span class="tk-edit-icon" data-field="takeProfit" data-ticket-id="${escHtml(String(t._id))}" data-current="${tpCurrentEsc}" title="Edit TP">\u270E</span></span>
-           <div class="tk-price-val tk-editable-val" data-field="takeProfit" data-ticket-id="${escHtml(String(t._id))}">${tp}</div>
-         </div>`
-      : `<div><span class="tk-price-label">TP</span><div class="tk-price-val">${tp}</div></div>`;
-
-    const slEditHtml = showClose
-      ? `<div>
-           <span class="tk-price-label">Exit (risk) <span class="tk-edit-icon" data-field="riskExitLimit" data-ticket-id="${escHtml(String(t._id))}" data-current="${slCurrentEsc}" title="Edit Exit (risk)">\u270E</span></span>
-           <div class="tk-price-val tk-editable-val" data-field="riskExitLimit" data-ticket-id="${escHtml(String(t._id))}">${sl}</div>
-         </div>`
-      : `<div><span class="tk-price-label">Exit (risk)</span><div class="tk-price-val">${sl}</div></div>`;
-
-    // Editable close price for closed tickets
-    let closedFooterHtml = "";
-    if (!showClose) {
-      const cpLabel = typeof t.closePrice === "number" ? "$" + t.closePrice.toFixed(2) : "\u2014";
-      const cpCurrentEsc = escHtml(typeof t.closePrice === "number" ? String(t.closePrice) : "");
-      const pctLabel = typeof t.realizedPnlPct === "number"
-        ? `<span class="tk-pnl-pct ${pnlCls(t.realizedPnlPct)}">${t.realizedPnlPct >= 0 ? "+" : ""}${(t.realizedPnlPct * 100).toFixed(1)}%</span>`
-        : "";
-      closedFooterHtml = `
-        <div class="tk-closed-footer">
-          <span class="tk-closed-price-display" data-ticket-id="${escHtml(String(t._id))}">Closed: ${cpLabel}</span>
-          <span class="tk-edit-icon" data-field="closePrice" data-ticket-id="${escHtml(String(t._id))}" data-current="${cpCurrentEsc}" title="Edit close price">\u270E</span>
-          ${pctLabel}
-        </div>
-      `;
-    }
+    // Quick actions (icons)
+    const detailUrl = `/tickets/${escHtml(String(t._id))}`;
+    const copyUrlAttr = polyUrl ? `data-copy-url="${escHtml(polyUrl)}"` : "";
 
     return `
-      <div class="tk-ticket${hlCls}" id="ticket-${escHtml(String(t._id))}" style="position:relative;" data-end-date="${escHtml(t.endDate || "")}" data-created-at="${escHtml(t.createdAt || "")}" data-autoclose="${showClose && isExec ? (t.autoCloseEnabled ? "1" : "0") : ""}">
-        <div style="margin-bottom:6px;padding-right:${pnlBadgeHtml ? "80px" : "0"};">${questionLink}</div>
-        ${pnlBadgeHtml}
-        ${simBadgeHtml}
-        ${actionPillHtml}
-        ${reasonBadgesHtml(t)}
-        <div class="tk-meta-row">
-          <span>\u{1F552} ${utcSpan(t.createdAt)}</span>
-          ${timeLeftHtml}
-        </div>
-        <div class="tk-price-grid">
-          <div><span class="tk-price-label">Entry</span><div class="tk-price-val">${entry}</div></div>
-          ${tpEditHtml}
-          ${slEditHtml}
-          <div><span class="tk-price-label">Size (USD)</span><div class="tk-price-val">${size}</div></div>
-        </div>
-        ${closeHtml}
-        ${autoCloseToggleHtml}
-        ${closedFooterHtml}
-        <div style="margin-top:8px;text-align:right;">
-          <a href="/tickets/${escHtml(String(t._id))}" style="color:#60a5fa;font-size:0.78rem;text-decoration:none;" title="View full ticket detail">\u{1F50D} Detail</a>
+      <div class="tk-ticket${hlCls}" id="ticket-${escHtml(String(t._id))}" style="position:relative;padding:10px 14px;" data-end-date="${escHtml(t.endDate || "")}" data-created-at="${escHtml(t.createdAt || "")}" data-autoclose="${isExec ? (t.autoCloseEnabled ? "1" : "0") : ""}">
+        <div style="display:flex;align-items:flex-start;gap:10px;">
+          <span style="font-size:1.3rem;line-height:1;flex-shrink:0;margin-top:2px;">${icon}</span>
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span style="font-size:0.88rem;font-weight:600;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 80px);">${escHtml(headline)}</span>
+              ${statusBadge}
+              ${acIndicator}
+            </div>
+            ${subtext ? `<div style="font-size:0.72rem;color:#64748b;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(subtext)}</div>` : ""}
+            <div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:0.75rem;flex-wrap:wrap;">
+              <span style="color:#94a3b8;">${escHtml(displayAction)}</span>
+              ${entry ? `<span style="color:#e2e8f0;font-weight:600;font-family:var(--tk-mono);">${entry}</span>` : ""}
+              ${size ? `<span style="color:#64748b;">\u00B7 ${size}</span>` : ""}
+              ${timeLeftLabel ? `<span style="${timeLeftCls}">\u23F3 ${escHtml(timeLeftLabel)}</span>` : ""}
+              ${reasonBadges ? `<span>${reasonBadges}</span>` : ""}
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+            ${polyUrl ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="color:#64748b;font-size:0.85rem;text-decoration:none;padding:4px;" title="Open on Polymarket">\u{1F517}</a>` : ""}
+            ${copyUrlAttr ? `<button ${copyUrlAttr} style="background:none;border:none;color:#64748b;font-size:0.85rem;cursor:pointer;padding:4px;" title="Copy URL">\u{1F4CB}</button>` : ""}
+            <a href="${detailUrl}" style="color:#60a5fa;font-size:0.85rem;text-decoration:none;padding:4px;" title="Detail">\u{276F}</a>
+          </div>
         </div>
       </div>
     `;
@@ -3120,21 +3410,29 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
 
   const openListHtml = openTickets.length === 0
     ? '<p class="tk-empty">No open tickets.</p>'
-    : openTickets.map((t) => ticketCard(t, true)).join("");
+    : openTickets.map((t) => compactTicketCard(t)).join("");
 
-  const closedListHtml = closedTickets.length === 0
-    ? '<p class="tk-empty">No closed tickets yet.</p>'
-    : closedTickets.map((t) => ticketCard(t, false)).join("");
+  // --- Archive link card ---
+  const archiveCardHtml = `
+    <a href="/history" class="tk-ticket" style="display:flex;align-items:center;gap:12px;padding:12px 16px;text-decoration:none;margin-top:10px;">
+      <span style="font-size:1.3rem;">\u{1F4E6}</span>
+      <div style="flex:1;">
+        <div style="font-size:0.88rem;font-weight:600;color:#e2e8f0;">Archive of closed positions</div>
+        <div style="font-size:0.75rem;color:#64748b;">${closedCount} positions \u00B7 filtering, search</div>
+      </div>
+      <span class="tk-badge" style="flex-shrink:0;">${closedCount}</span>
+      <span style="color:#60a5fa;font-size:0.88rem;">\u{276F}</span>
+    </a>
+  `;
 
   return `
     <div class="tk-page">
       ${summaryHtml}
-      ${equityChartHtml}
       ${filterBarHtml}
       <div class="tk-section-hdr">OPEN <span class="tk-badge">${openCount}</span>
         <span class="tk-sort-row">
-          <button class="tk-sort-btn tk-sort-active" data-sort="end" data-section="open" title="Sort by end date">End ↑</button>
-          <button class="tk-sort-btn" data-sort="saved" data-section="open" title="Sort by date saved">Saved ↑</button>
+          <button class="tk-sort-btn tk-sort-active" data-sort="end" data-section="open" title="Sort by end date">End \u2191</button>
+          <button class="tk-sort-btn" data-sort="saved" data-section="open" title="Sort by date saved">Saved \u2191</button>
           <button class="tk-sort-btn" data-sort="autoclose" data-section="open" title="Sort by AutoClose status">AutoClose</button>
         </span>
       </div>
@@ -3143,13 +3441,7 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
         <button id="tk-autoclose-none-btn" style="background:#7f1d1d;color:#fff;border:none;padding:5px 14px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;" data-value="false" title="Disable AutoClose for all open tickets">Disable All AutoClose</button>
       </div>
       <div id="tk-open-list">${openListHtml}</div>
-      <div class="tk-section-hdr">CLOSED <span class="tk-badge">${closedCount}</span>
-        <span class="tk-sort-row">
-          <button class="tk-sort-btn tk-sort-active" data-sort="saved" data-section="closed" title="Sort by date saved">Saved ↓</button>
-          <button class="tk-sort-btn" data-sort="end" data-section="closed" title="Sort by end date">End ↓</button>
-        </span>
-      </div>
-      <div id="tk-closed-list">${closedListHtml}</div>
+      ${archiveCardHtml}
     </div>
     <script>
     (function() {
@@ -3163,181 +3455,20 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
           window.location.href = "/tickets?" + encodeURIComponent(parts[0]) + "=" + encodeURIComponent(parts[1]);
         });
       }
-      // --- Close ticket (preserve scroll position) ---
-      document.addEventListener("click", function(e) {
-        var btn = e.target.closest(".close-ticket-btn");
-        if (!btn) return;
-        var ticketId = btn.getAttribute("data-ticket-id");
-        var input = document.querySelector('.close-price-input[data-ticket-id="' + ticketId + '"]');
-        if (!input) return;
-        var closePrice = parseFloat(input.value);
-        if (isNaN(closePrice) || closePrice <= 0) { alert("Enter a valid close price"); return; }
-        btn.disabled = true;
-        btn.textContent = "Closing\u2026";
-        fetch("/api/tickets/close", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ticketId: ticketId, closePrice: closePrice }),
-        }).then(function(r) { return r.json(); }).then(function(d) {
-          if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); }
-          else {
-            // Preserve scroll position across reload
-            sessionStorage.setItem("tk_scrollY", String(window.scrollY));
-            location.reload();
-          }
-        }).catch(function() { btn.textContent = "Error"; btn.disabled = false; });
-      });
-
-      // Restore scroll position after close-triggered reload
-      var savedY = sessionStorage.getItem("tk_scrollY");
-      if (savedY !== null) {
-        sessionStorage.removeItem("tk_scrollY");
-        window.scrollTo(0, parseInt(savedY, 10));
-      }
-
-      // --- Inline edit for TP / Exit (risk) / Close price ---
-      document.addEventListener("click", function(e) {
-        var icon = e.target.closest(".tk-edit-icon");
-        if (!icon) return;
-        var field = icon.getAttribute("data-field");
-        // Whitelist allowed fields to prevent selector injection
-        if (field !== "takeProfit" && field !== "riskExitLimit" && field !== "closePrice") return;
-        var ticketId = icon.getAttribute("data-ticket-id");
-        var current = icon.getAttribute("data-current") || "";
-        // For closePrice, the editable container is the closed-footer
-        var valEl;
-        if (field === "closePrice") {
-          valEl = icon.closest(".tk-closed-footer");
-        } else {
-          valEl = icon.closest("div").querySelector('.tk-editable-val[data-field="' + field + '"]');
-        }
-        if (!valEl || valEl.querySelector(".tk-inline-edit")) return;
-
-        var origHtml = valEl.innerHTML;
-        var editHtml = '<span class="tk-inline-edit">' +
-          '<input type="number" step="0.01" min="0" inputmode="decimal" value="' + current + '" class="tk-inline-input">' +
-          '<button class="tk-inline-save">Save</button>' +
-          '<button class="tk-inline-cancel">\u2716</button>' +
-          '</span>';
-
-        if (field === "closePrice") {
-          // Insert edit form after the display span, hide display elements
-          var displaySpan = valEl.querySelector(".tk-closed-price-display");
-          var pctSpan = valEl.querySelector(".tk-pnl-pct");
-          if (displaySpan) displaySpan.style.display = "none";
-          if (pctSpan) pctSpan.style.display = "none";
-          icon.style.display = "none";
-          var wrapper = document.createElement("span");
-          wrapper.innerHTML = editHtml;
-          wrapper.className = "tk-edit-wrapper";
-          valEl.insertBefore(wrapper, valEl.firstChild);
-        } else {
-          valEl.innerHTML = editHtml;
-        }
-
-        var inputEl = valEl.querySelector(".tk-inline-input");
-        inputEl.focus();
-        inputEl.select();
-
-        function cancelEdit() {
-          if (field === "closePrice") {
-            var wrapper = valEl.querySelector(".tk-edit-wrapper");
-            if (wrapper) wrapper.remove();
-            var displaySpan = valEl.querySelector(".tk-closed-price-display");
-            var pctSpan = valEl.querySelector(".tk-pnl-pct");
-            if (displaySpan) displaySpan.style.display = "";
-            if (pctSpan) pctSpan.style.display = "";
-            icon.style.display = "";
-          } else {
-            valEl.innerHTML = origHtml;
-          }
-        }
-
-        valEl.querySelector(".tk-inline-cancel").addEventListener("click", cancelEdit);
-
-        inputEl.addEventListener("keydown", function(ev) {
-          if (ev.key === "Escape") cancelEdit();
-          if (ev.key === "Enter") valEl.querySelector(".tk-inline-save").click();
-        });
-
-        valEl.querySelector(".tk-inline-save").addEventListener("click", function() {
-          var newVal = parseFloat(inputEl.value);
-          if (isNaN(newVal) || newVal < 0) { alert("Enter a valid price (0\u20131)"); return; }
-          var payload = { ticketId: ticketId };
-          payload[field] = newVal;
-          var saveBtn = valEl.querySelector(".tk-inline-save");
-          saveBtn.disabled = true;
-          saveBtn.textContent = "\u2026";
-          fetch("/api/tickets/edit", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          }).then(function(r) { return r.json(); }).then(function(d) {
-            if (d.error) { alert(d.error); saveBtn.disabled = false; saveBtn.textContent = "Save"; return; }
-            sessionStorage.setItem("tk_scrollY", String(window.scrollY));
-            location.reload();
-          }).catch(function() { alert("Save failed"); saveBtn.disabled = false; saveBtn.textContent = "Save"; });
-        });
-      });
-
-      // --- Shared helper: update autoclose toggle UI for a single button ---
-      function updateAutoCloseUI(toggleBtn, enabled) {
-        var card = toggleBtn.closest(".tk-ticket");
-        if (card) card.setAttribute("data-autoclose", enabled ? "1" : "0");
-        var row = toggleBtn.closest("div");
-        var badge = row.querySelector(".ac-badge");
-        if (enabled) {
-          if (badge) { badge.style.background = "#166534"; badge.style.color = "#bbf7d0"; badge.textContent = "ON"; }
-          toggleBtn.setAttribute("data-value", "false");
-          toggleBtn.textContent = "Disable";
-          toggleBtn.style.background = "#7f1d1d";
-        } else {
-          if (badge) { badge.style.background = "#374151"; badge.style.color = "#9ca3af"; badge.textContent = "OFF"; }
-          toggleBtn.setAttribute("data-value", "true");
-          toggleBtn.textContent = "Enable";
-          toggleBtn.style.background = "#166534";
-        }
-      }
-
-      // --- Auto-close per-ticket toggle (in-place, no reload to preserve sort) ---
-      document.addEventListener("click", function(e) {
-        var btn = e.target.closest(".autoclose-toggle-btn");
-        if (!btn) return;
-        var ticketId = btn.getAttribute("data-ticket-id");
-        var value = btn.getAttribute("data-value") === "true";
-        btn.disabled = true;
-        btn.textContent = "Saving…";
-        fetch("/api/tickets/autoclose", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ticketId: ticketId, autoCloseEnabled: value }),
-        }).then(function(r) { return r.json(); }).then(function(d) {
-          if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); return; }
-          updateAutoCloseUI(btn, value);
-          btn.disabled = false;
-        }).catch(function() { btn.textContent = "Error"; btn.disabled = false; });
-      });
 
       // --- Bulk Enable/Disable All AutoClose ---
       function handleBulkAutoClose(value) {
         return function(e) {
           var btn = e.target;
           btn.disabled = true;
-          btn.textContent = "Saving…";
+          btn.textContent = "Saving\u2026";
           fetch("/api/tickets/autoclose-all", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ autoCloseEnabled: value }),
           }).then(function(r) { return r.json(); }).then(function(d) {
             if (d.error) { btn.textContent = "Error"; btn.disabled = false; alert(d.error); return; }
-            var container = document.getElementById("tk-open-list");
-            if (container) {
-              container.querySelectorAll(".autoclose-toggle-btn").forEach(function(tb) {
-                updateAutoCloseUI(tb, value);
-              });
-            }
-            btn.disabled = false;
-            btn.textContent = value ? "Enable All AutoClose" : "Disable All AutoClose";
+            location.reload();
           }).catch(function() { btn.textContent = "Error"; btn.disabled = false; });
         };
       }
@@ -3369,24 +3500,22 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
         cards.forEach(function(c) { container.appendChild(c); });
       }
 
-      // Track sort state per section
-      var sortState = { open: { key: "end", asc: true }, closed: { key: "saved", asc: false } };
+      var sortState = { open: { key: "end", asc: true } };
 
       document.addEventListener("click", function(e) {
         var sortBtn = e.target.closest(".tk-sort-btn");
         if (!sortBtn) return;
         var section = sortBtn.getAttribute("data-section");
         var key = sortBtn.getAttribute("data-sort");
-        var containerId = section === "open" ? "tk-open-list" : "tk-closed-list";
-        var state = sortState[section];
+        var containerId = "tk-open-list";
+        var state = sortState[section] || sortState.open;
         if (state.key === key) {
           state.asc = !state.asc;
         } else {
           state.key = key;
-          state.asc = key === "end";  // end=ascending, saved/autoclose=descending
+          state.asc = key === "end";
         }
         sortContainer(containerId, state.key, state.asc);
-        // Update button labels
         var row = sortBtn.parentElement;
         var btns = row.querySelectorAll(".tk-sort-btn");
         btns.forEach(function(b) {
@@ -3401,6 +3530,7 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
           }
         });
       });
+
       // Scroll to highlighted ticket
       var params = new URLSearchParams(window.location.search);
       var hl = params.get("highlight");
@@ -3413,7 +3543,6 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
           setTimeout(function() { el.style.borderColor = ""; }, 3000);
         }
       }
-      // Apply dark bg to body on tickets page
       document.body.style.background = "#0b1120";
     })();
     </script>
@@ -3607,7 +3736,18 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
             <div class="td-row"><span class="td-label">Closed at</span><span class="td-val">${t.closedAt ? utcSpan(t.closedAt) : "\u2014"}</span></div>
             ${pnlHtml}
           </div>
-        </div>` : ""}
+        </div>` : `<div class="td-section">
+          <div class="td-section-title">\u{1F512} Close Position</div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+            <input type="number" step="0.01" min="0" max="1" inputmode="decimal" placeholder="Close price (0\u20131)" id="td-close-price"
+              style="flex:1;padding:8px 12px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:0.88rem;">
+            <button id="td-close-btn" data-ticket-id="${escHtml(String(t._id))}"
+              style="background:#dc2626;color:#fff;border:none;padding:8px 18px;border-radius:6px;font-size:0.85rem;font-weight:700;cursor:pointer;white-space:nowrap;">
+              Close
+            </button>
+          </div>
+          <p style="font-size:0.72rem;color:#64748b;margin:4px 0 0;">Enter close price (0\u20131). Example: 0.41</p>
+        </div>`}
 
         ${autoCloseHtml}
 
@@ -3661,6 +3801,26 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
           if (next) next.click();
         }
       });
+      // Close ticket from detail page
+      var closeBtn = document.getElementById("td-close-btn");
+      var closePriceInput = document.getElementById("td-close-price");
+      if (closeBtn && closePriceInput) {
+        closeBtn.addEventListener("click", function() {
+          var cp = parseFloat(closePriceInput.value);
+          if (isNaN(cp) || cp <= 0) { alert("Enter a valid close price (0\u20131)"); return; }
+          var ticketId = closeBtn.getAttribute("data-ticket-id");
+          closeBtn.disabled = true;
+          closeBtn.textContent = "Closing\u2026";
+          fetch("/api/tickets/close", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ticketId: ticketId, closePrice: cp }),
+          }).then(function(r) { return r.json(); }).then(function(d) {
+            if (d.error) { closeBtn.textContent = "Error"; closeBtn.disabled = false; alert(d.error); return; }
+            location.reload();
+          }).catch(function() { closeBtn.textContent = "Error"; closeBtn.disabled = false; });
+        });
+      }
       document.body.style.background = "#0b1120";
     })();
     </script>
@@ -3685,6 +3845,7 @@ module.exports = {
   renderTradePage,
   renderExplorePage,
   renderSystemPage,
+  renderHistoryPage,
   renderTicketsPage,
   renderTicketDetailPage,
   renderWatchlistPage,
