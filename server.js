@@ -1168,13 +1168,14 @@ if (url.pathname === "/trade") {
           { lastMonitorBlockedReason: reason },
         ];
       } else if (reason === "SETTLED") {
-        // Settled markets: check lastMonitorBlockedReason OR closeReason
+        // Settled markets: user-facing reason "SETTLED" maps to stored "MARKET_SETTLED"
+        // (closeReason enum and getCurrentCloseablePrice diag use MARKET_SETTLED prefix)
         query.$or = [
           { lastMonitorBlockedReason: "MARKET_SETTLED" },
           { closeReason: "MARKET_SETTLED" },
         ];
       } else if (reason === "ENDED") {
-        // Ended markets: check lastMonitorBlockedReason OR closeReason
+        // Ended markets: user-facing reason "ENDED" maps to stored "MARKET_ENDED"
         query.$or = [
           { lastMonitorBlockedReason: "MARKET_ENDED" },
           { closeReason: "MARKET_ENDED" },

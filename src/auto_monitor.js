@@ -902,7 +902,7 @@ async function monitorTick() {
     // Strict identity gate: skip tickets without a valid conditionId (fail-closed)
     if (!hasValidConditionId(ticket)) {
       monitorState.lastTickIdentitySkip++;
-      await persistMonitorReason(ticket, "IDENTITY_SKIP", { conditionId: ticket.conditionId || null });
+      await persistMonitorReason(ticket, "IDENTITY_SKIP", { conditionId: ticket.conditionId });
       console.warn(JSON.stringify({
         msg: "monitor-identity-skip",
         reason: "missing_conditionId",
