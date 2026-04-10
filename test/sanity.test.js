@@ -2625,7 +2625,9 @@ console.log("\nfinal selection: mispricing quota");
   assert(fmtPrice(NaN) === "\u2014", "NaN → —");
   assert(fmtPrice(Infinity) === "\u2014", "Infinity → —");
   assert(fmtPrice(0.33) === "$0.33", "0.33 → $0.33");
-  assert(fmtPrice(0.001) === "$0.00", "0.001 → $0.00 (valid tiny price, 2dp rounds to 0.00 — but this is still a valid positive number, the display is just at fixed precision)");
+  assert(fmtPrice(0.001) === "$0.00", "0.001 → $0.00 (rounds to 0.00 at 2dp)");
+  // Verify that fmtPrice(0.001) and fmtPrice(0) produce different code paths
+  assert(fmtPrice(0.001) !== fmtPrice(0), "fmtPrice(0.001) !== fmtPrice(0) — different outputs despite both rounding near zero");
   // Critical: a value of exactly 0 must NOT display as $0.00
   assert(fmtPrice(0) !== "$0.00", "Zero must NOT display as $0.00");
 }
@@ -2649,6 +2651,7 @@ console.log("\nfinal selection: mispricing quota");
   // Step 2: inferExit computes garbage TP/SL from microscopic bid
   const exits = inferExit(entryAsk, clobBid);
   assert(exits.tp !== null, "Garbage TP is still computed (0.0011)");
+  assert(Math.abs(exits.tp - 0.0011) < 0.0001, `TP ≈ 0.0011 (got ${exits.tp})`);
   assert(exits.tp < entryAsk, "Garbage TP is below entry — this is wrong");
 
   // Step 3: The NO_EXECUTABLE_BID invariant blocks auto-close
