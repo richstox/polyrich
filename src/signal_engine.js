@@ -607,6 +607,8 @@ function enrichItem(item, historyMap, recentlyShownSet) {
     marketSlug: item.marketSlug || "",
     eventSlug: item.eventSlug || "",
     conditionId: item.conditionId || "",
+    yesTokenId: item.yesTokenId || null,
+    noTokenId: item.noTokenId || null,
     groupItemTitle: item.groupItemTitle || "",
     outcomes: item.outcomes || [],
     tagIds: item.tagIds || [],
