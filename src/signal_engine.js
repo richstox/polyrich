@@ -88,6 +88,8 @@ const SNAPSHOT_PROJECTION = {
   marketSlug: 1,
   eventSlug: 1,
   conditionId: 1,
+  yesTokenId: 1,
+  noTokenId: 1,
   groupItemTitle: 1,
   outcomes: 1,
   tagIds: 1,
