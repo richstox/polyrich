@@ -2741,6 +2741,10 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
           style="background:#1e40af;color:#dbeafe;border:none;padding:8px 18px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:not-allowed;opacity:0.5;">
           🗑 Delete OPEN only
         </button>
+        <button class="dz-action-btn" data-action="RESET_TRADES" disabled
+          style="background:#9f1239;color:#ffe4e6;border:none;padding:8px 18px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:not-allowed;opacity:0.5;">
+          📊 Reset statistiky (smazat tardy)
+        </button>
         <button class="dz-action-btn" data-action="FACTORY_RESET" disabled
           style="background:#581c87;color:#f3e8ff;border:none;padding:8px 18px;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:not-allowed;opacity:0.5;">
           ☢️ Factory reset (vše z nuly)
@@ -2777,6 +2781,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
           html += '<div><strong style="color:#ef4444;">Reset all:</strong> ' + data.RESET_ALL.tickets + ' tickets, ' + data.RESET_ALL.closeAttempts + ' close attempts, ' + data.RESET_ALL.autoSaveLogs + ' auto-save logs</div>';
           html += '<div><strong style="color:#eab308;">CLOSED only:</strong> ' + data.DELETE_CLOSED.tickets + ' tickets, ' + data.DELETE_CLOSED.closeAttempts + ' close attempts</div>';
           html += '<div><strong style="color:#3b82f6;">OPEN only:</strong> ' + data.DELETE_OPEN.tickets + ' tickets</div>';
+          html += '<div><strong style="color:#e11d48;">Reset statistiky:</strong> ' + data.RESET_TRADES.tickets + ' tickets, ' + data.RESET_TRADES.closeAttempts + ' close attempts (zachová auto-save logy, scany, snapshoty)</div>';
           html += '<div><strong style="color:#a855f7;">Factory reset:</strong> ' + data.FACTORY_RESET.tickets + ' tickets, ' + data.FACTORY_RESET.closeAttempts + ' close attempts, ' + data.FACTORY_RESET.autoSaveLogs + ' auto-save logs, ' + data.FACTORY_RESET.snapshots + ' snapshots, ' + data.FACTORY_RESET.scans + ' scans</div>';
           html += '</div>';
           countsEl.innerHTML = html;
@@ -2788,7 +2793,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
         btn.addEventListener("click", function() {
           if (btn.disabled) return;
           var action = btn.getAttribute("data-action");
-          var labels = { RESET_ALL: "Reset ALL data", DELETE_CLOSED: "Delete all CLOSED tickets", DELETE_OPEN: "Delete all OPEN tickets", FACTORY_RESET: "FACTORY RESET — smazat úplně vše a začít z nuly" };
+          var labels = { RESET_ALL: "Reset ALL data", DELETE_CLOSED: "Delete all CLOSED tickets", DELETE_OPEN: "Delete all OPEN tickets", RESET_TRADES: "RESET STATISTIKY — smazat všechny tardy a close attempts (zachová logy, scany, snapshoty)", FACTORY_RESET: "FACTORY RESET — smazat úplně vše a začít z nuly" };
           if (!confirm("Are you sure you want to: " + (labels[action] || action) + "? This cannot be undone.")) return;
           btn.disabled = true;
           btn.textContent = "Working…";

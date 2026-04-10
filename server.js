@@ -53,7 +53,7 @@ const {
 const { startMonitorLoop, getMonitorStatus } = require("./src/auto_monitor");
 
 const MonitorLease = require("./models/MonitorLease");
-const DANGER_ZONE_VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN", "FACTORY_RESET"];
+const DANGER_ZONE_VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN", "RESET_TRADES", "FACTORY_RESET"];
 
 // ---------------------------------------------------------------------------
 // Node version check — warn-only, never crash
@@ -1656,6 +1656,7 @@ if (url.pathname === "/trade") {
         RESET_ALL: { tickets: allTickets, closeAttempts, autoSaveLogs },
         DELETE_CLOSED: { tickets: closedTickets, closeAttempts: closedCloseAttempts },
         DELETE_OPEN: { tickets: openClosingTickets },
+        RESET_TRADES: { tickets: allTickets, closeAttempts },
         FACTORY_RESET: { tickets: allTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches },
       }));
     } catch (err) {
@@ -1711,6 +1712,13 @@ if (url.pathname === "/trade") {
         } else if (action === "DELETE_OPEN") {
           const ticketResult = await TradeTicket.deleteMany({ status: { $in: ["OPEN", "CLOSING"] } });
           deleted.tickets = ticketResult.deletedCount;
+        } else if (action === "RESET_TRADES") {
+          const [ticketResult, closeAttemptResult] = await Promise.all([
+            TradeTicket.deleteMany({}),
+            CloseAttempt.deleteMany({}),
+          ]);
+          deleted.tickets = ticketResult.deletedCount;
+          deleted.closeAttempts = closeAttemptResult.deletedCount;
         } else if (action === "FACTORY_RESET") {
           const [ticketResult, closeAttemptResult, autoSaveResult, snapshotResult, scanResult, shownResult, tagResult, leaseResult] = await Promise.all([
             TradeTicket.deleteMany({}),
