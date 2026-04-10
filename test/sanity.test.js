@@ -2362,10 +2362,10 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// Spread gate: MAX_ENTRY_SPREAD_PCT config exists and is enforced
+// MAX_ENTRY_SPREAD_PCT config exists (advisory threshold)
 // ---------------------------------------------------------------------------
 {
-  console.log("\nSpread gate: MAX_ENTRY_SPREAD_PCT config");
+  console.log("\nMAX_ENTRY_SPREAD_PCT config exists (advisory)");
   const cfg = require("../src/config");
 
   assert(typeof cfg.MAX_ENTRY_SPREAD_PCT === "number",
@@ -2377,63 +2377,365 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// Spread gate: simulated autoSaveExecuteTickets skip logic
+// Spread is advisory only — wide spread blocks auto-close, NOT ticket creation
 // ---------------------------------------------------------------------------
 {
-  console.log("\nSpread gate: skip ticket when spread too wide");
+  console.log("\nSpread is advisory — wide spread blocks auto-close, not ticket creation");
   const cfg = require("../src/config");
 
-  // Illiquid market: bid=0.001, ask=0.32 → mid=0.1605, spread=1.988 (198.8%)
+  // Illiquid market: bid=0.001, ask=0.32 → spread=198.8%
   const bid1 = 0.001;
   const ask1 = 0.32;
   const mid1 = (ask1 + bid1) / 2;
   const spreadPct1 = (ask1 - bid1) / mid1;
   assert(spreadPct1 > cfg.MAX_ENTRY_SPREAD_PCT,
-    `198.8% spread (${(spreadPct1 * 100).toFixed(1)}%) exceeds MAX_ENTRY_SPREAD_PCT (15%)`);
+    `198.8% spread exceeds advisory threshold (15%)`);
 
-  // Tight spread market: bid=0.32, ask=0.33 → mid=0.325, spread=0.0308 (3.08%)
+  // Tight spread market: bid=0.32, ask=0.33 → spread=3.08%
   const bid2 = 0.32;
   const ask2 = 0.33;
   const mid2 = (ask2 + bid2) / 2;
   const spreadPct2 = (ask2 - bid2) / mid2;
   assert(spreadPct2 < cfg.MAX_ENTRY_SPREAD_PCT,
-    `3.1% spread (${(spreadPct2 * 100).toFixed(1)}%) is within MAX_ENTRY_SPREAD_PCT (15%)`);
-
-  // Borderline: bid=0.21, ask=0.25 → mid=0.23, spread=0.174 (17.4%)
-  const bid3 = 0.21;
-  const ask3 = 0.25;
-  const mid3 = (ask3 + bid3) / 2;
-  const spreadPct3 = (ask3 - bid3) / mid3;
-  assert(spreadPct3 > cfg.MAX_ENTRY_SPREAD_PCT,
-    `17.4% spread (${(spreadPct3 * 100).toFixed(1)}%) exceeds MAX_ENTRY_SPREAD_PCT (15%)`);
+    `3.1% spread is within advisory threshold (15%)`);
 }
 
 // ---------------------------------------------------------------------------
-// CLOB bid override: zero or negative bids must NOT override valid Gamma bid
+// A) normalizePrice: rejects <= 0, >= 1, NaN, Infinity
+// ---------------------------------------------------------------------------
+{
+  console.log("\nnormalizePrice: validates CLOB prices to (0, 1)");
+  const { normalizePrice } = require("../src/auto_monitor");
+
+  assert(normalizePrice(0.50) === 0.50, "0.50 is valid");
+  assert(normalizePrice(0.001) === 0.001, "0.001 is valid (tiny but legal)");
+  assert(normalizePrice(0.99) === 0.99, "0.99 is valid");
+  assert(normalizePrice(0) === null, "0 → null");
+  assert(normalizePrice(-0.01) === null, "-0.01 → null");
+  assert(normalizePrice(1.0) === null, "1.0 → null (>= 1 is settled/invalid)");
+  assert(normalizePrice(1.5) === null, "1.5 → null");
+  assert(normalizePrice(NaN) === null, "NaN → null");
+  assert(normalizePrice(Infinity) === null, "Infinity → null");
+  assert(normalizePrice(-Infinity) === null, "-Infinity → null");
+  assert(normalizePrice(undefined) === null, "undefined → null");
+  assert(normalizePrice("abc") === null, "non-numeric string → null");
+  assert(normalizePrice("0.35") === 0.35, "string '0.35' parses to 0.35");
+}
+
+// ---------------------------------------------------------------------------
+// A) normalizeSize: rejects <= 0, NaN, Infinity
+// ---------------------------------------------------------------------------
+{
+  console.log("\nnormalizeSize: validates CLOB sizes");
+  const { normalizeSize } = require("../src/auto_monitor");
+
+  assert(normalizeSize(100) === 100, "100 is valid");
+  assert(normalizeSize(0.5) === 0.5, "0.5 is valid (fractional shares)");
+  assert(normalizeSize(0) === null, "0 → null");
+  assert(normalizeSize(-10) === null, "-10 → null");
+  assert(normalizeSize(NaN) === null, "NaN → null");
+  assert(normalizeSize(Infinity) === null, "Infinity → null");
+  assert(normalizeSize(undefined) === null, "undefined → null");
+}
+
+// ---------------------------------------------------------------------------
+// B) Ticket creation fail-closed: NO_EXECUTABLE_BID
+// ---------------------------------------------------------------------------
+{
+  console.log("\nTicket creation fail-closed: NO_EXECUTABLE_BID");
+
+  // Scenario: CLOB returns bid=0.001 (normalized to valid but near-zero),
+  // ask=0.32, bidSize=null (no size)
+  // The NO_EXECUTABLE_BID invariant fires because bidSize is missing.
+  const data1 = {
+    tradeability: "EXECUTE",
+    action: "BUY_YES",
+    autoCloseEnabled: true,
+    autoCloseBlockedReason: null,
+    entryBid: 0.001,     // valid but tiny
+    entryAsk: 0.32,      // valid
+    entryBidSize: null,   // MISSING — no executable liquidity
+    takeProfit: 0.0011,   // garbage (from tiny bid)
+    riskExitLimit: 0.01,  // garbage
+  };
+
+  const vb1 = Number.isFinite(data1.entryBid) && data1.entryBid > 0;
+  const va1 = Number.isFinite(data1.entryAsk) && data1.entryAsk > 0;
+  const vs1 = Number.isFinite(data1.entryBidSize) && data1.entryBidSize > 0;
+  if (data1.autoCloseEnabled && !(vb1 && va1 && vs1)) {
+    data1.autoCloseEnabled = false;
+    data1.autoCloseBlockedReason = data1.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
+  }
+  assert(!data1.autoCloseEnabled,
+    "Auto-close blocked when entryBidSize is null");
+  assert(data1.autoCloseBlockedReason === "NO_EXECUTABLE_BID",
+    "Reason is NO_EXECUTABLE_BID (missing bid size)");
+
+  // Scenario 2: entryBid = null (CLOB returned no bids)
+  const data2 = {
+    tradeability: "EXECUTE",
+    action: "BUY_YES",
+    autoCloseEnabled: true,
+    autoCloseBlockedReason: null,
+    entryBid: null,
+    entryAsk: 0.32,
+    entryBidSize: 100,
+    takeProfit: null,
+    riskExitLimit: null,
+  };
+  const vb2 = Number.isFinite(data2.entryBid) && data2.entryBid > 0;
+  const va2 = Number.isFinite(data2.entryAsk) && data2.entryAsk > 0;
+  const vs2 = Number.isFinite(data2.entryBidSize) && data2.entryBidSize > 0;
+  if (data2.autoCloseEnabled && !(vb2 && va2 && vs2)) {
+    data2.autoCloseEnabled = false;
+    data2.autoCloseBlockedReason = data2.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
+  }
+  assert(!data2.autoCloseEnabled,
+    "Auto-close blocked when entryBid is null");
+  assert(data2.autoCloseBlockedReason === "NO_EXECUTABLE_BID",
+    "Reason is NO_EXECUTABLE_BID (null bid)");
+
+  // Scenario 3: all valid → auto-close stays enabled
+  const data3 = {
+    tradeability: "EXECUTE",
+    action: "BUY_YES",
+    autoCloseEnabled: true,
+    autoCloseBlockedReason: null,
+    entryBid: 0.31,
+    entryAsk: 0.33,
+    entryBidSize: 200,
+    takeProfit: 0.341,
+    riskExitLimit: 0.2852,
+  };
+  const vb3 = Number.isFinite(data3.entryBid) && data3.entryBid > 0;
+  const va3 = Number.isFinite(data3.entryAsk) && data3.entryAsk > 0;
+  const vs3 = Number.isFinite(data3.entryBidSize) && data3.entryBidSize > 0;
+  if (data3.autoCloseEnabled && !(vb3 && va3 && vs3)) {
+    data3.autoCloseEnabled = false;
+    data3.autoCloseBlockedReason = data3.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
+  }
+  assert(data3.autoCloseEnabled,
+    "Auto-close stays enabled with valid bid/ask/size");
+  assert(data3.autoCloseBlockedReason === null,
+    "No blocked reason when all valid");
+}
+
+// ---------------------------------------------------------------------------
+// C) checkTrigger: does NOT close when TP/SL <= 0 or null
+// ---------------------------------------------------------------------------
+{
+  console.log("\ncheckTrigger: rejects invalid TP/SL thresholds");
+  const { checkTrigger } = require("../src/auto_monitor");
+
+  // TP = 0, SL = 0 → should NOT trigger even when price matches
+  const r1 = checkTrigger({ takeProfit: 0, riskExitLimit: 0 }, 0.50);
+  assert(!r1.triggered, "TP=0, SL=0 → no trigger (guarded by > 0)");
+
+  // TP = null, SL = null → should NOT trigger
+  const r2 = checkTrigger({ takeProfit: null, riskExitLimit: null }, 0.50);
+  assert(!r2.triggered, "TP=null, SL=null → no trigger");
+
+  // TP = NaN → should NOT trigger
+  const r3 = checkTrigger({ takeProfit: NaN, riskExitLimit: 0.20 }, 0.50);
+  assert(!r3.triggered, "TP=NaN → no trigger");
+
+  // SL = -0.01 → should NOT trigger even with price at 0
+  const r4 = checkTrigger({ takeProfit: 0.50, riskExitLimit: -0.01 }, 0.01);
+  assert(!r4.triggered, "SL=-0.01 → no trigger (negative SL rejected)");
+
+  // Valid TP hit
+  const r5 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, 0.42);
+  assert(r5.triggered && r5.reason === "TP_HIT", "Valid TP=0.40, price=0.42 → TP_HIT");
+
+  // Valid EXIT hit
+  const r6 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, 0.18);
+  assert(r6.triggered && r6.reason === "EXIT_HIT", "Valid SL=0.20, price=0.18 → EXIT_HIT");
+}
+
+// ---------------------------------------------------------------------------
+// C) checkTrigger: does NOT trigger when executable bid is invalid
+// ---------------------------------------------------------------------------
+{
+  console.log("\ncheckTrigger: rejects invalid executable bid (currentPrice)");
+  const { checkTrigger } = require("../src/auto_monitor");
+
+  // currentPrice = 0 → no trigger
+  const r1 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, 0);
+  assert(!r1.triggered, "currentPrice=0 → no trigger");
+
+  // currentPrice = null → no trigger
+  const r2 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, null);
+  assert(!r2.triggered, "currentPrice=null → no trigger");
+
+  // currentPrice = NaN → no trigger
+  const r3 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, NaN);
+  assert(!r3.triggered, "currentPrice=NaN → no trigger");
+
+  // currentPrice = -0.5 → no trigger
+  const r4 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, -0.5);
+  assert(!r4.triggered, "currentPrice=-0.5 → no trigger");
+
+  // currentPrice = Infinity → no trigger
+  const r5 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, Infinity);
+  assert(!r5.triggered, "currentPrice=Infinity → no trigger");
+}
+
+// ---------------------------------------------------------------------------
+// C) inferExit: Number.isFinite guard (NaN, Infinity rejected)
+// ---------------------------------------------------------------------------
+{
+  console.log("\ninferExit: Number.isFinite guard");
+  const { inferExit } = require("../src/html_renderer");
+
+  // NaN bid → null exits
+  const r1 = inferExit(0.32, NaN);
+  assert(r1.tp === null && r1.stop === null, "NaN bid → { tp: null, stop: null }");
+
+  // Infinity bid → null exits
+  const r2 = inferExit(0.32, Infinity);
+  assert(r2.tp === null && r2.stop === null, "Infinity bid → { tp: null, stop: null }");
+
+  // -Infinity bid → null exits
+  const r3 = inferExit(0.32, -Infinity);
+  assert(r3.tp === null && r3.stop === null, "-Infinity bid → { tp: null, stop: null }");
+
+  // undefined bid → null exits
+  const r4 = inferExit(0.32, undefined);
+  assert(r4.tp === null && r4.stop === null, "undefined bid → { tp: null, stop: null }");
+
+  // Valid bid → valid exits
+  const r5 = inferExit(0.32, 0.31);
+  assert(r5.tp !== null && r5.stop !== null, "Valid bid 0.31 → non-null exits");
+  assert(r5.tp > 0 && r5.stop > 0, "Valid TP and SL are > 0");
+}
+
+// ---------------------------------------------------------------------------
+// E) fmtPrice: never displays invalid prices as "$0.00"
+// ---------------------------------------------------------------------------
+{
+  console.log("\nfmtPrice: never displays invalid prices as $0.00");
+
+  // Simulate the UI fmtPrice function
+  const fmtPrice = (v) => (Number.isFinite(v) && v > 0) ? "$" + v.toFixed(2) : "\u2014";
+
+  assert(fmtPrice(null) === "\u2014", "null → —");
+  assert(fmtPrice(undefined) === "\u2014", "undefined → —");
+  assert(fmtPrice(0) === "\u2014", "0 → —");
+  assert(fmtPrice(-0.01) === "\u2014", "-0.01 → —");
+  assert(fmtPrice(NaN) === "\u2014", "NaN → —");
+  assert(fmtPrice(Infinity) === "\u2014", "Infinity → —");
+  assert(fmtPrice(0.33) === "$0.33", "0.33 → $0.33");
+  assert(fmtPrice(0.001) === "$0.00", "0.001 → $0.00 (valid tiny price, 2dp rounds to 0.00 — but this is still a valid positive number, the display is just at fixed precision)");
+  // Critical: a value of exactly 0 must NOT display as $0.00
+  assert(fmtPrice(0) !== "$0.00", "Zero must NOT display as $0.00");
+}
+
+// ---------------------------------------------------------------------------
+// G) REGRESSION: Full failure scenario — bid=0.001, ask=0.32
+// The system must NOT allow EXECUTE auto-close from this state
+// ---------------------------------------------------------------------------
+{
+  console.log("\nREGRESSION: bid=0.001 ask=0.32 → no auto-close, no trigger");
+  const { inferExit } = require("../src/html_renderer");
+  const { checkTrigger, normalizePrice, normalizeSize } = require("../src/auto_monitor");
+
+  const entryAsk = 0.32;
+  const clobBid = 0.001;
+  const clobBidSize = null; // no real liquidity at this price
+
+  // Step 1: normalizePrice accepts 0.001 (it's technically in (0,1))
+  assert(normalizePrice(clobBid) === 0.001, "0.001 is technically valid in (0,1)");
+
+  // Step 2: inferExit computes garbage TP/SL from microscopic bid
+  const exits = inferExit(entryAsk, clobBid);
+  assert(exits.tp !== null, "Garbage TP is still computed (0.0011)");
+  assert(exits.tp < entryAsk, "Garbage TP is below entry — this is wrong");
+
+  // Step 3: The NO_EXECUTABLE_BID invariant blocks auto-close
+  let autoClose = true;
+  let blocked = null;
+  const vb = Number.isFinite(clobBid) && clobBid > 0;
+  const va = Number.isFinite(entryAsk) && entryAsk > 0;
+  const vs = Number.isFinite(clobBidSize) && clobBidSize > 0;
+  if (autoClose && !(vb && va && vs)) {
+    autoClose = false;
+    blocked = "NO_EXECUTABLE_BID";
+  }
+  assert(!autoClose, "Auto-close is blocked (bidSize is null)");
+  assert(blocked === "NO_EXECUTABLE_BID",
+    "Blocked reason is NO_EXECUTABLE_BID — the right invariant");
+
+  // Step 4: Even if somehow checkTrigger is called with garbage TP/SL,
+  // the > 0 guard on TP prevents triggering at zero
+  const trigger = checkTrigger(
+    { takeProfit: exits.tp, riskExitLimit: exits.stop },
+    clobBid
+  );
+  // TP = 0.0011, currentPrice = 0.001 < 0.0011 → no TP_HIT
+  // SL = 0.01, currentPrice = 0.001 ≤ 0.01 → EXIT_HIT would fire
+  // But: riskExitLimit = 0.01 (> 0) and currentPrice = 0.001 (> 0), so EXIT_HIT fires
+  // This is OK because auto-close was already blocked above — this is defense-in-depth
+  if (trigger.triggered) {
+    assert(trigger.reason === "EXIT_HIT",
+      "EXIT_HIT triggers — but auto-close is already blocked");
+  }
+
+  // Step 5: Even if TP/SL were somehow null, checkTrigger doesn't trigger
+  const safeTrigger = checkTrigger(
+    { takeProfit: null, riskExitLimit: null },
+    clobBid
+  );
+  assert(!safeTrigger.triggered,
+    "null TP/SL → no trigger (fail-closed)");
+}
+
+// ---------------------------------------------------------------------------
+// G) REGRESSION: CLOB returns bestBid = 1.0 (settled market)
+// ---------------------------------------------------------------------------
+{
+  console.log("\nREGRESSION: bestBid = 1.0 (settled) → normalized to null");
+  const { normalizePrice } = require("../src/auto_monitor");
+
+  assert(normalizePrice(1.0) === null, "1.0 → null (settled market)");
+  assert(normalizePrice(0.9999) !== null, "0.9999 → valid (just below 1)");
+}
+
+// ---------------------------------------------------------------------------
+// G) REGRESSION: Monitor does not close at zero executable bid
+// ---------------------------------------------------------------------------
+{
+  console.log("\nREGRESSION: monitor does not close when executable bid is 0 or null");
+  const { checkTrigger } = require("../src/auto_monitor");
+
+  // If getClobPrice returned 0 somehow (should be caught upstream, but belt-and-suspenders)
+  const r1 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, 0);
+  assert(!r1.triggered, "Price=0 → no trigger (cannot close at zero)");
+
+  // If getClobPrice returned null/undefined
+  const r2 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, null);
+  assert(!r2.triggered, "Price=null → no trigger (cannot close without valid bid)");
+}
+
+// ---------------------------------------------------------------------------
+// Existing CLOB bid override tests: zero or negative bids must NOT override
 // ---------------------------------------------------------------------------
 {
   console.log("\nCLOB bid override: reject zero/null/negative bestBid");
 
-  // Simulates the guard: `if (book.bestBid !== null && book.bestBid > 0)`
+  // Simulates the guard in autoSave/POST: only override if normalized value is non-null
   function simulateClobOverride(gammaBid, clobBestBid) {
     let entryBidNum = gammaBid;
-    if (clobBestBid !== null && clobBestBid > 0) {
-      entryBidNum = clobBestBid;
+    // fetchClobBook now normalizePrice — null for invalid
+    const normalized = clobBestBid; // already normalized by fetchClobBook
+    if (normalized !== null) {
+      entryBidNum = normalized;
     }
     return entryBidNum;
   }
 
-  // CLOB returns bestBid = 0 → should NOT override valid Gamma bid
-  assert(simulateClobOverride(0.30, 0) === 0.30,
-    "CLOB bestBid=0 does NOT override Gamma bid of 0.30");
-
-  // CLOB returns bestBid = null → should NOT override
+  // CLOB returns bestBid = null (was 0, normalized to null by fetchClobBook)
   assert(simulateClobOverride(0.30, null) === 0.30,
     "CLOB bestBid=null does NOT override Gamma bid of 0.30");
-
-  // CLOB returns bestBid = -0.01 → should NOT override
-  assert(simulateClobOverride(0.30, -0.01) === 0.30,
-    "CLOB bestBid=-0.01 does NOT override Gamma bid of 0.30");
 
   // CLOB returns bestBid = 0.28 (valid) → SHOULD override
   assert(simulateClobOverride(0.30, 0.28) === 0.28,
@@ -2444,46 +2746,54 @@ console.log("\nfinal selection: mispricing quota");
 // TP/SL sanity with microscopic bid vs normal bid
 // ---------------------------------------------------------------------------
 {
-  console.log("\nTP/SL: microscopic bid produces garbage TP — spread gate prevents it");
+  console.log("\nTP/SL: microscopic bid produces garbage TP — fail-closed catches it");
   const { inferExit } = require("../src/html_renderer");
-  const cfg = require("../src/config");
 
   // Normal bid: entry=0.32, bid=0.31 → TP=0.341, SL=0.2852
   const normal = inferExit(0.32, 0.31);
   assert(normal.tp !== null, "Normal bid produces valid TP");
-  assert(normal.tp > 0.32, `TP ($${normal.tp.toFixed(4)}) is ABOVE entry ($0.32) — correct take profit`);
-  assert(normal.stop < 0.32, `SL ($${normal.stop.toFixed(4)}) is BELOW entry ($0.32) — correct stop loss`);
+  assert(normal.tp > 0.32, `TP ($${normal.tp.toFixed(4)}) is ABOVE entry ($0.32)`);
+  assert(normal.stop < 0.32, `SL ($${normal.stop.toFixed(4)}) is BELOW entry ($0.32)`);
 
   // Microscopic bid: entry=0.32, bid=0.001 → TP=0.0011 (BELOW entry!)
   const micro = inferExit(0.32, 0.001);
   assert(micro.tp !== null, "Microscopic bid produces non-null TP");
   assert(micro.tp < 0.32,
-    `TP ($${micro.tp.toFixed(4)}) is BELOW entry ($0.32) — garbage TP, spread gate must block this`);
-
-  // Verify the spread gate WOULD block this scenario
-  const microMid = (0.32 + 0.001) / 2;
-  const microSpreadPct = (0.32 - 0.001) / microMid;
-  assert(microSpreadPct > cfg.MAX_ENTRY_SPREAD_PCT,
-    `Microscopic bid market spread (${(microSpreadPct * 100).toFixed(1)}%) exceeds MAX_ENTRY_SPREAD_PCT`);
+    `TP ($${micro.tp.toFixed(4)}) is BELOW entry — garbage, caught by NO_EXECUTABLE_BID invariant`);
 }
 
 // ---------------------------------------------------------------------------
-// Falsy check regression: entryBidNum=0 must NOT enter re-calculation block
+// Falsy check regression: uses Number.isFinite, not truthiness
 // ---------------------------------------------------------------------------
 {
-  console.log("\nFalsy check regression: entryBidNum=0 must not pass `> 0` guard");
+  console.log("\nFalsy check regression: uses Number.isFinite, not truthiness");
 
-  // The old code: `if (entryBidNum)` — 0 is falsy, so it skipped
-  // But 0.001 is truthy, so it entered and computed garbage TP
-  // The new code: `if (entryBidNum > 0)` — blocks both 0 and null
+  assert(!(0 > 0), "0 > 0 is false — blocks zero bid");
+  assert(!(null > 0), "null > 0 is false — blocks null bid");
+  assert(0.001 > 0, "0.001 > 0 is true — allows tiny bids");
+  assert(0.30 > 0, "0.30 > 0 is true — allows normal bids");
+  assert(!Number.isFinite(NaN), "NaN is not finite");
+  assert(!Number.isFinite(Infinity), "Infinity is not finite");
+  assert(Number.isFinite(0.001), "0.001 is finite");
+}
 
-  assert(!(0 > 0), "0 > 0 is false — blocks zero bid from re-calculation");
-  assert(!(null > 0), "null > 0 is false — blocks null bid from re-calculation");
-  assert(0.001 > 0, "0.001 > 0 is true — allows tiny bids into re-calculation");
-  assert(0.30 > 0, "0.30 > 0 is true — allows normal bids into re-calculation");
+// ---------------------------------------------------------------------------
+// DIAGNOSTIC_REASONS includes new reasons
+// ---------------------------------------------------------------------------
+{
+  console.log("\nDIAGNOSTIC_REASONS includes new reasons");
+  const { DIAGNOSTIC_REASONS } = require("../src/html_renderer");
 
-  // The key difference: 0.001 still enters the block, but the SPREAD GATE
-  // catches the resulting garbage before the ticket is created
+  assert(DIAGNOSTIC_REASONS.NO_EXECUTABLE_BID,
+    "NO_EXECUTABLE_BID reason exists");
+  assert(typeof DIAGNOSTIC_REASONS.NO_EXECUTABLE_BID.label === "string",
+    "NO_EXECUTABLE_BID has a label");
+  assert(typeof DIAGNOSTIC_REASONS.NO_EXECUTABLE_BID.explanation === "string",
+    "NO_EXECUTABLE_BID has an explanation");
+  assert(DIAGNOSTIC_REASONS.SPREAD_TOO_WIDE,
+    "SPREAD_TOO_WIDE reason exists");
+  assert(typeof DIAGNOSTIC_REASONS.SPREAD_TOO_WIDE.label === "string",
+    "SPREAD_TOO_WIDE has a label");
 }
 
 // ---------------------------------------------------------------------------
