@@ -945,7 +945,7 @@ async function monitorTick() {
           // Block auto-close: no orderbook for this token
           await TradeTicket.updateOne(
             { _id: ticket._id },
-            { $set: { autoCloseBlockedReason: "NO_ORDERBOOK" } }
+            { $set: { autoCloseEnabled: false, autoCloseBlockedReason: "NO_ORDERBOOK" } }
           ).catch(() => {});
         }
         if (!monitorState.lastTickNullPriceSample && clobDiag) {

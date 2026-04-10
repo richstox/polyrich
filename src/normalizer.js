@@ -116,7 +116,10 @@ function normalizeMarket(item) {
   // array: '["<yesTokenId>","<noTokenId>"]'. Index 0 = YES, index 1 = NO.
   let clobTokenIds = item.clobTokenIds;
   if (typeof clobTokenIds === "string") {
-    try { clobTokenIds = JSON.parse(clobTokenIds); } catch (_) { clobTokenIds = []; }
+    try { clobTokenIds = JSON.parse(clobTokenIds); } catch (_) {
+      console.warn(JSON.stringify({ stage: "normalizeMarket", msg: "invalid clobTokenIds JSON", raw: clobTokenIds.slice(0, 80), ts: new Date().toISOString() }));
+      clobTokenIds = [];
+    }
   }
   if (!Array.isArray(clobTokenIds)) clobTokenIds = [];
   const yesTokenId = (clobTokenIds[0] && typeof clobTokenIds[0] === "string") ? clobTokenIds[0] : null;
