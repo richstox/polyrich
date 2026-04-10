@@ -1917,6 +1917,67 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// /tickets monitorReason translation map (SETTLED/ENDED → MARKET_*)
+// ---------------------------------------------------------------------------
+{
+  console.log("\n/tickets monitorReason reason-code translation");
+
+  // Mirror of the REASON_MAP used in server.js /tickets route
+  const REASON_MAP = { SETTLED: "MARKET_SETTLED", ENDED: "MARKET_ENDED" };
+
+  function resolveMonitorReason(monitorReason) {
+    const mapped = REASON_MAP[monitorReason] || monitorReason;
+    if (REASON_MAP[monitorReason]) {
+      return { $or: [{ lastMonitorBlockedReason: mapped }, { closeReason: mapped }] };
+    }
+    return { lastMonitorBlockedReason: mapped };
+  }
+
+  // SETTLED → MARKET_SETTLED with $or (includes closeReason)
+  const settled = resolveMonitorReason("SETTLED");
+  assert(settled.$or, "SETTLED produces $or query");
+  assert(settled.$or[0].lastMonitorBlockedReason === "MARKET_SETTLED",
+    "SETTLED maps lastMonitorBlockedReason to MARKET_SETTLED");
+  assert(settled.$or[1].closeReason === "MARKET_SETTLED",
+    "SETTLED maps closeReason to MARKET_SETTLED");
+  passed++;
+
+  // ENDED → MARKET_ENDED with $or (includes closeReason)
+  const ended = resolveMonitorReason("ENDED");
+  assert(ended.$or, "ENDED produces $or query");
+  assert(ended.$or[0].lastMonitorBlockedReason === "MARKET_ENDED",
+    "ENDED maps lastMonitorBlockedReason to MARKET_ENDED");
+  assert(ended.$or[1].closeReason === "MARKET_ENDED",
+    "ENDED maps closeReason to MARKET_ENDED");
+  passed++;
+
+  // Passthrough: NO_BIDS → NO_BIDS (no translation)
+  const noBids = resolveMonitorReason("NO_BIDS");
+  assert(!noBids.$or, "NO_BIDS does not produce $or");
+  assert(noBids.lastMonitorBlockedReason === "NO_BIDS",
+    "NO_BIDS passes through unchanged");
+  passed++;
+
+  // Passthrough: INVALID_TOP_BID
+  const invalid = resolveMonitorReason("INVALID_TOP_BID");
+  assert(invalid.lastMonitorBlockedReason === "INVALID_TOP_BID",
+    "INVALID_TOP_BID passes through unchanged");
+  passed++;
+
+  // Passthrough: IDENTITY_SKIP
+  const skip = resolveMonitorReason("IDENTITY_SKIP");
+  assert(skip.lastMonitorBlockedReason === "IDENTITY_SKIP",
+    "IDENTITY_SKIP passes through unchanged");
+  passed++;
+
+  // Passthrough: arbitrary unknown reason
+  const unknown = resolveMonitorReason("SOME_FUTURE_REASON");
+  assert(unknown.lastMonitorBlockedReason === "SOME_FUTURE_REASON",
+    "Unknown reasons pass through unchanged");
+  passed++;
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);

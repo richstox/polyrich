@@ -1510,7 +1510,21 @@ if (url.pathname === "/trade") {
       const blockedReason = url.searchParams.get("blockedReason");
       const monitorReason = url.searchParams.get("monitorReason");
       if (blockedReason) query.autoCloseBlockedReason = blockedReason;
-      if (monitorReason) query.lastMonitorBlockedReason = monitorReason;
+      if (monitorReason) {
+        // Translate user-facing reason codes to internal stored values
+        // (SETTLED → MARKET_SETTLED, ENDED → MARKET_ENDED; all others pass through)
+        const REASON_MAP = { SETTLED: "MARKET_SETTLED", ENDED: "MARKET_ENDED" };
+        const mapped = REASON_MAP[monitorReason] || monitorReason;
+        if (REASON_MAP[monitorReason]) {
+          // For settled/ended, also include closeReason so CLOSED tickets are visible
+          query.$or = [
+            { lastMonitorBlockedReason: mapped },
+            { closeReason: mapped },
+          ];
+        } else {
+          query.lastMonitorBlockedReason = mapped;
+        }
+      }
       const tickets = await TradeTicket.find(query).sort({ createdAt: -1 }).limit(500).lean();
       const highlightId = url.searchParams.get("highlight") || null;
       const body = renderTicketsPage(tickets, highlightId, { blockedReason, monitorReason });
