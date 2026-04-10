@@ -1430,7 +1430,7 @@ function inferSize(item) {
  */
 function inferExit(entryNum, bidBasis) {
   const basis = (typeof bidBasis === "number" && bidBasis > 0) ? bidBasis : null;
-  if (basis === null || basis <= 0 || basis >= PRICE_CEILING) return { tp: null, stop: null };
+  if (basis === null || basis >= PRICE_CEILING) return { tp: null, stop: null };
   const tp = Math.min(basis * TP_MULTIPLIER, PRICE_CEILING);
   const stop = Math.max(basis * STOP_MULTIPLIER, PRICE_FLOOR);
   return { tp, stop };
