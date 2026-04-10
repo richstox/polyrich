@@ -1733,7 +1733,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
       <a href="/scan?returnTo=/trade" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
     ${autoSaveStatusLine}
-    <div id="limit-order-warning" style="display:none;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#991b1b;">
+    <div id="limit-order-warning" style="display:none;background:rgba(127,29,29,.3);border:1px solid #7f1d1d;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#fecaca;">
       ⚠️ Max trade cap must be at least $5 for limit orders.
       <button id="set-cap-5-btn" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #991b1b;background:#1e293b;color:#fecaca;font-weight:600;font-size:0.82rem;cursor:pointer;">Set cap to $5</button>
     </div>
@@ -1922,16 +1922,16 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
         if (!badge) return;
         if (riskDec <= 0.01) {
           badge.textContent = 'Conservative (default)';
-          badge.style.background = '#dcfce7'; badge.style.color = '#166534';
+          badge.style.background = 'rgba(34,197,94,.15)'; badge.style.color = '#22c55e';
         } else if (riskDec <= 0.015) {
           badge.textContent = 'Slightly aggressive (above default)';
-          badge.style.background = '#fef9c3'; badge.style.color = '#854d0e';
+          badge.style.background = 'rgba(234,179,8,.15)'; badge.style.color = '#eab308';
         } else if (riskDec <= 0.05) {
           badge.textContent = 'Aggressive';
-          badge.style.background = '#fde68a'; badge.style.color = '#92400e';
+          badge.style.background = 'rgba(234,179,8,.25)'; badge.style.color = '#eab308';
         } else {
           badge.textContent = 'Very aggressive \\u2014 high risk';
-          badge.style.background = '#fee2e2'; badge.style.color = '#991b1b';
+          badge.style.background = 'rgba(239,68,68,.15)'; badge.style.color = '#ef4444';
         }
       }
 
