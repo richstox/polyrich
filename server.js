@@ -8,7 +8,9 @@ const { fetchPolymarkets, fetchTags, fetchSports } = require("./src/fetcher");
 const { normalizeMarket, formatHoursLeft, formatVolume, asNumber } = require("./src/normalizer");
 const {
   MarketSnapshot,
+  ShownCandidate,
   Scan,
+  TagCache,
   upsertSnapshots,
   insertScanRecord,
   updateScanRecord,
@@ -50,7 +52,8 @@ const {
 } = require("./src/html_renderer");
 const { startMonitorLoop, getMonitorStatus } = require("./src/auto_monitor");
 
-const DANGER_ZONE_VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN"];
+const MonitorLease = require("./models/MonitorLease");
+const DANGER_ZONE_VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN", "FACTORY_RESET"];
 
 // ---------------------------------------------------------------------------
 // Node version check — warn-only, never crash
@@ -1633,12 +1636,16 @@ if (url.pathname === "/trade") {
   // ── GET /api/system/danger-zone/counts ──────────────────────────────
   if (url.pathname === "/api/system/danger-zone/counts" && req.method === "GET") {
     try {
-      const [allTickets, closedTickets, openClosingTickets, closeAttempts, autoSaveLogs] = await Promise.all([
+      const [allTickets, closedTickets, openClosingTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches] = await Promise.all([
         TradeTicket.countDocuments({}),
         TradeTicket.countDocuments({ status: "CLOSED" }),
         TradeTicket.countDocuments({ status: { $in: ["OPEN", "CLOSING"] } }),
         CloseAttempt.countDocuments({}),
         AutoSaveLog.countDocuments({}),
+        MarketSnapshot.estimatedDocumentCount(),
+        Scan.estimatedDocumentCount(),
+        ShownCandidate.estimatedDocumentCount(),
+        TagCache.estimatedDocumentCount(),
       ]);
       const closedTicketIds = await TradeTicket.find({ status: "CLOSED" }).select("_id").lean();
       const closedCloseAttempts = closedTicketIds.length > 0
@@ -1649,6 +1656,7 @@ if (url.pathname === "/trade") {
         RESET_ALL: { tickets: allTickets, closeAttempts, autoSaveLogs },
         DELETE_CLOSED: { tickets: closedTickets, closeAttempts: closedCloseAttempts },
         DELETE_OPEN: { tickets: openClosingTickets },
+        FACTORY_RESET: { tickets: allTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches },
       }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
@@ -1703,6 +1711,27 @@ if (url.pathname === "/trade") {
         } else if (action === "DELETE_OPEN") {
           const ticketResult = await TradeTicket.deleteMany({ status: { $in: ["OPEN", "CLOSING"] } });
           deleted.tickets = ticketResult.deletedCount;
+        } else if (action === "FACTORY_RESET") {
+          const [ticketResult, closeAttemptResult, autoSaveResult, snapshotResult, scanResult, shownResult, tagResult, leaseResult] = await Promise.all([
+            TradeTicket.deleteMany({}),
+            CloseAttempt.deleteMany({}),
+            AutoSaveLog.deleteMany({}),
+            MarketSnapshot.deleteMany({}),
+            Scan.deleteMany({}),
+            ShownCandidate.deleteMany({}),
+            TagCache.deleteMany({}),
+            MonitorLease.deleteMany({}),
+          ]);
+          // Reset the lastAutoSaveScanId so next scan can auto-save
+          await SystemSetting.updateOne({ _id: "system" }, { $set: { lastAutoSaveScanId: null } });
+          deleted.tickets = ticketResult.deletedCount;
+          deleted.closeAttempts = closeAttemptResult.deletedCount;
+          deleted.autoSaveLogs = autoSaveResult.deletedCount;
+          deleted.snapshots = snapshotResult.deletedCount;
+          deleted.scans = scanResult.deletedCount;
+          deleted.shownCandidates = shownResult.deletedCount;
+          deleted.tagCaches = tagResult.deletedCount;
+          deleted.monitorLeases = leaseResult.deletedCount;
         }
 
         res.writeHead(200, { "Content-Type": "application/json" });
