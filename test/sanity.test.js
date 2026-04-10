@@ -2175,10 +2175,10 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// DIAGNOSTIC_REASONS: new admission-gate reasons
+// DIAGNOSTIC_REASONS: admission-gate reasons (liquidity + fail-closed)
 // ---------------------------------------------------------------------------
 {
-  console.log("\nDIAGNOSTIC_REASONS: admission gate reasons");
+  console.log("\nDIAGNOSTIC_REASONS: admission gate reasons (liquidity + fail-closed)");
   const { DIAGNOSTIC_REASONS } = require("../src/html_renderer");
 
   const newReasons = ["INSUFFICIENT_BID_SIZE", "MISSING_ENTRY_EXEC_PRICES"];
