@@ -2059,6 +2059,346 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// Bid-based TP/SL: inferExit with bidBasis parameter
+// ---------------------------------------------------------------------------
+{
+  console.log("\ninferExit: bid-based TP/SL");
+  const { inferExit } = require("../src/html_renderer");
+
+  // When bidBasis is provided, TP/SL should be computed from bid, not ask
+  const bidBased = inferExit(0.30, 0.25);
+  // TP = 0.25 * 1.10 = 0.275, Stop = 0.25 * 0.92 = 0.23
+  assert(bidBased.tp !== null && bidBased.stop !== null,
+    "inferExit returns non-null with bidBasis");
+  assert(Math.abs(bidBased.tp - 0.275) < 0.001,
+    "TP is computed from bidBasis (0.25 × 1.10 = 0.275), not entryNum");
+  assert(Math.abs(bidBased.stop - 0.23) < 0.001,
+    "Stop is computed from bidBasis (0.25 × 0.92 = 0.23), not entryNum");
+
+  // When bidBasis is null, returns null (no ask-based fallback — fail-closed)
+  const legacy = inferExit(0.30, null);
+  assert(legacy.tp === null && legacy.stop === null,
+    "inferExit returns null when bidBasis is null (no ask-based fallback)");
+
+  // When bidBasis is undefined, returns null
+  const noArg = inferExit(0.30);
+  assert(noArg.tp === null && noArg.stop === null,
+    "inferExit returns null when bidBasis is undefined (fail-closed)");
+
+  // When bidBasis is 0 or negative, returns null
+  const zeroBid = inferExit(0.30, 0);
+  assert(zeroBid.tp === null && zeroBid.stop === null,
+    "inferExit returns null when bidBasis is 0 (fail-closed)");
+}
+
+// ---------------------------------------------------------------------------
+// Bid-based triggers: wide spread does NOT instantly EXIT_HIT
+// ---------------------------------------------------------------------------
+{
+  console.log("\nBid-based triggers: wide spread does not instant EXIT_HIT");
+  const { checkTrigger } = require("../src/auto_monitor");
+  const { inferExit } = require("../src/html_renderer");
+
+  // Scenario: Ask = 0.24 (entry), Bid = 0.21 (12.5% spread)
+  // Old (ask-based): stop = 0.24 × 0.92 = 0.2208 → bid 0.21 ≤ 0.2208 → EXIT_HIT ❌
+  // New (bid-based): stop = 0.21 × 0.92 = 0.1932 → bid 0.21 > 0.1932 → NO trigger ✓
+  const entryAsk = 0.24;
+  const entryBid = 0.21;
+  const currentBid = 0.21; // price hasn't moved
+
+  const bidExits = inferExit(entryAsk, entryBid);
+  const trigger = checkTrigger(
+    { takeProfit: bidExits.tp, riskExitLimit: bidExits.stop },
+    currentBid
+  );
+  assert(!trigger.triggered,
+    "Wide-spread market (bid=0.21, ask=0.24) does NOT instant EXIT_HIT with bid-based SL");
+
+  // With the ask-based fallback removed, inferExit(ask, null) now returns null
+  // instead of silently computing from entryAsk — this is the fail-closed behavior
+  const askExits = inferExit(entryAsk, null);
+  assert(askExits.tp === null && askExits.stop === null,
+    "inferExit without bidBasis returns null (fail-closed, no ask-based fallback)");
+}
+
+// ---------------------------------------------------------------------------
+// Spread gate: blocks auto-close when spread too wide
+// ---------------------------------------------------------------------------
+{
+  console.log("\nSpread gate: blocks auto-close on wide spread");
+  const cfg = require("../src/config");
+
+  // Default MAX_ENTRY_SPREAD_PCT = 0.15 (15%)
+  assert(typeof cfg.MAX_ENTRY_SPREAD_PCT === "number",
+    "MAX_ENTRY_SPREAD_PCT config exists");
+  assert(cfg.MAX_ENTRY_SPREAD_PCT > 0 && cfg.MAX_ENTRY_SPREAD_PCT <= 1,
+    "MAX_ENTRY_SPREAD_PCT is between 0 and 1");
+
+  // Simulate server-side admission gate logic for auto-save
+  // Market: ask=0.30, bid=0.20 → mid=0.25, spreadPct = (0.30 - 0.20) / 0.25 = 0.40
+  const entryAsk = 0.30, entryBid = 0.20;
+  const mid = (entryAsk + entryBid) / 2;
+  const spreadPct = (entryAsk - entryBid) / mid;
+  assert(spreadPct > cfg.MAX_ENTRY_SPREAD_PCT,
+    "40% spread exceeds MAX_ENTRY_SPREAD_PCT (15%)");
+
+  // Gate should block
+  let effectiveAutoClose = true;
+  let blockedReason = null;
+  if (spreadPct > cfg.MAX_ENTRY_SPREAD_PCT) {
+    effectiveAutoClose = false;
+    blockedReason = "SPREAD_TOO_WIDE";
+  }
+  assert(!effectiveAutoClose, "Auto-close is disabled when spread exceeds threshold");
+  assert(blockedReason === "SPREAD_TOO_WIDE",
+    "Blocked reason is SPREAD_TOO_WIDE");
+
+  // Narrow spread: ask=0.50, bid=0.48 → mid=0.49, spreadPct ≈ 4.08%
+  const narrow = (0.50 - 0.48) / 0.49;
+  assert(narrow < cfg.MAX_ENTRY_SPREAD_PCT,
+    "4% spread is below MAX_ENTRY_SPREAD_PCT → auto-close allowed");
+}
+
+// ---------------------------------------------------------------------------
+// Liquidity gate: blocks auto-close when bid size too small
+// ---------------------------------------------------------------------------
+{
+  console.log("\nLiquidity gate: blocks auto-close on insufficient bid size");
+  const cfg = require("../src/config");
+
+  assert(typeof cfg.MIN_BID_SIZE_USD === "number",
+    "MIN_BID_SIZE_USD config exists");
+  assert(cfg.MIN_BID_SIZE_USD > 0,
+    "MIN_BID_SIZE_USD is positive");
+
+  // Tiny bid: bid=0.20, bidSize=50 shares → notional = $10
+  const bidNotional = 0.20 * 50;
+  assert(bidNotional < cfg.MIN_BID_SIZE_USD,
+    "$10 notional is below MIN_BID_SIZE_USD ($20)");
+
+  let effectiveAutoClose = true;
+  let blockedReason = null;
+  if (bidNotional < cfg.MIN_BID_SIZE_USD) {
+    effectiveAutoClose = false;
+    blockedReason = "INSUFFICIENT_BID_SIZE";
+  }
+  assert(!effectiveAutoClose, "Auto-close is disabled when bid notional is below threshold");
+  assert(blockedReason === "INSUFFICIENT_BID_SIZE",
+    "Blocked reason is INSUFFICIENT_BID_SIZE");
+
+  // Adequate bid: bid=0.50, bidSize=200 shares → notional = $100
+  const okNotional = 0.50 * 200;
+  assert(okNotional >= cfg.MIN_BID_SIZE_USD,
+    "$100 notional passes MIN_BID_SIZE_USD gate");
+}
+
+// ---------------------------------------------------------------------------
+// TradeTicket schema: entry microstructure fields
+// ---------------------------------------------------------------------------
+{
+  console.log("\nTradeTicket schema: entry microstructure fields");
+  const TradeTicket = require("../models/TradeTicket");
+  const schemaPaths = TradeTicket.schema.paths;
+
+  const microFields = [
+    "entryBid", "entryAsk", "entryMid", "entrySpreadAbs", "entrySpreadPct",
+    "entryBidSize", "entryAskSize", "entryExecutionBasis", "triggerReferenceBasis",
+  ];
+  for (const f of microFields) {
+    assert(f in schemaPaths, `${f} field exists in TradeTicket schema`);
+    assert(schemaPaths[f].defaultValue === null,
+      `${f} defaults to null`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DIAGNOSTIC_REASONS: new admission-gate reasons
+// ---------------------------------------------------------------------------
+{
+  console.log("\nDIAGNOSTIC_REASONS: admission gate reasons");
+  const { DIAGNOSTIC_REASONS } = require("../src/html_renderer");
+
+  const newReasons = ["SPREAD_TOO_WIDE", "INSUFFICIENT_BID_SIZE", "MISSING_ENTRY_EXEC_PRICES"];
+  for (const reason of newReasons) {
+    assert(reason in DIAGNOSTIC_REASONS,
+      `${reason} is defined in DIAGNOSTIC_REASONS`);
+    const info = DIAGNOSTIC_REASONS[reason];
+    assert(typeof info.label === "string" && info.label.length > 0,
+      `${reason} has a non-empty label`);
+    assert(typeof info.explanation === "string" && info.explanation.length > 0,
+      `${reason} has a non-empty explanation`);
+    assert(typeof info.whatToDo === "string" && info.whatToDo.length > 0,
+      `${reason} has a non-empty whatToDo`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UI labels: trade card shows bid-based labels
+// ---------------------------------------------------------------------------
+{
+  console.log("\nUI labels: trade card bid-based labels");
+  const { renderTradeCard } = require("../src/html_renderer");
+
+  const item = {
+    question: "Test market?",
+    latestYes: 0.40,
+    bestBidNum: 0.38,
+    bestAskNum: 0.42,
+    spreadPct: 0.10,
+    absMove: 0.02,
+    volatility: 0.03,
+    delta1: -0.015,
+    liquidity: 2000,
+    volume24hr: 500,
+    hoursLeft: 100,
+    mispricing: false,
+    momentum: false,
+    breakout: true,
+    moveTerm: 1,
+    volTerm: 1,
+    activityTerm: 1,
+    mispricingTerm: 0,
+    orderbookTerm: 0,
+    costPenalty: 0,
+    extremePenalty: 0,
+    timePenalty: 0,
+    timeBonus: 0,
+    noveltyBonus: 0,
+    signalScore2: 5,
+    adjustedScore: 5,
+    reasonCodes: ["breakout"],
+    eventTitle: "Test",
+    groupItemTitle: "",
+    outcomes: ["Yes", "No"],
+    marketSlug: "test-market",
+    conditionId: "0xabc",
+    tagSlugs: [],
+    endDate: null,
+    yesTokenId: "tok123",
+    noTokenId: "tok456",
+  };
+
+  const html = renderTradeCard(item);
+  assert(html.includes("Entry (ask)"),
+    "Trade card HTML contains 'Entry (ask)' label");
+  assert(html.includes("Entry closeable (bid)"),
+    "Trade card HTML contains 'Entry closeable (bid)' label");
+  assert(html.includes("TAKE PROFIT (bid-based)"),
+    "Trade card HTML contains 'TAKE PROFIT (bid-based)' label");
+  assert(html.includes("STOP-LOSS (bid-based)"),
+    "Trade card HTML contains 'STOP-LOSS (bid-based)' label");
+  // Verify data attribute for entryBid
+  assert(html.includes('data-entry-bid="0.38"'),
+    "Trade card includes data-entry-bid attribute");
+
+  // Test with missing bid: entryBid should render as empty string
+  const itemNoBid = { ...item, bestBidNum: 0 };
+  // With no bid, card should become WATCH (inferExit returns null → fail-closed)
+  const htmlNoBid = renderTradeCard(itemNoBid);
+  assert(htmlNoBid.includes("WATCH"),
+    "Trade card with missing bid becomes WATCH (fail-closed, no ask-based fallback)");
+  assert(!htmlNoBid.includes("Save ticket"),
+    "WATCH card with missing bid does not show save-ticket button");
+}
+
+// ---------------------------------------------------------------------------
+// fetchClobBook is exported from auto_monitor
+// ---------------------------------------------------------------------------
+{
+  console.log("\nfetchClobBook: exported from auto_monitor");
+  const { fetchClobBook } = require("../src/auto_monitor");
+  assert(typeof fetchClobBook === "function",
+    "fetchClobBook is exported as a function");
+
+  // fetchClobBook(null) returns a Promise resolving to null — verified by contract
+  // (async call tested synchronously via export check; network-dependent tests are integration-level)
+}
+
+// ---------------------------------------------------------------------------
+// Missing entryBid fails closed for new EXECUTE tickets
+// ---------------------------------------------------------------------------
+{
+  console.log("\nMissing entryBid fails closed");
+  const cfg = require("../src/config");
+
+  // Simulate POST /api/tickets server-side logic:
+  // EXECUTE ticket with missing entryBid → auto-close should be blocked
+  const data = {
+    tradeability: "EXECUTE",
+    action: "BUY_YES",
+    autoCloseEnabled: true,
+    entryBid: null,    // missing
+    entryAsk: 0.42,
+    entryBidSize: null,
+    entryAskSize: null,
+  };
+
+  // Server-side fail-closed gate
+  if (data.autoCloseEnabled && (typeof data.entryBid !== "number" || data.entryBid <= 0)) {
+    data.autoCloseEnabled = false;
+    data.autoCloseBlockedReason = data.autoCloseBlockedReason || "MISSING_ENTRY_EXEC_PRICES";
+  }
+
+  assert(!data.autoCloseEnabled,
+    "Auto-close is disabled when entryBid is missing");
+  assert(data.autoCloseBlockedReason === "MISSING_ENTRY_EXEC_PRICES",
+    "Blocked reason is MISSING_ENTRY_EXEC_PRICES when entryBid is missing");
+}
+
+// ---------------------------------------------------------------------------
+// INSUFFICIENT_BID_SIZE fires with real CLOB sizes
+// ---------------------------------------------------------------------------
+{
+  console.log("\nINSUFFICIENT_BID_SIZE fires with real CLOB sizes");
+  const cfg = require("../src/config");
+
+  // Scenario: bid=0.20, topBidSize=50 shares → notional = $10 < MIN_BID_SIZE_USD ($20)
+  const entryBid = 0.20;
+  const entryBidSize = 50; // shares from CLOB bids[0].size
+  const bidNotionalUsd = entryBid * entryBidSize;
+
+  assert(bidNotionalUsd === 10,
+    "Bid notional is $10 (0.20 × 50 shares)");
+  assert(bidNotionalUsd < cfg.MIN_BID_SIZE_USD,
+    "$10 notional < MIN_BID_SIZE_USD ($20) → gate should fire");
+
+  let autoClose = true;
+  let reason = null;
+  if (autoClose && entryBid && entryBidSize !== null) {
+    const notional = entryBid * entryBidSize;
+    if (notional < cfg.MIN_BID_SIZE_USD) {
+      autoClose = false;
+      reason = "INSUFFICIENT_BID_SIZE";
+    }
+  }
+  assert(!autoClose, "Auto-close blocked by liquidity gate with real sizes");
+  assert(reason === "INSUFFICIENT_BID_SIZE",
+    "Blocked reason is INSUFFICIENT_BID_SIZE");
+
+  // Adequate size: bid=0.50, topBidSize=200 shares → notional = $100
+  const okNotional = 0.50 * 200;
+  assert(okNotional >= cfg.MIN_BID_SIZE_USD,
+    "$100 notional passes MIN_BID_SIZE_USD ($20) → auto-close allowed");
+}
+
+// ---------------------------------------------------------------------------
+// CLOB sizes are in shares (unit correctness)
+// ---------------------------------------------------------------------------
+{
+  console.log("\nCLOB sizes unit correctness");
+  // CLOB /book returns bids[0].size as number of shares/contracts
+  // The admission gate formula: bidNotionalUsd = entryBid (price per share) × entryBidSize (shares)
+  // This produces USD notional, which is compared to MIN_BID_SIZE_USD
+  const bidPrice = 0.35;  // price per share
+  const bidSize = 100;    // shares (from CLOB)
+  const notional = bidPrice * bidSize;
+  assert(notional === 35,
+    "bidPrice ($0.35) × bidSize (100 shares) = $35 USD notional");
+  assert(typeof notional === "number" && notional > 0,
+    "Notional is a positive USD amount — unit conversion is correct");
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);

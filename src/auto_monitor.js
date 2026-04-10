@@ -359,6 +359,43 @@ async function getClobPrice(ticket) {
 getClobPrice._lastDiag = null;
 
 /**
+ * Fetch CLOB top-of-book data for a token at ticket creation time.
+ *
+ * Lightweight variant of getClobPrice used by ticket-creation paths to populate
+ * entry microstructure snapshot (bid/ask sizes) and verify bid price.
+ *
+ * Returns { bestBid, bestAsk, topBidSize, topAskSize } or null on failure.
+ * Sizes are in shares/contracts as returned by the CLOB API.
+ */
+async function fetchClobBook(tokenId) {
+  if (!tokenId) return null;
+  const url = `https://clob.polymarket.com/book?token_id=${encodeURIComponent(tokenId)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const bids = Array.isArray(data.bids) ? data.bids : [];
+    const asks = Array.isArray(data.asks) ? data.asks : [];
+    const bestBid = bids.length > 0 ? parseFloat(bids[0].price) : NaN;
+    const bestAsk = asks.length > 0 ? parseFloat(asks[0].price) : NaN;
+    const topBidSize = bids.length > 0 ? parseFloat(bids[0].size) : NaN;
+    const topAskSize = asks.length > 0 ? parseFloat(asks[0].size) : NaN;
+    return {
+      bestBid: Number.isFinite(bestBid) && bestBid > 0 ? bestBid : null,
+      bestAsk: Number.isFinite(bestAsk) && bestAsk > 0 ? bestAsk : null,
+      topBidSize: Number.isFinite(topBidSize) && topBidSize > 0 ? topBidSize : null,
+      topAskSize: Number.isFinite(topAskSize) && topAskSize > 0 ? topAskSize : null,
+    };
+  } catch (err) {
+    clearTimeout(timer);
+    return null;
+  }
+}
+
+/**
  * Pick the correct market from a Gamma API array response (strict, fail-closed).
  *
  * The condition_id query-param endpoint may return multiple market objects
@@ -914,6 +951,21 @@ async function monitorTick() {
       continue;
     }
 
+    // Backward compatibility: block tickets without bid-based entry microstructure.
+    // Pre-migration tickets have ask-derived TP/SL — monitoring against bid would
+    // create an apples-to-oranges comparison. Fail closed.
+    if (typeof ticket.entryBid !== "number" || ticket.entryBid <= 0) {
+      await TradeTicket.updateOne(
+        { _id: ticket._id },
+        { $set: { autoCloseEnabled: false, autoCloseBlockedReason: "MISSING_ENTRY_EXEC_PRICES" } }
+      ).catch(() => {});
+      await persistMonitorReason(ticket, "MISSING_ENTRY_EXEC_PRICES", {
+        entryBid: ticket.entryBid || null,
+        entryAsk: ticket.entryAsk || null,
+      });
+      continue;
+    }
+
     // Rate limiting: space out requests (min ~50ms gap = max ~20 rps within burst,
     // but overall avg is well under 1 rps due to 15s tick interval)
     await new Promise((r) => setTimeout(r, 50));
@@ -1200,6 +1252,7 @@ module.exports = {
   getMonitorStatus,
   getCurrentCloseablePrice,
   getClobPrice,
+  fetchClobBook,
   resolveTokenId,
   matchMarketFromArray,
   detectMarketEndState,
