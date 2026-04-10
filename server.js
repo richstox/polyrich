@@ -412,8 +412,8 @@ async function autoSaveExecuteTickets(scanId) {
       try {
         const book = await fetchClobBook(tokenId);
         if (book) {
-          // Override bid from CLOB if available (more accurate than Gamma snapshot)
-          if (book.bestBid !== null) entryBidNum = book.bestBid;
+          // Override bid from CLOB if available and positive (more accurate than Gamma snapshot)
+          if (book.bestBid !== null && book.bestBid > 0) entryBidNum = book.bestBid;
           bidSizeRaw = book.topBidSize;
           askSizeRaw = book.topAskSize;
         }
@@ -422,7 +422,7 @@ async function autoSaveExecuteTickets(scanId) {
     }
 
     // Recompute TP/SL with CLOB-verified bid (may differ from Gamma screening pass)
-    if (entryBidNum) {
+    if (entryBidNum > 0) {
       const clobExits = inferExit(entryNum, entryBidNum);
       if (clobExits.tp !== null && clobExits.stop !== null) {
         tpNum = clobExits.tp;
@@ -438,13 +438,21 @@ async function autoSaveExecuteTickets(scanId) {
 
     // --- Entry microstructure snapshot ---
     const entryAskNum = entryNum; // inferEntry returns bestAsk
-    const midNum = (entryBidNum && entryAskNum) ? (entryAskNum + entryBidNum) / 2 : null;
-    const spreadAbs = (entryBidNum && entryAskNum) ? (entryAskNum - entryBidNum) : null;
+    const midNum = (entryBidNum > 0 && entryAskNum) ? (entryAskNum + entryBidNum) / 2 : null;
+    const spreadAbs = (entryBidNum > 0 && entryAskNum) ? (entryAskNum - entryBidNum) : null;
     const spreadPct = (midNum && midNum > 0 && spreadAbs !== null) ? spreadAbs / midNum : null;
+
+    // --- Admission gate: spread ---
+    // Skip ticket entirely when CLOB-verified spread exceeds the allowed max.
+    // This prevents creating tickets in illiquid markets where TP/SL are garbage
+    // (e.g., bid=0.001 vs ask=0.32 → TP=0.001×1.10 which is below entry).
+    if (spreadPct !== null && spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
+      continue;
+    }
 
     // --- Admission gates: liquidity ---
     // Liquidity gate: close-side = bid (selling shares). Check notional at top bid.
-    if (effectiveAutoClose && entryBidNum && bidSizeRaw !== null) {
+    if (effectiveAutoClose && entryBidNum > 0 && bidSizeRaw !== null) {
       const bidNotionalUsd = entryBidNum * bidSizeRaw;
       if (bidNotionalUsd < config.MIN_BID_SIZE_USD) {
         effectiveAutoClose = false;
@@ -1509,15 +1517,15 @@ if (url.pathname === "/trade") {
               const book = await fetchClobBook(tokenId);
               if (book) {
                 // Override entry snapshot from CLOB (authoritative)
-                if (book.bestBid !== null) data.entryBid = book.bestBid;
-                if (book.bestAsk !== null) data.entryAsk = book.bestAsk;
+                if (book.bestBid !== null && book.bestBid > 0) data.entryBid = book.bestBid;
+                if (book.bestAsk !== null && book.bestAsk > 0) data.entryAsk = book.bestAsk;
                 data.entryBidSize = book.topBidSize;
                 data.entryAskSize = book.topAskSize;
                 // Recompute derived fields from verified CLOB data
-                const mid = (data.entryBid && data.entryAsk)
+                const mid = (data.entryBid > 0 && data.entryAsk > 0)
                   ? (data.entryAsk + data.entryBid) / 2 : null;
                 data.entryMid = mid ? Math.round(mid * 10000) / 10000 : null;
-                const spreadAbs = (data.entryBid && data.entryAsk)
+                const spreadAbs = (data.entryBid > 0 && data.entryAsk > 0)
                   ? (data.entryAsk - data.entryBid) : null;
                 data.entrySpreadAbs = spreadAbs !== null
                   ? Math.round(spreadAbs * 10000) / 10000 : null;
@@ -1533,6 +1541,11 @@ if (url.pathname === "/trade") {
             data.autoCloseEnabled = false;
             data.autoCloseBlockedReason = data.autoCloseBlockedReason || "MISSING_ENTRY_EXEC_PRICES";
           }
+        }
+        // Admission gate: spread — block auto-close if spread exceeds max
+        if (data.autoCloseEnabled && typeof data.entrySpreadPct === "number" && data.entrySpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
+          data.autoCloseEnabled = false;
+          data.autoCloseBlockedReason = data.autoCloseBlockedReason || "SPREAD_TOO_WIDE";
         }
         // Admission gates for auto-close: liquidity
         if (data.autoCloseEnabled && typeof data.entryBid === "number" && typeof data.entryBidSize === "number") {

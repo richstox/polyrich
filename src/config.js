@@ -82,6 +82,10 @@ module.exports = {
   // ---------------------------------------------------------------------------
   // Admission gates — market quality checks at ticket creation
   // ---------------------------------------------------------------------------
+  // Max entry spread (mid-based) to allow ticket creation.
+  // If the CLOB-verified spread exceeds this, the ticket is skipped entirely.
+  // Matches the UI-side computeTradeability "Watch" threshold (15%).
+  MAX_ENTRY_SPREAD_PCT: parseFloat(process.env.MAX_ENTRY_SPREAD_PCT || "0.15"),
   // Min top-of-book bid size (USD notional at bid price) to enable auto-close.
   // If close-side liquidity is below this, autoClose is blocked with INSUFFICIENT_BID_SIZE.
   MIN_BID_SIZE_USD: parseFloat(process.env.MIN_BID_SIZE_USD || "20"),

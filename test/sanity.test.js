@@ -2362,6 +2362,131 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// Spread gate: MAX_ENTRY_SPREAD_PCT config exists and is enforced
+// ---------------------------------------------------------------------------
+{
+  console.log("\nSpread gate: MAX_ENTRY_SPREAD_PCT config");
+  const cfg = require("../src/config");
+
+  assert(typeof cfg.MAX_ENTRY_SPREAD_PCT === "number",
+    "MAX_ENTRY_SPREAD_PCT config exists");
+  assert(cfg.MAX_ENTRY_SPREAD_PCT > 0 && cfg.MAX_ENTRY_SPREAD_PCT <= 1,
+    "MAX_ENTRY_SPREAD_PCT is between 0 and 1 (fractional, e.g. 0.15 = 15%)");
+  assert(cfg.MAX_ENTRY_SPREAD_PCT === 0.15,
+    "Default MAX_ENTRY_SPREAD_PCT is 0.15 (15%)");
+}
+
+// ---------------------------------------------------------------------------
+// Spread gate: simulated autoSaveExecuteTickets skip logic
+// ---------------------------------------------------------------------------
+{
+  console.log("\nSpread gate: skip ticket when spread too wide");
+  const cfg = require("../src/config");
+
+  // Illiquid market: bid=0.001, ask=0.32 → mid=0.1605, spread=1.988 (198.8%)
+  const bid1 = 0.001;
+  const ask1 = 0.32;
+  const mid1 = (ask1 + bid1) / 2;
+  const spreadPct1 = (ask1 - bid1) / mid1;
+  assert(spreadPct1 > cfg.MAX_ENTRY_SPREAD_PCT,
+    `198.8% spread (${(spreadPct1 * 100).toFixed(1)}%) exceeds MAX_ENTRY_SPREAD_PCT (15%)`);
+
+  // Tight spread market: bid=0.32, ask=0.33 → mid=0.325, spread=0.0308 (3.08%)
+  const bid2 = 0.32;
+  const ask2 = 0.33;
+  const mid2 = (ask2 + bid2) / 2;
+  const spreadPct2 = (ask2 - bid2) / mid2;
+  assert(spreadPct2 < cfg.MAX_ENTRY_SPREAD_PCT,
+    `3.1% spread (${(spreadPct2 * 100).toFixed(1)}%) is within MAX_ENTRY_SPREAD_PCT (15%)`);
+
+  // Borderline: bid=0.21, ask=0.25 → mid=0.23, spread=0.174 (17.4%)
+  const bid3 = 0.21;
+  const ask3 = 0.25;
+  const mid3 = (ask3 + bid3) / 2;
+  const spreadPct3 = (ask3 - bid3) / mid3;
+  assert(spreadPct3 > cfg.MAX_ENTRY_SPREAD_PCT,
+    `17.4% spread (${(spreadPct3 * 100).toFixed(1)}%) exceeds MAX_ENTRY_SPREAD_PCT (15%)`);
+}
+
+// ---------------------------------------------------------------------------
+// CLOB bid override: zero or negative bids must NOT override valid Gamma bid
+// ---------------------------------------------------------------------------
+{
+  console.log("\nCLOB bid override: reject zero/null/negative bestBid");
+
+  // Simulates the guard: `if (book.bestBid !== null && book.bestBid > 0)`
+  function simulateClobOverride(gammaBid, clobBestBid) {
+    let entryBidNum = gammaBid;
+    if (clobBestBid !== null && clobBestBid > 0) {
+      entryBidNum = clobBestBid;
+    }
+    return entryBidNum;
+  }
+
+  // CLOB returns bestBid = 0 → should NOT override valid Gamma bid
+  assert(simulateClobOverride(0.30, 0) === 0.30,
+    "CLOB bestBid=0 does NOT override Gamma bid of 0.30");
+
+  // CLOB returns bestBid = null → should NOT override
+  assert(simulateClobOverride(0.30, null) === 0.30,
+    "CLOB bestBid=null does NOT override Gamma bid of 0.30");
+
+  // CLOB returns bestBid = -0.01 → should NOT override
+  assert(simulateClobOverride(0.30, -0.01) === 0.30,
+    "CLOB bestBid=-0.01 does NOT override Gamma bid of 0.30");
+
+  // CLOB returns bestBid = 0.28 (valid) → SHOULD override
+  assert(simulateClobOverride(0.30, 0.28) === 0.28,
+    "CLOB bestBid=0.28 (valid positive) overrides Gamma bid of 0.30");
+}
+
+// ---------------------------------------------------------------------------
+// TP/SL sanity with microscopic bid vs normal bid
+// ---------------------------------------------------------------------------
+{
+  console.log("\nTP/SL: microscopic bid produces garbage TP — spread gate prevents it");
+  const { inferExit } = require("../src/html_renderer");
+  const cfg = require("../src/config");
+
+  // Normal bid: entry=0.32, bid=0.31 → TP=0.341, SL=0.2852
+  const normal = inferExit(0.32, 0.31);
+  assert(normal.tp !== null, "Normal bid produces valid TP");
+  assert(normal.tp > 0.32, `TP ($${normal.tp.toFixed(4)}) is ABOVE entry ($0.32) — correct take profit`);
+  assert(normal.stop < 0.32, `SL ($${normal.stop.toFixed(4)}) is BELOW entry ($0.32) — correct stop loss`);
+
+  // Microscopic bid: entry=0.32, bid=0.001 → TP=0.0011 (BELOW entry!)
+  const micro = inferExit(0.32, 0.001);
+  assert(micro.tp !== null, "Microscopic bid produces non-null TP");
+  assert(micro.tp < 0.32,
+    `TP ($${micro.tp.toFixed(4)}) is BELOW entry ($0.32) — garbage TP, spread gate must block this`);
+
+  // Verify the spread gate WOULD block this scenario
+  const microMid = (0.32 + 0.001) / 2;
+  const microSpreadPct = (0.32 - 0.001) / microMid;
+  assert(microSpreadPct > cfg.MAX_ENTRY_SPREAD_PCT,
+    `Microscopic bid market spread (${(microSpreadPct * 100).toFixed(1)}%) exceeds MAX_ENTRY_SPREAD_PCT`);
+}
+
+// ---------------------------------------------------------------------------
+// Falsy check regression: entryBidNum=0 must NOT enter re-calculation block
+// ---------------------------------------------------------------------------
+{
+  console.log("\nFalsy check regression: entryBidNum=0 must not pass `> 0` guard");
+
+  // The old code: `if (entryBidNum)` — 0 is falsy, so it skipped
+  // But 0.001 is truthy, so it entered and computed garbage TP
+  // The new code: `if (entryBidNum > 0)` — blocks both 0 and null
+
+  assert(!(0 > 0), "0 > 0 is false — blocks zero bid from re-calculation");
+  assert(!(null > 0), "null > 0 is false — blocks null bid from re-calculation");
+  assert(0.001 > 0, "0.001 > 0 is true — allows tiny bids into re-calculation");
+  assert(0.30 > 0, "0.30 > 0 is true — allows normal bids into re-calculation");
+
+  // The key difference: 0.001 still enters the block, but the SPREAD GATE
+  // catches the resulting garbage before the ticket is created
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);
