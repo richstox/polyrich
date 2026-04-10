@@ -1970,6 +1970,27 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
         });
       }
 
+      // Debounced sync of sizing settings to server (for auto-save)
+      var _syncTimer = null;
+      var _lastSyncKey = '';
+      function syncSizingToServer(bankroll, riskDec, capUsd) {
+        var key = String(bankroll) + '|' + String(riskDec) + '|' + String(capUsd);
+        if (key === _lastSyncKey) return;
+        _lastSyncKey = key;
+        if (_syncTimer) clearTimeout(_syncTimer);
+        _syncTimer = setTimeout(function() {
+          fetch('/api/system/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              bankrollUsd: bankroll,
+              riskPct: riskDec > 0 ? riskDec : null,
+              maxTradeCapUsd: capUsd > 0 ? capUsd : null
+            })
+          }).catch(function() { /* silent */ });
+        }, 500);
+      }
+
       function updateCards() {
         var bankroll = parseFloat(brInput.value);
         var hasBankroll = !isNaN(bankroll) && bankroll > 0;
@@ -1985,6 +2006,9 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
         if (isNaN(capUsd) || capUsd <= 0) capUsd = MAX_CAP_DEF;
         localStorage.setItem(KEY_CAP, String(capUsd));
         localStorage.setItem(KEY_PROFILE, profileSelect.value);
+
+        // Sync risk/sizing settings to server (for auto-save to use)
+        syncSizingToServer(hasBankroll ? bankroll : null, riskDec, capUsd);
 
         updateBadge(riskDec);
         updateLimitWarning(capUsd);
@@ -3118,7 +3142,7 @@ function renderHistoryPage(closedTickets, activeRange, customFrom, customTo) {
       : null);
     const subtextEl = subtext ? `<div style="font-size:0.78rem;color:#64748b;margin-top:2px;">${escHtml(subtext)}</div>` : "";
     const questionLink = polyUrl
-      ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" class="tk-q-link">${escHtml(headline)} ${extIcon}</a>${subtextEl}`
+      ? `<span class="tk-q-link" style="cursor:pointer;">${escHtml(headline)} <a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation();" style="display:inline;">${extIcon}</a></span>${subtextEl}`
       : `<span class="tk-q-link">${escHtml(headline)}</span>${subtextEl}`;
 
     const actionLabel = (t.action || "\u2014").replace(/_/g, " ");
@@ -3143,9 +3167,9 @@ function renderHistoryPage(closedTickets, activeRange, customFrom, customTo) {
       : "";
 
     return `
-      <a href="/tickets/${escHtml(String(t._id))}" style="text-decoration:none;display:block;"
+      <a href="/tickets/${escHtml(String(t._id))}"
          class="tk-ticket history-card"
-         style="position:relative;cursor:pointer;"
+         style="text-decoration:none;display:block;position:relative;cursor:pointer;"
          data-question="${escHtml(headline.toLowerCase())}"
          data-action="${escHtml(t.action || "")}"
          data-pnl="${typeof t.realizedPnlUsd === "number" ? t.realizedPnlUsd : 0}"

@@ -331,6 +331,14 @@ async function autoSaveExecuteTickets(scanId) {
   }
 
   // Derive EXECUTE cards using the same logic as renderTradePage
+  // Apply user's risk/sizing settings from SystemSetting (synced from Trade page)
+  const userCap = typeof settings.maxTradeCapUsd === "number" && settings.maxTradeCapUsd > 0
+    ? settings.maxTradeCapUsd : null;
+  const userBankroll = typeof settings.bankrollUsd === "number" && settings.bankrollUsd > 0
+    ? settings.bankrollUsd : null;
+  const userRiskPct = typeof settings.riskPct === "number" && settings.riskPct > 0
+    ? settings.riskPct : null;
+
   const cards = tradeCandidates.slice(0, 20);
   const executeItems = [];
   for (const item of cards) {
@@ -339,8 +347,27 @@ async function autoSaveExecuteTickets(scanId) {
       if (dir.action === "WATCH") continue;
       const entryNum = inferEntry(item, dir.action);
       if (entryNum === null) continue;
-      const sizeNum = inferSize(item);
+      let sizeNum = inferSize(item);
       if (sizeNum === null) continue;
+
+      // Clamp to user's settings (mirrors client-side updateCards logic)
+      if (userCap !== null || userBankroll !== null) {
+        const hMax = sizeNum; // heuristic max from inferSize
+        let maxSizeRaw;
+        if (userBankroll !== null && userRiskPct !== null) {
+          const riskBudget = userBankroll * userRiskPct;
+          maxSizeRaw = Math.min(userCap || Infinity, riskBudget, hMax);
+        } else if (userCap !== null) {
+          maxSizeRaw = Math.min(userCap, hMax);
+        } else {
+          maxSizeRaw = hMax;
+        }
+        sizeNum = Math.round(maxSizeRaw * 100) / 100;
+      }
+
+      // Skip if below min limit order ($5)
+      if (sizeNum < 5) continue;
+
       const exits = inferExit(entryNum);
       if (exits.tp === null || exits.stop === null) continue;
       executeItems.push({ item, dir, entryNum, sizeNum, tpNum: exits.tp, stopNum: exits.stop });
@@ -400,9 +427,9 @@ async function autoSaveExecuteTickets(scanId) {
       takeProfit: tpNum,
       riskExitLimit: stopNum,
       maxSizeUsd: sizeNum,
-      bankrollUsd: null,
-      riskPct: null,
-      maxTradeCapUsd: null,
+      bankrollUsd: userBankroll,
+      riskPct: userRiskPct,
+      maxTradeCapUsd: userCap,
       minLimitOrderUsd: 5,
       pnlTpUsd: Math.round(pnlTpUsd * 100) / 100,
       pnlTpPct: Math.round(pnlTpPct * 10) / 1000,
@@ -1118,9 +1145,16 @@ if (url.pathname === "/trade") {
         if (typeof data.paperCloseEnabled === "boolean") update.paperCloseEnabled = data.paperCloseEnabled;
         if (typeof data.defaultAutoCloseEnabled === "boolean") update.defaultAutoCloseEnabled = data.defaultAutoCloseEnabled;
         if (typeof data.autoSaveExecuteEnabled === "boolean") update.autoSaveExecuteEnabled = data.autoSaveExecuteEnabled;
+        // Risk / sizing settings (synced from Trade page for auto-save)
+        if (typeof data.bankrollUsd === "number" && data.bankrollUsd > 0) update.bankrollUsd = data.bankrollUsd;
+        else if (data.bankrollUsd === null) update.bankrollUsd = null;
+        if (typeof data.riskPct === "number" && data.riskPct > 0) update.riskPct = data.riskPct;
+        else if (data.riskPct === null) update.riskPct = null;
+        if (typeof data.maxTradeCapUsd === "number" && data.maxTradeCapUsd > 0) update.maxTradeCapUsd = data.maxTradeCapUsd;
+        else if (data.maxTradeCapUsd === null) update.maxTradeCapUsd = null;
         if (Object.keys(update).length === 0) {
           res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Provide at least one boolean field: autoModeEnabled, paperCloseEnabled, defaultAutoCloseEnabled, autoSaveExecuteEnabled" }));
+          res.end(JSON.stringify({ error: "Provide at least one field: autoModeEnabled, paperCloseEnabled, defaultAutoCloseEnabled, autoSaveExecuteEnabled, bankrollUsd, riskPct, maxTradeCapUsd" }));
           return;
         }
         const doc = await SystemSetting.findOneAndUpdate(
