@@ -861,7 +861,7 @@ function sharedStyles() {
   .tk-wr-sub { font-size: 0.78rem; color: var(--tk-muted); font-family: var(--tk-mono); }
   /* Section headers */
   .tk-section-hdr {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.08em; color: var(--tk-text); margin: 22px 0 10px;
   }
@@ -907,11 +907,11 @@ function sharedStyles() {
   .tk-pill-buy { background: rgba(34,197,94,.15); color: var(--tk-green); }
   .tk-pill-watch { background: rgba(100,116,139,.18); color: var(--tk-muted); }
   .tk-sort-row {
-    display: inline-flex; align-items: center; gap: 6px; margin-left: auto;
+    display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap;
   }
   .tk-sort-btn {
     background: var(--tk-border); color: var(--tk-text); border: none;
-    border-radius: 6px; padding: 3px 10px; font-size: 0.68rem; font-weight: 600;
+    border-radius: 6px; padding: 4px 12px; font-size: 0.72rem; font-weight: 600;
     cursor: pointer; letter-spacing: 0.04em; transition: background .15s;
   }
   .tk-sort-btn:hover { background: #334155; }
@@ -3310,13 +3310,11 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
     </div>
   `;
 
-  // --- Reason filter bar ---
+  // --- Reason filter (inline, for combined filter+sort bar) ---
   const allReasonCodes = Object.keys(DIAGNOSTIC_REASONS);
-  const filterBarHtml = `
-    <div style="margin:10px 0;padding:8px 12px;background:#1e293b;border-radius:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <span style="font-size:0.8rem;color:#94a3b8;font-weight:600;">\u{1F50D} Filter:</span>
-      <select id="tk-reason-filter" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:4px 8px;font-size:0.78rem;">
-        <option value="">All tickets</option>
+  const filterBarInlineHtml = `
+      <select id="tk-reason-filter" style="background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:4px 8px;font-size:0.72rem;margin-right:4px;">
+        <option value="">\u{1F50D} All tickets</option>
         <optgroup label="Blocked (autoClose)">
           ${allReasonCodes.filter((r) => DIAGNOSTIC_REASONS[r].queryParam === "blockedReason").map((r) => {
             const sel = activeBlockedReason === r ? " selected" : "";
@@ -3330,8 +3328,7 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
           }).join("")}
         </optgroup>
       </select>
-      ${hasActiveFilter ? '<a href="/tickets" style="color:#60a5fa;font-size:0.78rem;text-decoration:none;">\u2715 Clear filter</a>' : ""}
-    </div>
+      ${hasActiveFilter ? '<a href="/tickets" style="color:#60a5fa;font-size:0.72rem;text-decoration:none;margin-right:4px;">\u2715</a>' : ""}
   `;
 
   // --- Reason badges ---
@@ -3382,8 +3379,8 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
     // Auto-close indicator
     const acIndicator = isExec
       ? (t.autoCloseEnabled
-        ? '<span style="font-size:0.68rem;color:#22c55e;" title="Auto-close ON">\u{1F916}\u2713</span>'
-        : '<span style="font-size:0.68rem;color:#64748b;" title="Auto-close OFF">\u{1F916}\u2717</span>')
+        ? '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;background:rgba(34,197,94,.15);color:#22c55e;" title="Auto-close ON">\u{1F916} ON</span>'
+        : '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;background:rgba(100,116,139,.15);color:#94a3b8;" title="Auto-close OFF">\u{1F916} OFF</span>')
       : "";
 
     const reasonBadges = reasonBadgesHtml(t);
@@ -3413,10 +3410,10 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
               ${reasonBadges ? `<span>${reasonBadges}</span>` : ""}
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
-            ${polyUrl ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="color:#64748b;font-size:0.85rem;text-decoration:none;padding:4px;" title="Open on Polymarket">\u{1F517}</a>` : ""}
-            ${copyUrlAttr ? `<button ${copyUrlAttr} style="background:none;border:none;color:#64748b;font-size:0.85rem;cursor:pointer;padding:4px;" title="Copy URL">\u{1F4CB}</button>` : ""}
-            <a href="${detailUrl}" style="color:#60a5fa;font-size:0.85rem;text-decoration:none;padding:4px;" title="Detail">\u{276F}</a>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+            ${polyUrl ? `<a href="${escHtml(polyUrl)}" target="_blank" rel="noopener" style="color:#64748b;font-size:1.25rem;text-decoration:none;padding:6px;" title="Open on Polymarket">\u{1F517}</a>` : ""}
+            ${copyUrlAttr ? `<button ${copyUrlAttr} style="background:none;border:none;color:#64748b;font-size:1.25rem;cursor:pointer;padding:6px;" title="Copy URL">\u{1F4CB}</button>` : ""}
+            <a href="${detailUrl}" style="color:#60a5fa;font-size:1.25rem;text-decoration:none;padding:6px;" title="Detail">\u{276F}</a>
           </div>
         </div>
       </div>
@@ -3443,11 +3440,11 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
   return `
     <div class="tk-page">
       ${summaryHtml}
-      ${filterBarHtml}
       <div class="tk-section-hdr">OPEN <span class="tk-badge">${openCount}</span>
         <span class="tk-sort-row">
+          ${filterBarInlineHtml}
           <button class="tk-sort-btn tk-sort-active" data-sort="end" data-section="open" title="Sort by end date">End \u2191</button>
-          <button class="tk-sort-btn" data-sort="saved" data-section="open" title="Sort by date saved">Saved \u2191</button>
+          <button class="tk-sort-btn" data-sort="saved" data-section="open" title="Sort by date created">Created \u2191</button>
           <button class="tk-sort-btn" data-sort="autoclose" data-section="open" title="Sort by AutoClose status">AutoClose</button>
         </span>
       </div>
@@ -3536,7 +3533,7 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
         btns.forEach(function(b) {
           b.classList.remove("tk-sort-active");
           var bKey = b.getAttribute("data-sort");
-          var label = bKey === "end" ? "End" : bKey === "autoclose" ? "AutoClose" : "Saved";
+          var label = bKey === "end" ? "End" : bKey === "autoclose" ? "AutoClose" : "Created";
           if (bKey === state.key) {
             b.classList.add("tk-sort-active");
             b.textContent = label + (state.asc ? " \u2191" : " \u2193");
