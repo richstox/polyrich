@@ -13,6 +13,8 @@ const autoSaveLogSchema = new mongoose.Schema(
     error: { type: String, default: null },
     skipReasons: { type: mongoose.Schema.Types.Mixed, default: null },
     candidateDetails: { type: [mongoose.Schema.Types.Mixed], default: null },
+    watchReasonCounts: { type: mongoose.Schema.Types.Mixed, default: null },
+    topWatchExamples: { type: [mongoose.Schema.Types.Mixed], default: null },
   },
   { timestamps: true }
 );

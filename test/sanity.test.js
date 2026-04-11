@@ -3621,6 +3621,191 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// watchReasonCodes: computeTradeability attaches reasonCodes and reasonDetails
+// ---------------------------------------------------------------------------
+{
+  console.log("\ncomputeTradeability: watchReasonCodes and reasonDetails");
+  const { computeTradeability } = require("../src/html_renderer");
+
+  // TOO_FAR_FROM_EXPIRY
+  const farExpiry = { hoursLeft: 500, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, _filtered: false };
+  const r1 = computeTradeability(farExpiry);
+  assert(r1.label === "Watch", "farExpiry → Watch");
+  assert(Array.isArray(r1.reasonCodes), "reasonCodes is array");
+  assert(r1.reasonCodes.includes("TOO_FAR_FROM_EXPIRY"), "includes TOO_FAR_FROM_EXPIRY");
+  assert(r1.reasonDetails.TOO_FAR_FROM_EXPIRY.hoursLeft === 500, "reasonDetails has hoursLeft");
+
+  // SPREAD_TOO_WIDE
+  const wideSpread = { hoursLeft: 48, spreadPct: 0.20, liquidity: 1000, volume24hr: 100, _filtered: false };
+  const r2 = computeTradeability(wideSpread);
+  assert(r2.reasonCodes.includes("SPREAD_TOO_WIDE"), "includes SPREAD_TOO_WIDE");
+  assert(r2.reasonDetails.SPREAD_TOO_WIDE.spreadPct === 0.20, "reasonDetails has spreadPct");
+
+  // LIQUIDITY_TOO_LOW
+  const lowLiq = { hoursLeft: 48, spreadPct: 0.05, liquidity: 100, volume24hr: 100, _filtered: false };
+  const r3 = computeTradeability(lowLiq);
+  assert(r3.reasonCodes.includes("LIQUIDITY_TOO_LOW"), "includes LIQUIDITY_TOO_LOW");
+  assert(r3.reasonDetails.LIQUIDITY_TOO_LOW.liquidity === 100, "reasonDetails has liquidity");
+
+  // VOL_TOO_LOW
+  const lowVol = { hoursLeft: 48, spreadPct: 0.05, liquidity: 1000, volume24hr: 10, _filtered: false };
+  const r4 = computeTradeability(lowVol);
+  assert(r4.reasonCodes.includes("VOL_TOO_LOW"), "includes VOL_TOO_LOW");
+  assert(r4.reasonDetails.VOL_TOO_LOW.volume24hr === 10, "reasonDetails has volume24hr");
+
+  // TOO_CLOSE_TO_EXPIRY
+  const closeExpiry = { hoursLeft: 1, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, _filtered: false };
+  const r5 = computeTradeability(closeExpiry);
+  assert(r5.reasonCodes.includes("TOO_CLOSE_TO_EXPIRY"), "includes TOO_CLOSE_TO_EXPIRY");
+
+  // Multiple reason codes simultaneously
+  const multi = { hoursLeft: 500, spreadPct: 0.50, liquidity: 100, volume24hr: 10, _filtered: false };
+  const r6 = computeTradeability(multi);
+  assert(r6.reasonCodes.length >= 3, "multiple reason codes: " + r6.reasonCodes.join(","));
+
+  // Tradeable → empty arrays
+  const good = { hoursLeft: 48, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, _filtered: false };
+  const r7 = computeTradeability(good);
+  assert(r7.label === "Tradeable today", "good → Tradeable today");
+  assert(r7.reasonCodes.length === 0, "Tradeable has empty reasonCodes");
+
+  // Excluded → empty arrays
+  const excl = { hoursLeft: -1, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, _filtered: false };
+  const r8 = computeTradeability(excl);
+  assert(r8.label === "Excluded", "excluded → Excluded");
+  assert(r8.reasonCodes.length === 0, "Excluded has empty reasonCodes");
+}
+
+// ---------------------------------------------------------------------------
+// watchReasonCodes: inferDirection attaches reasonCodes
+// ---------------------------------------------------------------------------
+{
+  console.log("\ninferDirection: watchReasonCodes propagation");
+  const { inferDirection } = require("../src/html_renderer");
+
+  // NO_MOVEMENT
+  const noMove = {
+    hoursLeft: 48, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, _filtered: false,
+    absMove: 0.001, volatility: 0.001, delta1: -0.01, latestYes: 0.40,
+    mispricing: false, momentum: false, breakout: false, bestAskNum: 0.46,
+  };
+  const d1 = inferDirection(noMove);
+  assert(d1.action === "WATCH", "noMove → WATCH");
+  assert(d1.reasonCodes.includes("NO_MOVEMENT"), "includes NO_MOVEMENT: " + d1.reasonCodes.join(","));
+  assert(d1.reasonDetails.NO_MOVEMENT.absMove === 0.001, "NO_MOVEMENT has absMove");
+
+  // DIRECTION_UNCLEAR
+  const noDir = {
+    hoursLeft: 48, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, _filtered: false,
+    absMove: 0.01, volatility: 0.01, delta1: 0.001, latestYes: 0.50,
+    mispricing: false, momentum: false, breakout: false, bestAskNum: 0.46,
+  };
+  const d2 = inferDirection(noDir);
+  assert(d2.action === "WATCH", "noDir → WATCH");
+  assert(d2.reasonCodes.includes("DIRECTION_UNCLEAR"), "includes DIRECTION_UNCLEAR");
+
+  // NO_NO_SIDE_PRICING (BUY NO → blocked)
+  const buyNo = {
+    hoursLeft: 48, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, _filtered: false,
+    absMove: 0.01, volatility: 0.01, delta1: 0.02, latestYes: 0.60,
+    mispricing: false, momentum: false, breakout: false, bestAskNum: 0.46,
+  };
+  const d3 = inferDirection(buyNo);
+  assert(d3.action === "WATCH", "buyNo → WATCH");
+  assert(d3.reasonCodes.includes("NO_NO_SIDE_PRICING"), "includes NO_NO_SIDE_PRICING");
+
+  // Passes all gates → empty reasonCodes
+  const good = {
+    hoursLeft: 48, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, _filtered: false,
+    absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40,
+    mispricing: false, momentum: false, breakout: false, bestAskNum: 0.46,
+  };
+  const d4 = inferDirection(good);
+  assert(d4.action === "BUY YES", "good → BUY YES");
+  assert(d4.reasonCodes.length === 0, "BUY YES has empty reasonCodes");
+}
+
+// ---------------------------------------------------------------------------
+// watchReasonCodes: evaluateCandidateForExecution attaches reasonCodes
+// ---------------------------------------------------------------------------
+{
+  console.log("\nevaluateCandidateForExecution: watchReasonCodes");
+  const { evaluateCandidateForExecution } = require("../src/html_renderer");
+
+  // WATCH from direction gate → inherits reasonCodes
+  const watchItem = {
+    hoursLeft: 500, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, _filtered: false,
+    absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40,
+    mispricing: false, momentum: false, breakout: false, bestAskNum: 0.46, bestBidNum: 0.44,
+  };
+  const r1 = evaluateCandidateForExecution(watchItem, {});
+  assert(r1.status === "WATCH", "watchItem → WATCH");
+  assert(r1.skipReason === "skipped_watch", "skipReason is skipped_watch");
+  assert(Array.isArray(r1.reasonCodes), "reasonCodes is array");
+  assert(r1.reasonCodes.includes("TOO_FAR_FROM_EXPIRY"), "inherits TOO_FAR_FROM_EXPIRY");
+  assert(typeof r1.reasonDetails === "object", "reasonDetails is object");
+
+  // EXECUTE → empty reasonCodes
+  const execItem = {
+    hoursLeft: 48, spreadPct: 0.05, liquidity: 100000, volume24hr: 50000, _filtered: false,
+    absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40,
+    mispricing: false, momentum: false, breakout: false, bestAskNum: 0.46, bestBidNum: 0.44,
+  };
+  const r2 = evaluateCandidateForExecution(execItem, {});
+  assert(r2.status === "EXECUTE", "execItem → EXECUTE");
+  assert(r2.reasonCodes.length === 0, "EXECUTE has empty reasonCodes");
+  assert(Object.keys(r2.reasonDetails).length === 0, "EXECUTE has empty reasonDetails");
+
+  // SIZE_TOO_SMALL
+  const smallCap = {
+    hoursLeft: 48, spreadPct: 0.05, liquidity: 100000, volume24hr: 50000, _filtered: false,
+    absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40,
+    mispricing: false, momentum: false, breakout: false, bestAskNum: 0.46, bestBidNum: 0.44,
+  };
+  const r3 = evaluateCandidateForExecution(smallCap, { maxTradeCapUsd: 3 });
+  assert(r3.status === "WATCH", "smallCap → WATCH");
+  assert(r3.reasonCodes.includes("SIZE_TOO_SMALL"), "includes SIZE_TOO_SMALL");
+}
+
+// ---------------------------------------------------------------------------
+// watchReasonCounts aggregation (simulated autoSave loop logic)
+// ---------------------------------------------------------------------------
+{
+  console.log("\nwatchReasonCounts aggregation simulation");
+  const { evaluateCandidateForExecution } = require("../src/html_renderer");
+
+  const items = [
+    // 1. TOO_FAR_FROM_EXPIRY
+    { hoursLeft: 500, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40, bestAskNum: 0.46, bestBidNum: 0.44 },
+    // 2. NO_MOVEMENT
+    { hoursLeft: 48, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, absMove: 0.001, volatility: 0.001, delta1: -0.02, latestYes: 0.40, bestAskNum: 0.46, bestBidNum: 0.44 },
+    // 3. TOO_FAR_FROM_EXPIRY + SPREAD_TOO_WIDE
+    { hoursLeft: 500, spreadPct: 0.50, liquidity: 1000, volume24hr: 100, absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40, bestAskNum: 0.46, bestBidNum: 0.44 },
+  ];
+
+  const watchReasonCounts = {};
+  const topWatchExamples = [];
+  for (const item of items) {
+    const r = evaluateCandidateForExecution(item, {});
+    if (r.status !== "EXECUTE") {
+      const codes = r.reasonCodes || [];
+      for (const code of codes) {
+        watchReasonCounts[code] = (watchReasonCounts[code] || 0) + 1;
+      }
+      if (codes.length > 0 && topWatchExamples.length < 5) {
+        topWatchExamples.push({ reasonCodes: codes, reasonDetails: r.reasonDetails });
+      }
+    }
+  }
+
+  assert(watchReasonCounts.TOO_FAR_FROM_EXPIRY === 2, "TOO_FAR_FROM_EXPIRY count=2: " + watchReasonCounts.TOO_FAR_FROM_EXPIRY);
+  assert(watchReasonCounts.NO_MOVEMENT === 1, "NO_MOVEMENT count=1: " + watchReasonCounts.NO_MOVEMENT);
+  assert(watchReasonCounts.SPREAD_TOO_WIDE === 1, "SPREAD_TOO_WIDE count=1: " + watchReasonCounts.SPREAD_TOO_WIDE);
+  assert(topWatchExamples.length === 3, "topWatchExamples has 3 entries");
+  assert(topWatchExamples[0].reasonCodes.includes("TOO_FAR_FROM_EXPIRY"), "first example includes TOO_FAR_FROM_EXPIRY");
+}
+
+// ---------------------------------------------------------------------------
 // attemptAutoClose: HARD GUARD — no close at $0.00 unless MARKET_SETTLED
 // (async tests — summary printed at the end of this block)
 // ---------------------------------------------------------------------------

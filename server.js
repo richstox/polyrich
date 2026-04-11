@@ -382,6 +382,9 @@ async function autoSaveExecuteTickets(scanId) {
     skipped_exits_null: 0,
     skipped_error: 0,
   };
+  // Track which WATCH reason codes dominate
+  const watchReasonCounts = {};
+  const topWatchExamples = [];
   // Top 5 candidates with their skip reasons for diagnostics
   const candidateDetails = [];
   for (const item of cards) {
@@ -399,6 +402,19 @@ async function autoSaveExecuteTickets(scanId) {
       if (evalResult.status !== "EXECUTE") {
         if (evalResult.skipReason) {
           skipReasons[evalResult.skipReason] = (skipReasons[evalResult.skipReason] || 0) + 1;
+        }
+        // Aggregate WATCH reason codes
+        const codes = evalResult.reasonCodes || [];
+        for (const code of codes) {
+          watchReasonCounts[code] = (watchReasonCounts[code] || 0) + 1;
+        }
+        if (codes.length > 0 && topWatchExamples.length < 5) {
+          topWatchExamples.push({
+            marketSlug: item.marketSlug || null,
+            conditionId: item.conditionId || null,
+            reasonCodes: codes,
+            reasonDetails: evalResult.reasonDetails || {},
+          });
         }
         continue;
       }
@@ -422,6 +438,8 @@ async function autoSaveExecuteTickets(scanId) {
         error: "NO_VIABLE_CANDIDATE",
         skipReasons,
         candidateDetails,
+        watchReasonCounts,
+        topWatchExamples,
       });
     } catch (_) {}
     console.log(JSON.stringify({
@@ -430,10 +448,11 @@ async function autoSaveExecuteTickets(scanId) {
       tradeCandidates: tradeCandidates.length,
       cardsEvaluated: cards.length,
       skipReasons,
+      watchReasonCounts,
       candidateDetails,
       ts: new Date().toISOString(),
     }));
-    autoSaveTelemetry.lastAutoSave = { scanId, result: "NO_VIABLE_CANDIDATE", createdCount: 0, skipReasons, ts: new Date().toISOString() };
+    autoSaveTelemetry.lastAutoSave = { scanId, result: "NO_VIABLE_CANDIDATE", createdCount: 0, skipReasons, watchReasonCounts, topWatchExamples, ts: new Date().toISOString() };
     autoSaveTelemetry.lastAutoSaveError = null;
     return;
   }
@@ -672,7 +691,7 @@ async function autoSaveExecuteTickets(scanId) {
   }));
 
   const resultLabel = created > 0 ? `CREATED_${created}` : "NO_VIABLE_CANDIDATE";
-  autoSaveTelemetry.lastAutoSave = { scanId, result: resultLabel, createdCount: created, skipReasons, ts: new Date().toISOString() };
+  autoSaveTelemetry.lastAutoSave = { scanId, result: resultLabel, createdCount: created, skipReasons, watchReasonCounts, topWatchExamples, ts: new Date().toISOString() };
   autoSaveTelemetry.lastAutoSaveError = null;
 }
 
@@ -949,7 +968,7 @@ if (url.pathname === "/trade") {
     // Extract persisted debug snapshot from system settings
     const debugSnapshot = systemSettings.debugNullPriceSample || null;
 
-    const body = renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday, ticketCloseStats, debugSnapshot);
+    const body = renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday, ticketCloseStats, debugSnapshot, autoSaveTelemetry.lastAutoSave);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(pageShell("System", "/system", body));
     return;

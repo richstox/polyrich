@@ -129,18 +129,36 @@ function computeTradeability(item) {
     item._filtered ||
     (item.hoursLeft !== null && item.hoursLeft <= 0)
   ) {
-    return { icon: "❌", label: "Excluded", cls: "tradeability-excluded" };
+    return { icon: "❌", label: "Excluded", cls: "tradeability-excluded", reasonCodes: [], reasonDetails: {} };
   }
-  if (
-    (item.hoursLeft !== null && item.hoursLeft > 240) ||
-    item.spreadPct > config.MAX_ENTRY_SPREAD_PCT ||
-    item.liquidity < 500 ||
-    item.volume24hr < 50 ||
-    (item.hoursLeft !== null && item.hoursLeft < 2)
-  ) {
-    return { icon: "⚠️", label: "Watch", cls: "tradeability-watch" };
+
+  const reasonCodes = [];
+  const reasonDetails = {};
+  if (item.hoursLeft !== null && item.hoursLeft > 240) {
+    reasonCodes.push("TOO_FAR_FROM_EXPIRY");
+    reasonDetails.TOO_FAR_FROM_EXPIRY = { hoursLeft: item.hoursLeft, maxHours: 240 };
   }
-  return { icon: "✅", label: "Tradeable today", cls: "tradeability-ok" };
+  if (item.spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
+    reasonCodes.push("SPREAD_TOO_WIDE");
+    reasonDetails.SPREAD_TOO_WIDE = { spreadPct: item.spreadPct, maxSpreadPct: config.MAX_ENTRY_SPREAD_PCT };
+  }
+  if (item.liquidity < 500) {
+    reasonCodes.push("LIQUIDITY_TOO_LOW");
+    reasonDetails.LIQUIDITY_TOO_LOW = { liquidity: item.liquidity, minLiquidity: 500 };
+  }
+  if (item.volume24hr < 50) {
+    reasonCodes.push("VOL_TOO_LOW");
+    reasonDetails.VOL_TOO_LOW = { volume24hr: item.volume24hr, minVolume: 50 };
+  }
+  if (item.hoursLeft !== null && item.hoursLeft < 2) {
+    reasonCodes.push("TOO_CLOSE_TO_EXPIRY");
+    reasonDetails.TOO_CLOSE_TO_EXPIRY = { hoursLeft: item.hoursLeft, minHours: 2 };
+  }
+
+  if (reasonCodes.length > 0) {
+    return { icon: "⚠️", label: "Watch", cls: "tradeability-watch", reasonCodes, reasonDetails };
+  }
+  return { icon: "✅", label: "Tradeable today", cls: "tradeability-ok", reasonCodes: [], reasonDetails: {} };
 }
 
 function signalBadge(type) {
@@ -1331,9 +1349,16 @@ function inferDirection(item) {
   const trade = computeTradeability(item);
   if (trade.label === "Excluded" || trade.label === "Watch") {
     let whyWatch, nextStep;
+    // Inherit reason codes from computeTradeability
+    const reasonCodes = trade.reasonCodes.slice();
+    const reasonDetails = Object.assign({}, trade.reasonDetails);
     if (trade.label === "Excluded") {
       whyWatch = "Market excluded (expired or filtered)";
       nextStep = "Market must be active and within time window";
+      if (reasonCodes.length === 0) {
+        reasonCodes.push("EXCLUDED");
+        reasonDetails.EXCLUDED = { filtered: !!item._filtered, hoursLeft: item.hoursLeft };
+      }
     } else if (item.hoursLeft !== null && item.hoursLeft > 240) {
       whyWatch = "Too far from expiry (>10 days)";
       nextStep = "Wait for market to approach expiry window";
@@ -1353,7 +1378,7 @@ function inferDirection(item) {
       whyWatch = "Market conditions insufficient";
       nextStep = "Improve liquidity, volume, or spread";
     }
-    return { action: "WATCH", actionCls: "pill-watch", whyWatch, nextStep };
+    return { action: "WATCH", actionCls: "pill-watch", whyWatch, nextStep, reasonCodes, reasonDetails };
   }
 
   // Gate: movement / volatility (real action required)
@@ -1376,30 +1401,38 @@ function inferDirection(item) {
   if (!rawAction) {
     return { action: "WATCH", actionCls: "pill-watch",
       whyWatch: "Direction unclear \u2014 no strong signal",
-      nextStep: "Need clearer directional indicator (delta, mispricing, or momentum)" };
+      nextStep: "Need clearer directional indicator (delta, mispricing, or momentum)",
+      reasonCodes: ["DIRECTION_UNCLEAR"],
+      reasonDetails: { DIRECTION_UNCLEAR: { delta1: item.delta1, mispricing: !!item.mispricing, momentum: !!item.momentum, breakout: !!item.breakout } } };
   }
 
   if (!hasMovement) {
     return { action: "WATCH", actionCls: "pill-watch",
       whyWatch: "Insufficient price movement or volatility",
-      nextStep: "Need absMove \u2265 0.3% or volatility \u2265 0.2%" };
+      nextStep: "Need absMove \u2265 0.3% or volatility \u2265 0.2%",
+      reasonCodes: ["NO_MOVEMENT"],
+      reasonDetails: { NO_MOVEMENT: { absMove: item.absMove, minAbsMove: MIN_ABS_MOVE_FOR_EXEC, volatility: item.volatility, minVol: MIN_VOL_FOR_EXEC } } };
   }
 
-  // Gate: BUY NO requires real NO-side orderbook pricing (not synthetic 1\u2212yesPrice)
+  // Gate: BUY NO requires real NO-side orderbook pricing (not synthetic 1−yesPrice)
   if (rawAction === "BUY NO") {
     return { action: "WATCH", actionCls: "pill-watch",
       whyWatch: "No reliable NO-side orderbook pricing",
-      nextStep: "Need real NO-side bestAsk (synthetic 1\u2212yesPrice not executable)" };
+      nextStep: "Need real NO-side bestAsk (synthetic 1\u2212yesPrice not executable)",
+      reasonCodes: ["NO_NO_SIDE_PRICING"],
+      reasonDetails: { NO_NO_SIDE_PRICING: { rawAction: "BUY NO" } } };
   }
 
   // Gate: BUY YES requires executable pricing (bestAskNum from orderbook)
   if (rawAction === "BUY YES" && !(item.bestAskNum > 0)) {
     return { action: "WATCH", actionCls: "pill-watch",
       whyWatch: "No executable YES-side pricing (bestAsk missing)",
-      nextStep: "Need reliable orderbook bestAsk price" };
+      nextStep: "Need reliable orderbook bestAsk price",
+      reasonCodes: ["NO_YES_SIDE_PRICING"],
+      reasonDetails: { NO_YES_SIDE_PRICING: { bestAskNum: item.bestAskNum } } };
   }
 
-  return { action: rawAction, actionCls: "pill-buy-yes", whyWatch: "", nextStep: "" };
+  return { action: rawAction, actionCls: "pill-buy-yes", whyWatch: "", nextStep: "", reasonCodes: [], reasonDetails: {} };
 }
 
 /** Infer entry limit price (numeric). Returns null if not executable. */
@@ -1528,7 +1561,9 @@ function inferSizeWithBreakdown(item, opts) {
  *     exits: { tp, stop }|null,
  *     entryBidNum: number|null,
  *     whyWatch: string|null,
- *     nextStep: string|null }
+ *     nextStep: string|null,
+ *     reasonCodes: string[],
+ *     reasonDetails: object }
  */
 function evaluateCandidateForExecution(item, settings) {
   settings = settings || {};
@@ -1546,6 +1581,7 @@ function evaluateCandidateForExecution(item, settings) {
       sizingBreakdown: null, direction: dir,
       entryNum: null, sizeNum: null, exits: null, entryBidNum: null,
       whyWatch: dir.whyWatch, nextStep: dir.nextStep,
+      reasonCodes: dir.reasonCodes || [], reasonDetails: dir.reasonDetails || {},
     };
   }
 
@@ -1558,6 +1594,7 @@ function evaluateCandidateForExecution(item, settings) {
       entryNum: null, sizeNum: null, exits: null, entryBidNum: null,
       whyWatch: "No executable pricing available",
       nextStep: "Need reliable orderbook bestAsk price",
+      reasonCodes: ["NO_ENTRY_PRICING"], reasonDetails: { NO_ENTRY_PRICING: { action: dir.action, bestAskNum: item.bestAskNum } },
     };
   }
 
@@ -1572,6 +1609,7 @@ function evaluateCandidateForExecution(item, settings) {
       entryNum, sizeNum: null, exits: null, entryBidNum,
       whyWatch: "Cannot determine safe position size",
       nextStep: "Need liquidity \u2265 $500 and 24h volume \u2265 $50",
+      reasonCodes: ["SIZE_NULL"], reasonDetails: { SIZE_NULL: { liquidity: item.liquidity, volume24hr: item.volume24hr, bottleneck: breakdown.bottleneck } },
     };
   }
 
@@ -1603,6 +1641,7 @@ function evaluateCandidateForExecution(item, settings) {
       sizingBreakdown: breakdown, direction: dir,
       entryNum, sizeNum: finalSize, exits: null, entryBidNum,
       whyWatch, nextStep,
+      reasonCodes: ["SIZE_TOO_SMALL"], reasonDetails: { SIZE_TOO_SMALL: { chosen: breakdown.chosen, minLimitOrder: MIN_LIMIT_ORDER_USD, cap: capUsd, bottleneck: originalBottleneck } },
     };
   }
 
@@ -1615,6 +1654,7 @@ function evaluateCandidateForExecution(item, settings) {
       entryNum, sizeNum: finalSize, exits, entryBidNum,
       whyWatch: "Cannot determine exit levels",
       nextStep: "Entry price at extreme \u2014 no room for TP/SL",
+      reasonCodes: ["NO_EXIT_LEVELS"], reasonDetails: { NO_EXIT_LEVELS: { entryNum, volatility: item.volatility } },
     };
   }
 
@@ -1623,6 +1663,7 @@ function evaluateCandidateForExecution(item, settings) {
     sizingBreakdown: breakdown, direction: dir,
     entryNum, sizeNum: finalSize, exits, entryBidNum,
     whyWatch: null, nextStep: null,
+    reasonCodes: [], reasonDetails: {},
   };
 }
 
@@ -1931,7 +1972,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
 
   // Last Auto-Save result panel (shows NO_VIABLE_CANDIDATE breakdown or CREATED count)
   let autoSaveResultHtml = "";
-  if (autoSaveEnabled && lastAutoSaveResult) {
+   if (autoSaveEnabled && lastAutoSaveResult) {
     const r = lastAutoSaveResult;
     if (r.result === "ERROR" && r.error === "NO_VIABLE_CANDIDATE" && r.skipReasons) {
       const reasons = r.skipReasons;
@@ -1940,9 +1981,17 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
         .map(([k, v]) => `${k.replace("skipped_", "")}: ${v}`)
         .join(", ");
       const ts = r.createdAt ? new Date(r.createdAt).toISOString().slice(11, 19) + "Z" : "";
+      // Watch reason codes breakdown
+      const wrc = r.watchReasonCounts || {};
+      const watchCodeParts = Object.entries(wrc)
+        .filter(([, v]) => v > 0)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${v}×${k}`)
+        .join(", ");
       autoSaveResultHtml = `<div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#fca5a5;">` +
         `📊 Last Auto‑Save: <b>NO_VIABLE_CANDIDATE</b> (scanId: ${escHtml(r.scanId || "")})` +
         (reasonParts ? ` — ${escHtml(reasonParts)}` : "") +
+        (watchCodeParts ? `<br><span style="color:#f59e0b;font-size:0.78rem;">🔍 Watch reasons: ${escHtml(watchCodeParts)}</span>` : "") +
         (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
         `</div>`;
     } else if (r.result === "CREATED") {
@@ -2822,7 +2871,7 @@ function renderExplorePage(data) {
 }
 
 /** Render the /system page body. */
-function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday, ticketCloseStats, debugSnapshot) {
+function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttempts, systemSettings, envKillSwitches, autoSavedToday, ticketCloseStats, debugSnapshot, lastAutoSaveTelemetry) {
   autoModeStatus = autoModeStatus || {};
   recentCloseAttempts = recentCloseAttempts || [];
   systemSettings = systemSettings || { autoModeEnabled: false, paperCloseEnabled: false };
@@ -3083,6 +3132,48 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
   const autoSaveBadge = autoSaveEnabled
     ? '<span style="background:#166534;color:#bbf7d0;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">ON</span>'
     : '<span style="background:#7f1d1d;color:#fecaca;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">OFF</span>';
+
+  // Last Auto-Save telemetry panel
+  let lastAutoSaveHtml = "";
+  const lat = lastAutoSaveTelemetry || null;
+  if (lat) {
+    const resultBadge = lat.result && lat.result.startsWith("CREATED")
+      ? `<span style="background:#166534;color:#bbf7d0;padding:2px 8px;border-radius:6px;font-size:0.78rem;font-weight:600;">${escHtml(lat.result)}</span>`
+      : `<span style="background:#7f1d1d;color:#fecaca;padding:2px 8px;border-radius:6px;font-size:0.78rem;font-weight:600;">${escHtml(lat.result || "—")}</span>`;
+    const skipParts = lat.skipReasons
+      ? Object.entries(lat.skipReasons).filter(([, v]) => v > 0).map(([k, v]) => `${escHtml(k.replace("skipped_", ""))}: ${v}`).join(", ")
+      : "";
+    const wrc = lat.watchReasonCounts || {};
+    const watchCodeRows = Object.entries(wrc)
+      .filter(([, v]) => v > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1e293b;"><span style="font-size:0.82rem;color:#e2e8f0;">${escHtml(k)}</span><strong style="color:#f59e0b;font-size:0.82rem;">${v}</strong></div>`)
+      .join("");
+    const examples = lat.topWatchExamples || [];
+    const examplesHtml = examples.length > 0
+      ? examples.map((ex) =>
+          `<div style="font-size:0.78rem;color:#94a3b8;padding:4px 0;border-bottom:1px solid #0f172a;">` +
+          `<span style="color:#60a5fa;">${escHtml(ex.marketSlug || ex.conditionId || "—")}</span> ` +
+          `<span style="color:#f59e0b;">[${(ex.reasonCodes || []).map((c) => escHtml(c)).join(", ")}]</span>` +
+          `</div>`
+        ).join("")
+      : '<div style="font-size:0.78rem;color:#6b7280;">No watch examples</div>';
+    lastAutoSaveHtml = `
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid #1e293b;">
+        <h3 style="margin:0 0 8px;font-size:0.88rem;color:#e2e8f0;">📊 Last Auto-Save</h3>
+        <div class="grid-2" style="gap:6px 24px;">
+          <div><span class="label">Result</span> ${resultBadge}</div>
+          <div><span class="label">Scan ID</span> <span style="font-size:0.78rem;color:#94a3b8;">${escHtml(lat.scanId || "—")}</span></div>
+          <div><span class="label">Created</span> <strong>${lat.createdCount || 0}</strong></div>
+          <div><span class="label">Timestamp</span> <span style="font-size:0.78rem;">${utcSpan(lat.ts, "—")}</span></div>
+        </div>
+        ${skipParts ? `<div style="margin-top:6px;font-size:0.78rem;color:#94a3b8;">Skip reasons: ${escHtml(skipParts)}</div>` : ""}
+        ${watchCodeRows ? `<div style="margin-top:8px;"><strong style="font-size:0.82rem;color:#f59e0b;">🔍 Watch Reason Codes</strong>${watchCodeRows}</div>` : ""}
+        ${examples.length > 0 ? `<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:0.78rem;color:#6b7280;">Top watch examples (${examples.length})</summary><div style="margin-top:4px;">${examplesHtml}</div></details>` : ""}
+      </div>
+    `;
+  }
+
   const autoSavePanel = `
     <div class="card" style="margin-top:16px;">
       <h2 style="margin-top:0;">💾 Auto-Save EXECUTE</h2>
@@ -3096,6 +3187,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
           ${autoSaveEnabled ? "Disable" : "Enable"}
         </button>
       </div>
+      ${lastAutoSaveHtml}
     </div>
   `;
 
