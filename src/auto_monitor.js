@@ -6,6 +6,7 @@ const TradeTicket = require("../models/TradeTicket");
 const CloseAttempt = require("../models/CloseAttempt");
 const MonitorLease = require("../models/MonitorLease");
 const SystemSetting = require("../models/SystemSetting");
+const PaperRunnerLog = require("../models/PaperRunnerLog");
 
 // ---------------------------------------------------------------------------
 // In-memory state (exposed for /system observability)
@@ -876,6 +877,24 @@ async function attemptAutoClose(ticket, observedPrice, reason, effectivePaperClo
         result: "PAPER_CLOSED",
       });
 
+      // Append CLOSE event to PaperRunnerLog audit trail (if this ticket has one)
+      PaperRunnerLog.findOne({ ticketId, phase: "PAPER_FILL" }).lean().then(async (fillLog) => {
+        if (fillLog) {
+          await PaperRunnerLog.create({
+            runId: fillLog.runId,
+            ticketId,
+            phase: "CLOSE",
+            data: {
+              closeFillPrice: observedPrice,
+              closeReason: reason,
+              realizedPnlUsd,
+              realizedPnlPct,
+              isSimulated: true,
+            },
+          });
+        }
+      }).catch(() => {});
+
       monitorState.closesToday++;
       // Reset debounce after successful paper close
       ticketDebounce.delete(String(ticketId));
@@ -1104,6 +1123,26 @@ async function monitorTick() {
       { _id: ticket._id },
       { $set: priceUpdate }
     ).catch(() => {});
+
+    // Append MONITOR_OBSERVATION to PaperRunnerLog (fire-and-forget, non-blocking)
+    // Only for tickets that have a paper-runner audit trail
+    PaperRunnerLog.findOne({ ticketId: ticket._id, phase: "PAPER_FILL" }).lean().then(async (fillLog) => {
+      if (fillLog) {
+        await PaperRunnerLog.create({
+          runId: fillLog.runId,
+          ticketId: ticket._id,
+          phase: "MONITOR_OBSERVATION",
+          data: {
+            observedBid: priceResult.price,
+            source: priceResult.source,
+            bestBid: priceResult.bestBid,
+            bestAsk: priceResult.bestAsk,
+            spread: priceResult.spread,
+            topBidSize: priceResult.topBidSize,
+          },
+        });
+      }
+    }).catch(() => {});
 
     const { triggered, reason } = checkTrigger(ticket, priceResult.price);
 
