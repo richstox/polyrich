@@ -1810,6 +1810,8 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
       <a href="/scan?returnTo=/trade" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
     ${autoSaveStatusLine}
+    <div id="sizing-block-warning" style="display:none;background:rgba(127,29,29,.35);border:2px solid #991b1b;border-radius:10px;padding:12px 16px;margin-bottom:10px;font-size:0.88rem;color:#fecaca;line-height:1.5;">
+    </div>
     <div id="limit-order-warning" style="display:none;background:rgba(127,29,29,.3);border:1px solid #7f1d1d;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#fecaca;">
       ⚠️ Max trade cap must be at least $5 for limit orders.
       <button id="set-cap-5-btn" style="margin-left:8px;padding:3px 10px;border-radius:6px;border:1px solid #991b1b;background:#1e293b;color:#fecaca;font-weight:600;font-size:0.82rem;cursor:pointer;">Set cap to $5</button>
@@ -1961,6 +1963,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
       var profileSelect = document.getElementById('risk-profile-select');
       var badge = document.getElementById('risk-badge');
       var limitWarn = document.getElementById('limit-order-warning');
+      var sizingBlockWarn = document.getElementById('sizing-block-warning');
       var setCap5Btn = document.getElementById('set-cap-5-btn');
       if (!brInput || !riskInput || !capInput || !profileSelect) return;
 
@@ -2018,6 +2021,54 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
         } else {
           if (limitWarn) limitWarn.style.display = 'none';
         }
+      }
+
+      function updateSizingBlockWarning(bankroll, hasBankroll, riskDec, capUsd) {
+        if (!sizingBlockWarn) return;
+        var problems = [];
+        var advice = [];
+        var effectiveBudget;
+
+        if (hasBankroll) {
+          var riskBudget = bankroll * riskDec;
+          effectiveBudget = Math.min(capUsd, riskBudget);
+
+          if (riskBudget < MIN_ORDER && capUsd < MIN_ORDER) {
+            problems.push('Risk budget is $' + riskBudget.toFixed(2) + ' (bankroll $' + bankroll + ' × ' + (riskDec * 100).toFixed(1) + '%) AND max trade cap is $' + capUsd.toFixed(0) + '. Both are below the $' + MIN_ORDER + ' minimum.');
+            var minRiskPct = Math.ceil(MIN_ORDER / bankroll * 10000) / 100;
+            advice.push('Set Risk % to at least ' + minRiskPct + '% OR increase bankroll to at least $' + Math.ceil(MIN_ORDER / riskDec));
+            advice.push('Set Max Trade Cap to at least $' + MIN_ORDER);
+          } else if (riskBudget < MIN_ORDER) {
+            problems.push('Risk budget is only $' + riskBudget.toFixed(2) + ' (bankroll $' + bankroll + ' × ' + (riskDec * 100).toFixed(1) + '%). This is below the $' + MIN_ORDER + ' Polymarket minimum order.');
+            var minRiskPct2 = Math.ceil(MIN_ORDER / bankroll * 10000) / 100;
+            advice.push('Increase Risk % to at least ' + minRiskPct2 + '%');
+            advice.push('Or increase bankroll to at least $' + Math.ceil(MIN_ORDER / riskDec));
+          } else if (capUsd < MIN_ORDER) {
+            problems.push('Max trade cap is $' + capUsd.toFixed(0) + ', below the $' + MIN_ORDER + ' Polymarket minimum order.');
+            advice.push('Set Max Trade Cap to at least $' + MIN_ORDER);
+          }
+        } else {
+          effectiveBudget = capUsd;
+          if (capUsd < MIN_ORDER) {
+            problems.push('Max trade cap is $' + capUsd.toFixed(0) + ', below the $' + MIN_ORDER + ' Polymarket minimum order.');
+            advice.push('Set Max Trade Cap to at least $' + MIN_ORDER);
+          }
+        }
+
+        if (problems.length === 0) {
+          sizingBlockWarn.style.display = 'none';
+          return;
+        }
+
+        var html = '<div style="font-weight:700;font-size:1rem;margin-bottom:6px;">🚫 Settings block ALL trades</div>';
+        html += '<div style="margin-bottom:6px;">' + problems.join(' ') + '</div>';
+        html += '<div style="font-weight:600;">What to do:</div><ul style="margin:4px 0 0 18px;padding:0;">';
+        for (var i = 0; i < advice.length; i++) {
+          html += '<li>' + advice[i] + '</li>';
+        }
+        html += '</ul>';
+        sizingBlockWarn.innerHTML = html;
+        sizingBlockWarn.style.display = 'block';
       }
 
       // Profile dropdown handler
@@ -2089,6 +2140,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
 
         updateBadge(riskDec);
         updateLimitWarning(capUsd);
+        updateSizingBlockWarning(bankroll, hasBankroll, riskDec, capUsd);
 
         var cards = document.querySelectorAll('[data-execute="1"]');
         for (var i = 0; i < cards.length; i++) {
