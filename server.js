@@ -157,6 +157,12 @@ let scanStatus = {
 // Mutex to prevent overlapping scans
 let scanRunning = false;
 
+// In-memory auto-save telemetry (populated by autoSaveExecuteTickets, read by /metrics)
+let autoSaveTelemetry = {
+  lastAutoSave: null,       // { scanId, result, createdCount, skipReasons, ts }
+  lastAutoSaveError: null,  // string | null
+};
+
 // ---------------------------------------------------------------------------
 // runScan: idempotent — re-running the same scanId creates no duplicates
 // ---------------------------------------------------------------------------
@@ -255,7 +261,7 @@ async function runScan() {
       pagesFetched: fetchStats.pagesFetched,
     }));
 
-    // Auto-save EXECUTE tickets (non-blocking, fire-and-forget).
+    // Auto-save EXECUTE tickets (awaited so telemetry is populated before return).
     // IMPORTANT: This is the ONLY call site for autoSaveExecuteTickets().
     // It runs exclusively inside runScan() after a successful new scan —
     // NOT from the /trade route, page refresh, or any HTTP handler.
@@ -264,9 +270,13 @@ async function runScan() {
     // Additionally, the scanRunning mutex (line 149) prevents overlapping scans,
     // and the atomic lastAutoSaveScanId guard inside autoSaveExecuteTickets()
     // prevents duplicate auto-saves even across process instances.
-    autoSaveExecuteTickets(scanId).catch((err) => {
+    try {
+      await autoSaveExecuteTickets(scanId);
+    } catch (err) {
       console.warn(JSON.stringify({ msg: "autoSave error", scanId, err: err.message }));
-    });
+      autoSaveTelemetry.lastAutoSave = { scanId, result: "ERROR", createdCount: 0, skipReasons: null, ts: new Date().toISOString() };
+      autoSaveTelemetry.lastAutoSaveError = err.message;
+    }
 
     return candidates;
   } catch (err) {
@@ -307,10 +317,13 @@ async function autoSaveExecuteTickets(scanId) {
     );
   } catch (err) {
     console.warn(JSON.stringify({ msg: "autoSave: idempotency guard error", scanId, err: err.message }));
+    autoSaveTelemetry.lastAutoSave = { scanId, result: "ERROR", createdCount: 0, skipReasons: null, ts: new Date().toISOString() };
+    autoSaveTelemetry.lastAutoSaveError = "idempotency guard error: " + err.message;
     return;
   }
   if (!guardResult) {
     console.log(JSON.stringify({ msg: "autoSave: already processed this scanId, skipping", scanId }));
+    // Don't overwrite telemetry — previous run for this scanId already wrote it
     return;
   }
 
@@ -319,10 +332,14 @@ async function autoSaveExecuteTickets(scanId) {
     settings = await SystemSetting.getSettings();
   } catch (err) {
     console.warn(JSON.stringify({ msg: "autoSave: cannot read settings", err: err.message }));
+    autoSaveTelemetry.lastAutoSave = { scanId, result: "ERROR", createdCount: 0, skipReasons: null, ts: new Date().toISOString() };
+    autoSaveTelemetry.lastAutoSaveError = "cannot read settings: " + err.message;
     return;
   }
   if (!settings.autoSaveExecuteEnabled) {
     console.log(JSON.stringify({ msg: "autoSave: autoSaveExecuteEnabled is OFF, skipping", scanId }));
+    autoSaveTelemetry.lastAutoSave = { scanId, result: "DISABLED", createdCount: 0, skipReasons: null, ts: new Date().toISOString() };
+    autoSaveTelemetry.lastAutoSaveError = null;
     return;
   }
 
@@ -332,11 +349,15 @@ async function autoSaveExecuteTickets(scanId) {
     tradeCandidates = result.tradeCandidates || [];
   } catch (err) {
     console.warn(JSON.stringify({ msg: "autoSave: buildIdeas failed", err: err.message }));
+    autoSaveTelemetry.lastAutoSave = { scanId, result: "ERROR", createdCount: 0, skipReasons: null, ts: new Date().toISOString() };
+    autoSaveTelemetry.lastAutoSaveError = "buildIdeas failed: " + err.message;
     return;
   }
 
   if (tradeCandidates.length === 0) {
     console.log(JSON.stringify({ msg: "autoSave: buildIdeas returned 0 tradeCandidates", scanId }));
+    autoSaveTelemetry.lastAutoSave = { scanId, result: "NO_VIABLE_CANDIDATE", createdCount: 0, skipReasons: { no_trade_candidates: true }, ts: new Date().toISOString() };
+    autoSaveTelemetry.lastAutoSaveError = null;
     return;
   }
 
@@ -412,6 +433,8 @@ async function autoSaveExecuteTickets(scanId) {
       candidateDetails,
       ts: new Date().toISOString(),
     }));
+    autoSaveTelemetry.lastAutoSave = { scanId, result: "NO_VIABLE_CANDIDATE", createdCount: 0, skipReasons, ts: new Date().toISOString() };
+    autoSaveTelemetry.lastAutoSaveError = null;
     return;
   }
 
@@ -647,6 +670,10 @@ async function autoSaveExecuteTickets(scanId) {
     total: toSave.length,
     ts: new Date().toISOString(),
   }));
+
+  const resultLabel = created > 0 ? `CREATED_${created}` : "NO_VIABLE_CANDIDATE";
+  autoSaveTelemetry.lastAutoSave = { scanId, result: resultLabel, createdCount: created, skipReasons, ts: new Date().toISOString() };
+  autoSaveTelemetry.lastAutoSaveError = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -948,11 +975,17 @@ if (url.pathname === "/trade") {
     let dbSnapshotCount = null;
     let dbScanCount = null;
     let recentScans = [];
+    let systemSettings = null;
+    let autoSavedToday = 0;
     try {
-      [dbSnapshotCount, dbScanCount, recentScans] = await Promise.all([
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+      [dbSnapshotCount, dbScanCount, recentScans, systemSettings, autoSavedToday] = await Promise.all([
         MarketSnapshot.estimatedDocumentCount(),
         Scan.estimatedDocumentCount(),
         Scan.find().sort({ startedAt: -1 }).limit(3).lean(),
+        SystemSetting.getSettings(),
+        AutoSaveLog.countDocuments({ result: "CREATED", createdAt: { $gte: todayStart } }),
       ]);
     } catch (_) {}
 
@@ -984,6 +1017,11 @@ if (url.pathname === "/trade") {
       dbSnapshotCount,
       dbScanCount,
       last3Scans,
+      // Auto-save telemetry
+      autoSaveExecuteEnabled: (systemSettings && systemSettings.autoSaveExecuteEnabled) || false,
+      autoSavedToday,
+      lastAutoSave: autoSaveTelemetry.lastAutoSave,
+      lastAutoSaveError: autoSaveTelemetry.lastAutoSaveError,
       ts: new Date().toISOString(),
     };
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -2488,6 +2526,9 @@ if (url.pathname === "/trade") {
           ]);
           // Reset the lastAutoSaveScanId so next scan can auto-save
           await SystemSetting.updateOne({ _id: "system" }, { $set: { lastAutoSaveScanId: null } });
+          // Reset in-memory auto-save telemetry
+          autoSaveTelemetry.lastAutoSave = null;
+          autoSaveTelemetry.lastAutoSaveError = null;
           deleted.tickets = ticketResult.deletedCount;
           deleted.closeAttempts = closeAttemptResult.deletedCount;
           deleted.autoSaveLogs = autoSaveResult.deletedCount;
