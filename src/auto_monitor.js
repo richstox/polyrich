@@ -1348,5 +1348,6 @@ module.exports = {
   debounceCheck,
   attemptAutoClose,
   persistMonitorReason,
+  monitorTick,
   monitorState,
 };
