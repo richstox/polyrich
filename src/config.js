@@ -89,6 +89,9 @@ module.exports = {
   // Min top-of-book bid size (USD notional at bid price) to enable auto-close.
   // If close-side liquidity is below this, autoClose is blocked with INSUFFICIENT_BID_SIZE.
   MIN_BID_SIZE_USD: parseFloat(process.env.MIN_BID_SIZE_USD || "20"),
+  // Bid notional must also cover this fraction of position size.
+  // E.g. 0.5 = bid notional ≥ 50% of maxSizeUsd. Ensures exit liquidity scales with position.
+  MIN_BID_NOTIONAL_RATIO: parseFloat(process.env.MIN_BID_NOTIONAL_RATIO || "0.5"),
 
   // ---------------------------------------------------------------------------
   // Volatility-adaptive TP/SL

@@ -133,7 +133,7 @@ function computeTradeability(item) {
   }
   if (
     (item.hoursLeft !== null && item.hoursLeft > 240) ||
-    item.spreadPct > 0.15 ||
+    item.spreadPct > config.MAX_ENTRY_SPREAD_PCT ||
     item.liquidity < 500 ||
     item.volume24hr < 50 ||
     (item.hoursLeft !== null && item.hoursLeft < 2)
@@ -1337,9 +1337,9 @@ function inferDirection(item) {
     } else if (item.hoursLeft !== null && item.hoursLeft > 240) {
       whyWatch = "Too far from expiry (>10 days)";
       nextStep = "Wait for market to approach expiry window";
-    } else if (item.spreadPct > 0.15) {
+    } else if (item.spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
       whyWatch = `Spread too wide (${(item.spreadPct * 100).toFixed(1)}%)`;
-      nextStep = "Need spread \u2264 15%";
+      nextStep = `Need spread \u2264 ${(config.MAX_ENTRY_SPREAD_PCT * 100).toFixed(0)}%`;
     } else if (item.liquidity < 500) {
       whyWatch = `Low liquidity ($${Math.round(item.liquidity)})`;
       nextStep = "Need liquidity \u2265 $500";
@@ -1414,11 +1414,19 @@ function inferEntry(item, direction) {
 }
 
 /** Infer conservative max size (numeric $) from liquidity/volume. Returns null if not computable. */
-function inferSize(item) {
+function inferSize(item, opts) {
+  opts = opts || {};
   if (item.liquidity < 500 || item.volume24hr < 50) return null;
   const fromLiq = item.liquidity * SIZE_LIQUIDITY_PCT;
   const fromVol = item.volume24hr * SIZE_VOLUME_PCT;
-  const raw = Math.min(fromLiq, fromVol, MAX_TRADE_CAP_USD_DEFAULT);
+  // User cap or default hard cap
+  const capUsd = (typeof opts.maxTradeCapUsd === "number" && opts.maxTradeCapUsd > 0)
+    ? opts.maxTradeCapUsd : MAX_TRADE_CAP_USD_DEFAULT;
+  // Risk budget: bankroll × riskPct (when both provided)
+  const riskBudget = (typeof opts.bankrollUsd === "number" && opts.bankrollUsd > 0 &&
+                      typeof opts.riskPct === "number" && opts.riskPct > 0)
+    ? opts.bankrollUsd * opts.riskPct : Infinity;
+  const raw = Math.min(fromLiq, fromVol, capUsd, riskBudget);
   if (raw < 1) return null;
   return Math.floor(raw);
 }

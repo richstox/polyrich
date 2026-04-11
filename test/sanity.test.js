@@ -753,9 +753,10 @@ console.log("\ncomputeTradeability");
   const intraday = { hoursLeft: 24, spreadPct: 0.05, liquidity: 10000, volume24hr: 5000, _filtered: false };
   assert(computeTradeability(intraday).label === "Tradeable today", "intraday 24h → Tradeable today");
 
-  // Wide spread (>0.15) must be Watch
-  const wideSpread = { hoursLeft: 48, spreadPct: 0.20, liquidity: 10000, volume24hr: 5000, _filtered: false };
-  assert(computeTradeability(wideSpread).label === "Watch", "spreadPct 0.20 → Watch");
+  // Wide spread (>MAX_ENTRY_SPREAD_PCT) must be Watch
+  const cfg2 = require("../src/config");
+  const wideSpread = { hoursLeft: 48, spreadPct: cfg2.MAX_ENTRY_SPREAD_PCT + 0.05, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(wideSpread).label === "Watch", "spreadPct above MAX_ENTRY_SPREAD_PCT → Watch");
 
   // Expired market → Excluded
   const expired = { hoursLeft: -1, spreadPct: 0.05, liquidity: 10000, volume24hr: 5000, _filtered: false };
@@ -3221,6 +3222,110 @@ console.log("\nfinal selection: mispricing quota");
   assert(slPnl < 0, `PnL at SL: $${slPnl.toFixed(2)} (negative as expected)`);
 
   console.log("\n  ✅ Paper runner safety + flow validated");
+}
+
+// ---------------------------------------------------------------------------
+// inferSize: bankroll-aware sizing
+// ---------------------------------------------------------------------------
+{
+  console.log("\ninferSize: bankroll-aware sizing");
+  const { inferSize } = require("../src/html_renderer");
+
+  const market = { liquidity: 100000, volume24hr: 50000, spreadPct: 0.03 };
+
+  // No opts → default cap ($50)
+  const sizeDefault = inferSize(market);
+  assert(sizeDefault === 50, `Default cap: $${sizeDefault} = $50`);
+
+  // With bankroll $10,000, riskPct 1%, cap $100
+  const sizeWithBankroll = inferSize(market, { bankrollUsd: 10000, riskPct: 0.01, maxTradeCapUsd: 100 });
+  // riskBudget = 10000 × 0.01 = $100, cap = $100, fromLiq = 1000, fromVol = 1000
+  // min(1000, 1000, 100, 100) = $100
+  assert(sizeWithBankroll === 100, `Bankroll $10k, 1%, cap $100 → $${sizeWithBankroll} = $100`);
+
+  // With bankroll $500, riskPct 1%, cap $50
+  const sizeSmall = inferSize(market, { bankrollUsd: 500, riskPct: 0.01, maxTradeCapUsd: 50 });
+  // riskBudget = 500 × 0.01 = $5, cap = $50
+  // min(1000, 1000, 50, 5) = $5
+  assert(sizeSmall === 5, `Bankroll $500, 1%, cap $50 → $${sizeSmall} = $5`);
+
+  // With bankroll $100, riskPct 1% → $1 (too low, returns null since < 1)
+  const sizeTiny = inferSize(market, { bankrollUsd: 50, riskPct: 0.01, maxTradeCapUsd: 50 });
+  // riskBudget = 50 × 0.01 = $0.50 → < 1 → null
+  assert(sizeTiny === null, `Bankroll $50, 1% → null (below $1 floor)`);
+
+  // Only cap set, no bankroll
+  const sizeCapOnly = inferSize(market, { maxTradeCapUsd: 200 });
+  // min(1000, 1000, 200, Infinity) = $200
+  assert(sizeCapOnly === 200, `Cap $200, no bankroll → $${sizeCapOnly} = $200`);
+
+  // Bankroll set, no riskPct → riskPct check fails, riskBudget = Infinity
+  const sizeBrOnly = inferSize(market, { bankrollUsd: 10000 });
+  // min(1000, 1000, 50, Infinity) = $50 (default cap)
+  assert(sizeBrOnly === 50, `Bankroll set, no riskPct → default cap $${sizeBrOnly} = $50`);
+
+  // Backward compat: no opts = same as before
+  const sizeNoOpts = inferSize(market);
+  assert(sizeNoOpts === 50, `No opts → $${sizeNoOpts} = $50 (backward compat)`);
+}
+
+// ---------------------------------------------------------------------------
+// computeTradeability uses config.MAX_ENTRY_SPREAD_PCT (not hardcoded 0.15)
+// ---------------------------------------------------------------------------
+{
+  console.log("\ncomputeTradeability uses config.MAX_ENTRY_SPREAD_PCT");
+  const { computeTradeability } = require("../src/html_renderer");
+  const cfg = require("../src/config");
+
+  // Spread just below config threshold → Tradeable
+  const justBelow = { hoursLeft: 48, spreadPct: cfg.MAX_ENTRY_SPREAD_PCT - 0.01, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(justBelow).label === "Tradeable today",
+    `Spread ${((cfg.MAX_ENTRY_SPREAD_PCT - 0.01) * 100).toFixed(0)}% (below threshold) → Tradeable`);
+
+  // Spread just above config threshold → Watch
+  const justAbove = { hoursLeft: 48, spreadPct: cfg.MAX_ENTRY_SPREAD_PCT + 0.01, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(justAbove).label === "Watch",
+    `Spread ${((cfg.MAX_ENTRY_SPREAD_PCT + 0.01) * 100).toFixed(0)}% (above threshold) → Watch`);
+}
+
+// ---------------------------------------------------------------------------
+// MIN_BID_NOTIONAL_RATIO config exists
+// ---------------------------------------------------------------------------
+{
+  console.log("\nMIN_BID_NOTIONAL_RATIO config exists");
+  const cfg = require("../src/config");
+  assert(typeof cfg.MIN_BID_NOTIONAL_RATIO === "number",
+    "MIN_BID_NOTIONAL_RATIO config exists");
+  assert(cfg.MIN_BID_NOTIONAL_RATIO > 0 && cfg.MIN_BID_NOTIONAL_RATIO <= 1,
+    "MIN_BID_NOTIONAL_RATIO is between 0 and 1");
+  assert(cfg.MIN_BID_NOTIONAL_RATIO === 0.5,
+    "Default MIN_BID_NOTIONAL_RATIO is 0.5 (50%)");
+}
+
+// ---------------------------------------------------------------------------
+// Liquidity gate: position-size relative
+// ---------------------------------------------------------------------------
+{
+  console.log("\nLiquidity gate: position-size relative");
+  const cfg = require("../src/config");
+
+  // Small position ($20): flat floor dominates
+  // min required = max($20, $20 × 0.5) = max(20, 10) = $20
+  const minBidSmall = Math.max(cfg.MIN_BID_SIZE_USD, 20 * cfg.MIN_BID_NOTIONAL_RATIO);
+  assert(minBidSmall === cfg.MIN_BID_SIZE_USD,
+    `Small position $20: min bid = $${minBidSmall} (flat floor dominates)`);
+
+  // Large position ($500): ratio dominates
+  // min required = max($20, $500 × 0.5) = max(20, 250) = $250
+  const minBidLarge = Math.max(cfg.MIN_BID_SIZE_USD, 500 * cfg.MIN_BID_NOTIONAL_RATIO);
+  assert(minBidLarge === 250,
+    `Large position $500: min bid = $${minBidLarge} (ratio dominates, $250)`);
+
+  // Very large position ($5000): ratio dominates heavily
+  // min required = max($20, $5000 × 0.5) = max(20, 2500) = $2500
+  const minBidHuge = Math.max(cfg.MIN_BID_SIZE_USD, 5000 * cfg.MIN_BID_NOTIONAL_RATIO);
+  assert(minBidHuge === 2500,
+    `Huge position $5000: min bid = $${minBidHuge} (ratio dominates, $2500)`);
 }
 
 // ---------------------------------------------------------------------------

@@ -341,6 +341,7 @@ async function autoSaveExecuteTickets(scanId) {
     ? settings.riskPct : null;
 
   const cards = tradeCandidates.slice(0, 20);
+  const sizingOpts = { bankrollUsd: userBankroll, riskPct: userRiskPct, maxTradeCapUsd: userCap };
   const executeItems = [];
   for (const item of cards) {
     try {
@@ -348,23 +349,8 @@ async function autoSaveExecuteTickets(scanId) {
       if (dir.action === "WATCH") continue;
       const entryNum = inferEntry(item, dir.action);
       if (entryNum === null) continue;
-      let sizeNum = inferSize(item);
+      const sizeNum = inferSize(item, sizingOpts);
       if (sizeNum === null) continue;
-
-      // Clamp to user's settings (mirrors client-side updateCards logic)
-      if (userCap !== null || userBankroll !== null) {
-        const hMax = sizeNum; // heuristic max from inferSize
-        let maxSizeRaw;
-        if (userBankroll !== null && userRiskPct !== null) {
-          const riskBudget = userBankroll * userRiskPct;
-          maxSizeRaw = Math.min(userCap || Infinity, riskBudget, hMax);
-        } else if (userCap !== null) {
-          maxSizeRaw = Math.min(userCap, hMax);
-        } else {
-          maxSizeRaw = hMax;
-        }
-        sizeNum = Math.round(maxSizeRaw * 100) / 100;
-      }
 
       // Skip if below min limit order ($5)
       if (sizeNum < 5) continue;
@@ -488,9 +474,11 @@ async function autoSaveExecuteTickets(scanId) {
 
     // --- Admission gates: liquidity ---
     // Liquidity gate: close-side = bid (selling shares). Check notional at top bid.
+    // Threshold scales with position size: max(flat floor, sizeNum × ratio)
     if (effectiveAutoClose && hasValidBid && bidSizeRaw !== null) {
       const bidNotionalUsd = entryBidNum * bidSizeRaw;
-      if (bidNotionalUsd < config.MIN_BID_SIZE_USD) {
+      const minBidRequired = Math.max(config.MIN_BID_SIZE_USD, sizeNum * config.MIN_BID_NOTIONAL_RATIO);
+      if (bidNotionalUsd < minBidRequired) {
         effectiveAutoClose = false;
         autoCloseBlockedReason = autoCloseBlockedReason || "INSUFFICIENT_BID_SIZE";
       }
@@ -1886,6 +1874,14 @@ if (url.pathname === "/trade") {
       let pickReason = null;
       let pickIndex = -1;
 
+      // Load sizing settings for bankroll-aware sizing
+      const paperSettings = await SystemSetting.findOne().lean().catch(() => ({})) || {};
+      const paperSizingOpts = {
+        bankrollUsd: typeof paperSettings.bankrollUsd === "number" && paperSettings.bankrollUsd > 0 ? paperSettings.bankrollUsd : null,
+        riskPct: typeof paperSettings.riskPct === "number" && paperSettings.riskPct > 0 ? paperSettings.riskPct : null,
+        maxTradeCapUsd: typeof paperSettings.maxTradeCapUsd === "number" && paperSettings.maxTradeCapUsd > 0 ? paperSettings.maxTradeCapUsd : null,
+      };
+
       const maxCandidatesToEval = config.PAPER_RUNNER_MAX_CANDIDATES;
       for (let i = 0; i < Math.min(tradeCandidates.length, maxCandidatesToEval); i++) {
         const item = tradeCandidates[i];
@@ -1894,7 +1890,7 @@ if (url.pathname === "/trade") {
           if (dir.action === "WATCH") continue;
           const entryNum = inferEntry(item, dir.action);
           if (entryNum === null) continue;
-          const sizeNum = inferSize(item);
+          const sizeNum = inferSize(item, paperSizingOpts);
           if (sizeNum === null || sizeNum < 5) continue;
 
           // Require a CLOB token ID
