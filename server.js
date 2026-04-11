@@ -376,9 +376,7 @@ async function autoSaveExecuteTickets(scanId) {
       if (candidateDetails.length < 5) candidateDetails.push(detail);
 
       if (evalResult.status !== "EXECUTE") {
-        if (evalResult.skipReason && skipReasons[evalResult.skipReason] !== undefined) {
-          skipReasons[evalResult.skipReason]++;
-        } else if (evalResult.skipReason) {
+        if (evalResult.skipReason) {
           skipReasons[evalResult.skipReason] = (skipReasons[evalResult.skipReason] || 0) + 1;
         }
         continue;
@@ -1955,9 +1953,7 @@ if (url.pathname === "/trade") {
           if (candidateDetails.length < 5) candidateDetails.push(detail);
 
           if (evalResult.status !== "EXECUTE") {
-            if (evalResult.skipReason && skipReasons[evalResult.skipReason] !== undefined) {
-              skipReasons[evalResult.skipReason]++;
-            } else if (evalResult.skipReason) {
+            if (evalResult.skipReason) {
               skipReasons[evalResult.skipReason] = (skipReasons[evalResult.skipReason] || 0) + 1;
             }
             continue;

@@ -3612,6 +3612,10 @@ console.log("\nfinal selection: mispricing quota");
   // The key assertion from the problem statement:
   // "U trhu s vysokým 24h volume, ale nízkou liquidity, UI musí říct bottleneck=LIQUIDITY"
   // When fromLiq ($6) < fromVol ($1800), fromLiq is the binding constraint from the heuristics
+  assert(r.sizingBreakdown.fromLiq === 6,
+    `fromLiq = 600 * 0.01 = $6: ${r.sizingBreakdown.fromLiq}`);
+  assert(r.sizingBreakdown.fromVol === 1800,
+    `fromVol = 90000 * 0.02 = $1800: ${r.sizingBreakdown.fromVol}`);
   assert(r.sizingBreakdown.fromLiq < r.sizingBreakdown.fromVol,
     `fromLiq ($${r.sizingBreakdown.fromLiq}) < fromVol ($${r.sizingBreakdown.fromVol}): liquidity is tighter`);
 }

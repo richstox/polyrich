@@ -1498,12 +1498,13 @@ function inferSizeWithBreakdown(item, opts) {
   const raw = Math.min(fromLiq, fromVol, capUsd, riskBudget);
   breakdown.chosen = Math.round(raw * 100) / 100;
 
-  // Identify the dominant constraint
-  if (raw <= fromLiq && fromLiq <= fromVol && fromLiq <= capUsd && fromLiq <= riskBudget) {
+  // Identify the dominant constraint (the smallest component)
+  // Precedence when tied: LIQUIDITY > VOLUME > RISK > CAP
+  if (fromLiq <= fromVol && fromLiq <= capUsd && fromLiq <= riskBudget) {
     breakdown.bottleneck = "LIQUIDITY";
-  } else if (raw <= fromVol && fromVol <= capUsd && fromVol <= riskBudget) {
+  } else if (fromVol <= capUsd && fromVol <= riskBudget) {
     breakdown.bottleneck = "VOLUME";
-  } else if (Number.isFinite(riskBudget) && raw <= riskBudget && riskBudget <= capUsd) {
+  } else if (Number.isFinite(riskBudget) && riskBudget <= capUsd) {
     breakdown.bottleneck = "RISK";
   } else {
     breakdown.bottleneck = "CAP";
@@ -1577,6 +1578,8 @@ function evaluateCandidateForExecution(item, settings) {
   // 4) Min order bump & gate
   let finalSize = size;
   const capUsd = sizingOpts.maxTradeCapUsd || MAX_TRADE_CAP_USD_DEFAULT;
+  // Save original bottleneck before overwriting for min-order logic
+  const originalBottleneck = breakdown.bottleneck;
   if (finalSize < MIN_LIMIT_ORDER_USD && capUsd >= MIN_LIMIT_ORDER_USD) {
     finalSize = MIN_LIMIT_ORDER_USD;
     breakdown.chosen = MIN_LIMIT_ORDER_USD;
@@ -1588,9 +1591,9 @@ function evaluateCandidateForExecution(item, settings) {
     let nextStep;
     if (capUsd < MIN_LIMIT_ORDER_USD) {
       nextStep = "Increase your trade cap to at least $" + MIN_LIMIT_ORDER_USD;
-    } else if (breakdown.bottleneck === "RISK") {
+    } else if (originalBottleneck === "RISK") {
       nextStep = "Increase bankroll or risk%";
-    } else if (breakdown.bottleneck === "LIQUIDITY") {
+    } else if (originalBottleneck === "LIQUIDITY") {
       nextStep = "Wait for more liquidity, or increase cap to force minimum";
     } else {
       nextStep = "Wait for more volume, or increase cap to force minimum";
