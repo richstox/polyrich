@@ -1663,7 +1663,7 @@ function renderTradeCard(item) {
     });
 
     return `
-      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-entry-bid="${entryBidNum || ""}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}" data-outcomes="${escHtml(JSON.stringify(outcomes))}" data-end-date="${escHtml(item.endDate || "")}">
+      <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-entry-bid="${entryBidNum || ""}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}" data-outcomes="${escHtml(JSON.stringify(outcomes))}" data-end-date="${escHtml(item.endDate || "")}" data-liquidity="${item.liquidity || 0}" data-volume24hr="${item.volume24hr || 0}">
         <div class="trade-card-header">${questionHtml}</div>
         <div class="action-pill ${actionCls}">\u26A1 ${displayLabel ? escHtml(displayLabel) + " " : ""}${escHtml(displayAction)} @ $${entryNum.toFixed(2)}</div>
         <div class="trade-size-row trade-plan-item" style="margin-bottom:6px;"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
@@ -2154,11 +2154,18 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
           var outcome = card.getAttribute('data-outcome') || '';
           var outcomesRaw = card.getAttribute('data-outcomes') || '[]';
           var outcomesArr; try { outcomesArr = JSON.parse(outcomesRaw); } catch(_) { outcomesArr = []; }
+          // Market microstructure for bottleneck identification
+          var cardLiq = parseFloat(card.getAttribute('data-liquidity')) || 0;
+          var cardVol = parseFloat(card.getAttribute('data-volume24hr')) || 0;
           if (isNaN(hMax) || isNaN(entry) || entry <= 0) continue;
+
+          // Compute individual sizing components to identify bottleneck
+          var fromLiq = cardLiq * 0.01;  // SIZE_LIQUIDITY_PCT
+          var fromVol = cardVol * 0.02;  // SIZE_VOLUME_PCT
+          var riskBudget = hasBankroll ? bankroll * riskDec : Infinity;
 
           var maxSizeRaw;
           if (hasBankroll) {
-            var riskBudget = bankroll * riskDec;
             maxSizeRaw = Math.min(capUsd, riskBudget, hMax);
           } else {
             maxSizeRaw = Math.min(capUsd, hMax);
@@ -2172,6 +2179,23 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
 
           // Min $5 gating — downgrade to WATCH per-card (uses raw, not rounded)
           if (maxSizeRaw < MIN_ORDER) {
+            // Identify the actual bottleneck for accurate user messaging
+            var bottleneck, nextStep;
+            if (capUsd < MIN_ORDER) {
+              bottleneck = 'Your cap ($' + capUsd.toFixed(0) + ') is below $' + MIN_ORDER + ' minimum';
+              nextStep = 'Increase your trade cap to at least $' + MIN_ORDER;
+            } else if (riskBudget < MIN_ORDER && riskBudget <= fromLiq && riskBudget <= fromVol) {
+              bottleneck = 'Risk budget $' + riskBudget.toFixed(2) + ' (bankroll \u00D7 risk%) is below $' + MIN_ORDER;
+              nextStep = 'Increase bankroll or risk%';
+            } else if (fromLiq <= fromVol) {
+              bottleneck = 'Low market liquidity ($' + Math.round(cardLiq).toLocaleString() + ') limits size to $' + Math.floor(fromLiq);
+              nextStep = 'Wait for more liquidity, or increase cap to \u2265$' + MIN_ORDER + ' to force minimum';
+            } else {
+              bottleneck = 'Low 24h volume ($' + Math.round(cardVol).toLocaleString() + ') limits size to $' + Math.floor(fromVol);
+              nextStep = 'Wait for more volume, or increase cap to \u2265$' + MIN_ORDER + ' to force minimum';
+            }
+            var whyWatchMsg = 'Max size $' + maxSizeDisplay.toFixed(2) + ' \u2014 ' + bottleneck;
+
             var pillEl = card.querySelector('.action-pill');
             if (pillEl) {
               pillEl.className = 'action-pill pill-watch';
@@ -2192,8 +2216,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
               else card.appendChild(whyBlock);
             }
             whyBlock.style.display = 'block';
-            whyBlock.innerHTML = '<p style="margin:0 0 6px;font-size:0.88rem;"><strong>WHY WATCH:</strong> Max size $' + maxSizeDisplay.toFixed(2) + ' is below $' + MIN_ORDER + ' minimum limit order</p>' +
-              '<p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> Increase risk% or cap, or increase bankroll</p>';
+            whyBlock.innerHTML = '<p style="margin:0 0 6px;font-size:0.88rem;"><strong>WHY WATCH:</strong> ' + whyWatchMsg + '</p>' +
+              '<p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> ' + nextStep + '</p>';
             var noteEl = card.querySelector('.bankroll-note');
             if (noteEl) noteEl.style.display = 'none';
             // Update save-ticket to WATCH snapshot with context fields
@@ -2204,8 +2228,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
                 base0.tradeability = 'WATCH';
                 base0.action = 'WATCH';
                 base0.planTbd = true;
-                base0.whyWatch = 'Max size $' + maxSizeDisplay.toFixed(2) + ' is below $' + MIN_ORDER + ' minimum limit order';
-                base0.nextStep = 'Increase risk% or cap, or increase bankroll';
+                base0.whyWatch = whyWatchMsg;
+                base0.nextStep = nextStep;
                 base0.entryLimit = null; base0.takeProfit = null; base0.riskExitLimit = null;
                 base0.maxSizeUsd = null; base0.pnlTpUsd = null; base0.pnlTpPct = null;
                 base0.pnlExitUsd = null; base0.pnlExitPct = null;
