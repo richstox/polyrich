@@ -129,7 +129,9 @@ function computeTradeability(item) {
     item._filtered ||
     (item.hoursLeft !== null && item.hoursLeft <= 0)
   ) {
-    return { icon: "❌", label: "Excluded", cls: "tradeability-excluded", reasonCodes: [], reasonDetails: {} };
+    return { icon: "❌", label: "Excluded", cls: "tradeability-excluded",
+      reasonCodes: ["EXCLUDED"],
+      reasonDetails: { EXCLUDED: { filtered: !!item._filtered, hoursLeft: item.hoursLeft } } };
   }
 
   const reasonCodes = [];
@@ -1355,10 +1357,6 @@ function inferDirection(item) {
     if (trade.label === "Excluded") {
       whyWatch = "Market excluded (expired or filtered)";
       nextStep = "Market must be active and within time window";
-      if (reasonCodes.length === 0) {
-        reasonCodes.push("EXCLUDED");
-        reasonDetails.EXCLUDED = { filtered: !!item._filtered, hoursLeft: item.hoursLeft };
-      }
     } else if (item.hoursLeft !== null && item.hoursLeft > 240) {
       whyWatch = "Too far from expiry (>10 days)";
       nextStep = "Wait for market to approach expiry window";
@@ -1972,7 +1970,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
 
   // Last Auto-Save result panel (shows NO_VIABLE_CANDIDATE breakdown or CREATED count)
   let autoSaveResultHtml = "";
-   if (autoSaveEnabled && lastAutoSaveResult) {
+  if (autoSaveEnabled && lastAutoSaveResult) {
     const r = lastAutoSaveResult;
     if (r.result === "ERROR" && r.error === "NO_VIABLE_CANDIDATE" && r.skipReasons) {
       const reasons = r.skipReasons;

@@ -3673,7 +3673,7 @@ console.log("\nfinal selection: mispricing quota");
   const excl = { hoursLeft: -1, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, _filtered: false };
   const r8 = computeTradeability(excl);
   assert(r8.label === "Excluded", "excluded → Excluded");
-  assert(r8.reasonCodes.length === 0, "Excluded has empty reasonCodes");
+  assert(r8.reasonCodes.includes("EXCLUDED"), "Excluded has EXCLUDED reasonCode");
 }
 
 // ---------------------------------------------------------------------------
