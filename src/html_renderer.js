@@ -1764,6 +1764,19 @@ function renderTradeCard(item) {
   // Rewrite abbreviated O/U labels into clear Over/Under text
   const { displayLabel, displayAction } = formatOutcomeAction(outcomeLabel, action, outcomes);
 
+  // Per-card eligibility diagnostics strip (always visible)
+  const diagAction = isExecute ? (action === "BUY YES" ? "BUY_YES" : action === "BUY NO" ? "BUY_NO" : action) : "WATCH";
+  const diagReasonCodes = evalResult.reasonCodes || [];
+  const diagGatesHtml = isExecute
+    ? `<span style="color:#22c55e;">Passed all gates</span>`
+    : `<span style="color:#f59e0b;">${diagReasonCodes.length > 0 ? escHtml(diagReasonCodes.join(", ")) : "gate check failed"}</span>`;
+  const eligibilityStripHtml = `
+    <div class="eligibility-strip" style="background:${isExecute ? "rgba(34,197,94,.08)" : "rgba(245,158,11,.08)"};border:1px solid ${isExecute ? "rgba(34,197,94,.25)" : "rgba(245,158,11,.25)"};border-radius:6px;padding:6px 10px;margin:6px 0;font-size:0.75rem;font-family:monospace;line-height:1.6;">
+      <div><span style="color:#94a3b8;">status:</span> <span style="font-weight:700;color:${isExecute ? "#22c55e" : "#f59e0b"};">${isExecute ? "EXECUTE" : "WATCH"}</span> · <span style="color:#94a3b8;">action:</span> <span style="font-weight:600;">${escHtml(diagAction)}</span> · ${diagGatesHtml}</div>
+      <div style="margin-top:2px;"><span style="color:#94a3b8;">hoursLeft:</span>${formatHoursLeft(item.hoursLeft)} · <span style="color:#94a3b8;">spread:</span>${(item.spreadPct * 100).toFixed(1)}% · <span style="color:#94a3b8;">liq:</span>$${Math.round(item.liquidity).toLocaleString("en-US")} · <span style="color:#94a3b8;">vol24h:</span>${formatVolume(item.volume24hr)} · <span style="color:#94a3b8;">absMove:</span>${item.absMove.toFixed(4)} · <span style="color:#94a3b8;">volatility:</span>${item.volatility.toFixed(4)}</div>
+    </div>
+  `;
+
   // Debug section (shared between EXECUTE and WATCH)
   const debugHtml = `
     <details class="trade-details">
@@ -1865,6 +1878,7 @@ function renderTradeCard(item) {
       <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-entry-bid="${entryBidNum || ""}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}" data-outcomes="${escHtml(JSON.stringify(outcomes))}" data-end-date="${escHtml(item.endDate || "")}" data-liquidity="${item.liquidity || 0}" data-volume24hr="${item.volume24hr || 0}">
         <div class="trade-card-header">${questionHtml}</div>
         <div class="action-pill ${actionCls}">\u26A1 ${displayLabel ? escHtml(displayLabel) + " " : ""}${escHtml(displayAction)} @ $${entryNum.toFixed(2)}</div>
+        ${eligibilityStripHtml}
         <div class="trade-size-row trade-plan-item" style="margin-bottom:2px;"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
         ${sizingDetailsHtml}
         <div class="trade-plan-grid">
@@ -1933,6 +1947,7 @@ function renderTradeCard(item) {
     <div class="trade-card">
       <div class="trade-card-header">${questionHtml}</div>
       <div class="action-pill pill-watch">\uD83D\uDC41 WATCH${displayLabel ? " \u00B7 " + escHtml(displayLabel) : ""}</div>
+      ${eligibilityStripHtml}
       <div style="padding:8px 0;">
         <p style="margin:0 0 6px;font-size:0.88rem;"><strong>WHY WATCH:</strong> ${escHtml(watchReason)}</p>
         <p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> ${escHtml(watchNext)}</p>
@@ -2074,6 +2089,25 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
   const statusBar = renderStatusBar(scanStatus, cards.length, relaxedMode, systemSettings, lastAutoSaveResult);
   const defaultAutoClose = (systemSettings && systemSettings.defaultAutoCloseEnabled) || false;
 
+  // Determine pageScanId — prefer scanStatus.lastScanId, fallback to first item's scanId
+  const pageScanId = scanStatus.lastScanId || (cards.length > 0 && cards[0].scanId) || null;
+
+  // ScanId mismatch warning banner
+  const autoSaveScanId = (lastAutoSaveResult && lastAutoSaveResult.scanId) || null;
+  const scanIdMismatch = pageScanId && autoSaveScanId && pageScanId !== autoSaveScanId;
+  const scanIdMismatchHtml = scanIdMismatch
+    ? `<div style="background:rgba(234,179,8,.15);border:2px solid rgba(234,179,8,.4);border-radius:8px;padding:8px 14px;margin-bottom:10px;font-size:0.85rem;color:#fde047;">` +
+      `⚠️ <b>ScanId mismatch:</b> Trade page is showing scanId <code>${escHtml(pageScanId)}</code> but last Auto‑Save used scanId <code>${escHtml(autoSaveScanId)}</code>. ` +
+      `Results may differ. <a href="/scan?returnTo=/trade" style="color:#fde047;text-decoration:underline;">Run a fresh scan</a> to sync.` +
+      `</div>`
+    : "";
+
+  // Prominent scanId display
+  const scanIdHtml = pageScanId
+    ? `<div style="background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);border-radius:8px;padding:6px 14px;margin-bottom:10px;font-size:0.85rem;color:#a5b4fc;font-family:monospace;">` +
+      `🔑 <b>scanId:</b> <code style="font-size:0.9rem;letter-spacing:0.3px;">${escHtml(pageScanId)}</code></div>`
+    : "";
+
   // Split cards into EXECUTE vs WATCH at render time using unified evaluation
   const executeCards = [];
   const watchCards = [];
@@ -2113,6 +2147,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
 
   return `
     ${statusBar}
+    ${scanIdHtml}
+    ${scanIdMismatchHtml}
     ${noDataHtml}
     ${cards.length > 0 ? `
     <h2 style="margin:20px 0 12px;font-size:1.25rem;">Today: EXECUTE (${execSlice.length})</h2>
