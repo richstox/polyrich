@@ -34,6 +34,7 @@ const paperRunnerLogSchema = new mongoose.Schema(
 
 paperRunnerLogSchema.index({ runId: 1, ts: 1 });
 paperRunnerLogSchema.index({ ticketId: 1, ts: 1 });
+paperRunnerLogSchema.index({ ticketId: 1, phase: 1 });
 // TTL: auto-expire after 90 days
 paperRunnerLogSchema.index({ ts: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
 

@@ -2260,7 +2260,6 @@ if (url.pathname === "/trade") {
           status.textContent = "❌ Error: " + err.message;
         }
         btn.disabled = false;
-        setTimeout(() => location.reload(), 3000);
       }
       </script>`;
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
