@@ -331,6 +331,11 @@ async function autoSaveExecuteTickets(scanId) {
     return;
   }
 
+  if (tradeCandidates.length === 0) {
+    console.log(JSON.stringify({ msg: "autoSave: buildIdeas returned 0 tradeCandidates", scanId }));
+    return;
+  }
+
   // Derive EXECUTE cards using the same logic as renderTradePage
   // Apply user's risk/sizing settings from SystemSetting (synced from Trade page)
   const userCap = typeof settings.maxTradeCapUsd === "number" && settings.maxTradeCapUsd > 0
@@ -343,29 +348,48 @@ async function autoSaveExecuteTickets(scanId) {
   const cards = tradeCandidates.slice(0, 20);
   const sizingOpts = { bankrollUsd: userBankroll, riskPct: userRiskPct, maxTradeCapUsd: userCap };
   const executeItems = [];
+  // Track skip reasons for operator-grade diagnostics (mirrors paper-runner pattern)
+  const skipReasons = {
+    skipped_watch: 0,
+    skipped_no_entry: 0,
+    skipped_no_size: 0,
+    skipped_size_too_small: 0,
+    skipped_exits_null: 0,
+    skipped_error: 0,
+  };
   for (const item of cards) {
     try {
       const dir = inferDirection(item);
-      if (dir.action === "WATCH") continue;
+      if (dir.action === "WATCH") { skipReasons.skipped_watch++; continue; }
       const entryNum = inferEntry(item, dir.action);
-      if (entryNum === null) continue;
+      if (entryNum === null) { skipReasons.skipped_no_entry++; continue; }
       const sizeNum = inferSize(item, sizingOpts);
-      if (sizeNum === null) continue;
+      if (sizeNum === null) { skipReasons.skipped_no_size++; continue; }
 
       // Skip if below min limit order ($5)
-      if (sizeNum < 5) continue;
+      if (sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
 
       // Entry-based TP/SL (volatility-adaptive)
       const entryBidNum = (item.bestBidNum > 0) ? item.bestBidNum : null;
       const exits = inferExit(entryNum, { volatility: item.volatility });
-      if (exits.tp === null || exits.stop === null) continue;
+      if (exits.tp === null || exits.stop === null) { skipReasons.skipped_exits_null++; continue; }
       executeItems.push({ item, dir, entryNum, sizeNum, tpNum: exits.tp, stopNum: exits.stop, entryBidNum });
-    } catch (_) { /* skip */ }
+    } catch (_) { skipReasons.skipped_error++; }
   }
 
   const limit = config.AUTO_SAVE_EXECUTE_LIMIT;
   const toSave = executeItems.slice(0, limit);
-  if (toSave.length === 0) return;
+  if (toSave.length === 0) {
+    console.log(JSON.stringify({
+      msg: "autoSave: 0 executeItems after filtering",
+      scanId,
+      tradeCandidates: tradeCandidates.length,
+      cardsEvaluated: cards.length,
+      skipReasons,
+      ts: new Date().toISOString(),
+    }));
+    return;
+  }
 
   const defaultAutoClose = settings.defaultAutoCloseEnabled || false;
   let created = 0;
