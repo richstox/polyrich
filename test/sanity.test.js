@@ -3058,7 +3058,7 @@ console.log("\nfinal selection: mispricing quota");
   console.log("\n  ✅ HAPPY PATH PROVEN:");
   console.log("    1. Entry at ask (bestAskNum) ✓");
   console.log("    2. Shares = maxSizeUsd / entryPrice ✓");
-  console.log("    3. TP/SL from entry price (entry × 1.10, entry × 0.92) ✓");
+  console.log("    3. TP/SL from entry + volatility (entry ± K × vol) ✓");
   console.log("    4. Monitor uses bid: checkTrigger(ticket, currentBid) ✓");
   console.log("    5. TP trigger: bid >= TP → TP_HIT ✓");
   console.log("    6. SL trigger: bid <= SL → EXIT_HIT ✓");
