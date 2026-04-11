@@ -46,6 +46,7 @@ const {
   inferEntry,
   inferSize,
   inferExit,
+  evaluateCandidateForExecution,
   polymarketUrl,
   safeQuestion,
   whyNowSummary,
@@ -320,7 +321,10 @@ async function autoSaveExecuteTickets(scanId) {
     console.warn(JSON.stringify({ msg: "autoSave: cannot read settings", err: err.message }));
     return;
   }
-  if (!settings.autoSaveExecuteEnabled) return;
+  if (!settings.autoSaveExecuteEnabled) {
+    console.log(JSON.stringify({ msg: "autoSave: autoSaveExecuteEnabled is OFF, skipping", scanId }));
+    return;
+  }
 
   let tradeCandidates;
   try {
@@ -328,6 +332,11 @@ async function autoSaveExecuteTickets(scanId) {
     tradeCandidates = result.tradeCandidates || [];
   } catch (err) {
     console.warn(JSON.stringify({ msg: "autoSave: buildIdeas failed", err: err.message }));
+    return;
+  }
+
+  if (tradeCandidates.length === 0) {
+    console.log(JSON.stringify({ msg: "autoSave: buildIdeas returned 0 tradeCandidates", scanId }));
     return;
   }
 
@@ -341,31 +350,70 @@ async function autoSaveExecuteTickets(scanId) {
     ? settings.riskPct : null;
 
   const cards = tradeCandidates.slice(0, 20);
-  const sizingOpts = { bankrollUsd: userBankroll, riskPct: userRiskPct, maxTradeCapUsd: userCap };
+  const sizingSettings = { bankrollUsd: userBankroll, riskPct: userRiskPct, maxTradeCapUsd: userCap };
   const executeItems = [];
+  // Track skip reasons for operator-grade diagnostics
+  const skipReasons = {
+    skipped_watch: 0,
+    skipped_no_entry: 0,
+    skipped_no_size: 0,
+    skipped_size_too_small: 0,
+    skipped_exits_null: 0,
+    skipped_error: 0,
+  };
+  // Top 5 candidates with their skip reasons for diagnostics
+  const candidateDetails = [];
   for (const item of cards) {
     try {
-      const dir = inferDirection(item);
-      if (dir.action === "WATCH") continue;
-      const entryNum = inferEntry(item, dir.action);
-      if (entryNum === null) continue;
-      const sizeNum = inferSize(item, sizingOpts);
-      if (sizeNum === null) continue;
+      const evalResult = evaluateCandidateForExecution(item, sizingSettings);
+      const detail = {
+        question: safeQuestion(item),
+        conditionId: item.conditionId || null,
+        status: evalResult.status,
+        skipReason: evalResult.skipReason,
+        sizingBreakdown: evalResult.sizingBreakdown,
+      };
+      if (candidateDetails.length < 5) candidateDetails.push(detail);
 
-      // Skip if below min limit order ($5)
-      if (sizeNum < 5) continue;
-
-      // Entry-based TP/SL (volatility-adaptive)
-      const entryBidNum = (item.bestBidNum > 0) ? item.bestBidNum : null;
-      const exits = inferExit(entryNum, { volatility: item.volatility });
-      if (exits.tp === null || exits.stop === null) continue;
-      executeItems.push({ item, dir, entryNum, sizeNum, tpNum: exits.tp, stopNum: exits.stop, entryBidNum });
-    } catch (_) { /* skip */ }
+      if (evalResult.status !== "EXECUTE") {
+        if (evalResult.skipReason) {
+          skipReasons[evalResult.skipReason] = (skipReasons[evalResult.skipReason] || 0) + 1;
+        }
+        continue;
+      }
+      executeItems.push({
+        item, dir: evalResult.direction,
+        entryNum: evalResult.entryNum, sizeNum: evalResult.sizeNum,
+        tpNum: evalResult.exits.tp, stopNum: evalResult.exits.stop,
+        entryBidNum: evalResult.entryBidNum,
+      });
+    } catch (_) { skipReasons.skipped_error++; }
   }
 
   const limit = config.AUTO_SAVE_EXECUTE_LIMIT;
   const toSave = executeItems.slice(0, limit);
-  if (toSave.length === 0) return;
+  if (toSave.length === 0) {
+    // Persist audit log for NO_VIABLE_CANDIDATE so UI can display reason
+    try {
+      await AutoSaveLog.create({
+        scanId,
+        result: "ERROR",
+        error: "NO_VIABLE_CANDIDATE",
+        skipReasons,
+        candidateDetails,
+      });
+    } catch (_) {}
+    console.log(JSON.stringify({
+      msg: "autoSave: 0 executeItems after filtering",
+      scanId,
+      tradeCandidates: tradeCandidates.length,
+      cardsEvaluated: cards.length,
+      skipReasons,
+      candidateDetails,
+      ts: new Date().toISOString(),
+    }));
+    return;
+  }
 
   const defaultAutoClose = settings.defaultAutoCloseEnabled || false;
   let created = 0;
@@ -681,7 +729,13 @@ if (url.pathname === "/trade") {
 
     scanStatus.lastInterestingCount = rawCandidates.length;
 
-    const body = renderTradePage(scanStatus, rawCandidates, relaxedMode, systemSettings);
+    // Fetch last auto-save result for status panel (most recent log entry)
+    let lastAutoSaveResult = null;
+    try {
+      lastAutoSaveResult = await AutoSaveLog.findOne().sort({ createdAt: -1 }).lean();
+    } catch (_) {}
+
+    const body = renderTradePage(scanStatus, rawCandidates, relaxedMode, systemSettings, lastAutoSaveResult);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(pageShell("Trade", "/trade", body));
     return;
@@ -1833,50 +1887,36 @@ if (url.pathname === "/trade") {
   }
 
   // ── POST /api/paper-runner — Execute ONE paper-trading lifecycle ──────
-  // Scans real markets, picks one candidate, opens one paper trade, starts monitoring.
-  // Uses the SAME code paths as normal autoSave + auto-monitor.
+  // Uses the SAME scan candidates as the Trade page, picks one, opens one
+  // paper trade, and starts monitoring.  CLOB book is fetched live per-candidate
+  // for accurate executable pricing.
   if (url.pathname === "/api/paper-runner" && req.method === "POST") {
     const runId = `run_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     const log = (phase, data) => PaperRunnerLog.create({ runId, phase, data }).catch(() => {});
 
     try {
-      // 1) Run a real scan to get fresh market data
-      const scanStarted = new Date();
-      const result = await fetchPolymarkets();
-      const rawMarkets = result.markets;
-      const filtered = rawMarkets
-        .filter((item) =>
-          item.acceptingOrders === true &&
-          item.active === true &&
-          item.closed === false &&
-          item.bestBid !== null &&
-          item.bestAsk !== null &&
-          item.spread !== null
-        )
-        .map(normalizeMarket)
-        .sort((a, b) => {
-          const aScore = Math.log(a.volume24hr + 1) * 100 + Math.log(a.liquidity + 1) * 50 - a.spread * 1000;
-          const bScore = Math.log(b.volume24hr + 1) * 100 + Math.log(b.liquidity + 1) * 50 - b.spread * 1000;
-          return bScore - aScore;
-        });
+      // 1) Reuse the existing scan's candidates (same data as the Trade page).
+      //    This ensures the paper runner evaluates the SAME candidates the user
+      //    sees on the Trade page.  Live CLOB book is still fetched per-candidate
+      //    below for accurate executable pricing.
+      if (!scanStatus.lastScanId) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, runId, error: "No scan data available. Run a scan first." }));
+        return;
+      }
+      const usedScanId = scanStatus.lastScanId;
 
-      const saveLimit = Math.min(filtered.length, config.SAVED_PER_SCAN);
-      const toUpsert = filtered.slice(0, saveLimit);
-      const tempScanId = scanStarted.toISOString();
-      await upsertSnapshots(toUpsert, tempScanId);
-
-      // 2) Build ideas using signal engine (same path as /trade page + autoSave)
-      const ideasResult = await buildIdeas({ ...scanStatus, lastScanId: tempScanId }, {});
+      const ideasResult = await buildIdeas(scanStatus, {});
       const tradeCandidates = ideasResult.tradeCandidates || [];
 
-      // 3) Find the FIRST viable EXECUTE candidate with valid CLOB data
+      // 2) Find the FIRST viable EXECUTE candidate with valid CLOB data
       let picked = null;
       let pickReason = null;
       let pickIndex = -1;
 
       // Load sizing settings for bankroll-aware sizing
       const paperSettings = await SystemSetting.findOne().lean().catch(() => ({})) || {};
-      const paperSizingOpts = {
+      const paperSizingSettings = {
         bankrollUsd: typeof paperSettings.bankrollUsd === "number" && paperSettings.bankrollUsd > 0 ? paperSettings.bankrollUsd : null,
         riskPct: typeof paperSettings.riskPct === "number" && paperSettings.riskPct > 0 ? paperSettings.riskPct : null,
         maxTradeCapUsd: typeof paperSettings.maxTradeCapUsd === "number" && paperSettings.maxTradeCapUsd > 0 ? paperSettings.maxTradeCapUsd : null,
@@ -1887,6 +1927,7 @@ if (url.pathname === "/trade") {
       const skipReasons = {
         skipped_watch: 0,
         skipped_no_entry: 0,
+        skipped_no_size: 0,
         skipped_size_too_small: 0,
         skipped_no_token: 0,
         skipped_no_conditionId: 0,
@@ -1895,23 +1936,38 @@ if (url.pathname === "/trade") {
         skipped_exits_null: 0,
         skipped_error: 0,
       };
+      // Top 5 candidate details for breakdown
+      const candidateDetails = [];
       for (let i = 0; i < Math.min(tradeCandidates.length, maxCandidatesToEval); i++) {
         const item = tradeCandidates[i];
         try {
-          const dir = inferDirection(item);
-          if (dir.action === "WATCH") { skipReasons.skipped_watch++; continue; }
-          const entryNum = inferEntry(item, dir.action);
-          if (entryNum === null) { skipReasons.skipped_no_entry++; continue; }
-          const sizeNum = inferSize(item, paperSizingOpts);
-          if (sizeNum === null || sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
+          // Use unified evaluation for consistent gates
+          const evalResult = evaluateCandidateForExecution(item, paperSizingSettings);
+          const detail = {
+            question: safeQuestion(item),
+            conditionId: item.conditionId || null,
+            status: evalResult.status,
+            skipReason: evalResult.skipReason,
+            sizingBreakdown: evalResult.sizingBreakdown,
+          };
+          if (candidateDetails.length < 5) candidateDetails.push(detail);
 
-          // Require a CLOB token ID
+          if (evalResult.status !== "EXECUTE") {
+            if (evalResult.skipReason) {
+              skipReasons[evalResult.skipReason] = (skipReasons[evalResult.skipReason] || 0) + 1;
+            }
+            continue;
+          }
+
+          const dir = evalResult.direction;
+          const sizeNum = evalResult.sizeNum;
+
+          // Additional execution gates: CLOB token ID + conditionId + live book
           const tokenId = dir.action === "BUY YES"
             ? ((item.yesTokenId || "").trim() || null)
             : ((item.noTokenId || "").trim() || null);
           if (!tokenId) { skipReasons.skipped_no_token++; continue; }
 
-          // Require valid conditionId for monitoring
           const rawConditionId = (item.conditionId || "").trim() || null;
           if (!rawConditionId || !rawConditionId.startsWith("0x")) { skipReasons.skipped_no_conditionId++; continue; }
 
@@ -1926,7 +1982,7 @@ if (url.pathname === "/trade") {
           // Safety: valid executable bid/ask must be > 0
           if (!(entryBidNum > 0) || !(entryAskNum > 0)) { skipReasons.skipped_invalid_bid_ask++; continue; }
 
-          // Compute TP/SL from entry price (volatility-adaptive)
+          // Compute TP/SL from live CLOB ask (more accurate than Gamma snapshot)
           const exits = inferExit(entryAskNum, { volatility: item.volatility });
           if (exits.tp === null || exits.stop === null) { skipReasons.skipped_exits_null++; continue; }
 
@@ -1949,8 +2005,9 @@ if (url.pathname === "/trade") {
           reason: "NO_VIABLE_CANDIDATE",
           candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
           totalCandidates: tradeCandidates.length,
-          totalFetched: rawMarkets.length,
+          scanId: usedScanId,
           skipReasons,
+          candidateDetails,
         });
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
@@ -1959,13 +2016,14 @@ if (url.pathname === "/trade") {
           candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
           totalCandidates: tradeCandidates.length,
           skipReasons,
+          candidateDetails,
         }));
         return;
       }
 
       const { item, dir, entryNum, sizeNum, tpNum, stopNum, entryBidNum, entryAskNum, tokenId, rawConditionId, book } = picked;
 
-      // 4) Log CANDIDATE_SELECTED
+      // 3) Log CANDIDATE_SELECTED
       await log("CANDIDATE_SELECTED", {
         pickIndex, pickReason,
         question: safeQuestion(item),
@@ -1979,7 +2037,7 @@ if (url.pathname === "/trade") {
         reasonCodes: item.reasonCodes || [],
       });
 
-      // 5) Log ENTRY_SNAPSHOT (raw CLOB book data at entry time)
+      // 4) Log ENTRY_SNAPSHOT (raw CLOB book data at entry time)
       await log("ENTRY_SNAPSHOT", {
         tokenId,
         bestBid: book.bestBid,
@@ -1990,7 +2048,7 @@ if (url.pathname === "/trade") {
         entryBid: entryBidNum,
       });
 
-      // 6) Create the paper ticket — using the SAME TradeTicket.create path
+      // 5) Create the paper ticket — using the SAME TradeTicket.create path
       const marketId = rawConditionId || item.marketSlug || safeQuestion(item);
       const actionEnum = dir.action === "BUY YES" ? "BUY_YES" : "BUY_NO";
       const midNum = (entryAskNum + entryBidNum) / 2;
@@ -2004,7 +2062,7 @@ if (url.pathname === "/trade") {
       const pnlStopUsd = sizeNum * (stopNum - entryAskNum) / entryAskNum;
 
       const ticketData = {
-        scanId: tempScanId,
+        scanId: usedScanId,
         source: "TRADE_PAGE",
         marketId,
         conditionId: rawConditionId,
@@ -2052,7 +2110,7 @@ if (url.pathname === "/trade") {
 
       const ticket = await TradeTicket.create(ticketData);
 
-      // 7) Log PAPER_FILL
+      // 6) Log PAPER_FILL
       await log("PAPER_FILL", {
         ticketId: ticket._id,
         entryFillPrice: entryAskNum,
@@ -2285,11 +2343,34 @@ if (url.pathname === "/trade") {
                   '</div>';
               }
             }
+            // Show top candidate details for operator diagnostics
+            var candidateHtml = '';
+            if (data.candidateDetails && data.candidateDetails.length > 0) {
+              candidateHtml = '<div style="margin-top:8px;padding:8px;background:#1a2a1a;border-radius:4px;font-size:12px">' +
+                '<b style="color:#86efac">Top ' + data.candidateDetails.length + ' Candidates:</b><br>';
+              data.candidateDetails.forEach(function(cd, idx) {
+                candidateHtml += '<div style="margin-top:4px;padding:4px 0;border-top:1px solid #333">' +
+                  '<span style="color:#fbbf24">#' + (idx + 1) + '</span> ' +
+                  '<span style="color:#e2e8f0">' + (cd.question || 'unknown').slice(0, 60) + '</span><br>' +
+                  '<span style="color:#aaa">status=' + cd.status + ' skip=' + (cd.skipReason || 'none') + '</span>';
+                if (cd.sizingBreakdown) {
+                  var b = cd.sizingBreakdown;
+                  candidateHtml += '<br><span style="color:#6b7280;font-family:monospace;font-size:11px">' +
+                    'fromLiq=$' + b.fromLiq + ' fromVol=$' + b.fromVol +
+                    (b.riskBudget !== null ? ' riskBudget=$' + b.riskBudget : '') +
+                    ' cap=$' + b.cap + ' chosen=$' + b.chosen +
+                    ' bottleneck=' + b.bottleneck + '</span>';
+                }
+                candidateHtml += '</div>';
+              });
+              candidateHtml += '</div>';
+            }
             result.innerHTML = '<div style="border:1px solid #a00;border-radius:8px;padding:16px;background:#2e1a1a;margin-top:12px">' +
               '<b style="color:#f87171">NO_VIABLE_CANDIDATE</b><br>' +
               '<span style="color:#aaa">' + (data.error || 'Unknown error') + '</span><br>' +
               '<b>Candidates scanned:</b> ' + (data.candidatesScanned || 0) + ' of ' + (data.totalCandidates || 0) +
               skipHtml +
+              candidateHtml +
               '</div>';
           }
         } catch (err) {
