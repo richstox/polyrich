@@ -53,6 +53,7 @@ const {
 const { startMonitorLoop, getMonitorStatus, fetchClobBook } = require("./src/auto_monitor");
 
 const MonitorLease = require("./models/MonitorLease");
+const PaperRunnerLog = require("./models/PaperRunnerLog");
 const DANGER_ZONE_VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN", "RESET_TRADES", "FACTORY_RESET"];
 
 // ---------------------------------------------------------------------------
@@ -1828,6 +1829,447 @@ if (url.pathname === "/trade") {
       res.end(`ticket detail error: ${err.message}`);
       return;
     }
+  }
+
+  // ── POST /api/paper-runner — Execute ONE paper-trading lifecycle ──────
+  // Scans real markets, picks one candidate, opens one paper trade, starts monitoring.
+  // Uses the SAME code paths as normal autoSave + auto-monitor.
+  if (url.pathname === "/api/paper-runner" && req.method === "POST") {
+    const runId = `run_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+    const log = (phase, data) => PaperRunnerLog.create({ runId, phase, data }).catch(() => {});
+
+    try {
+      // 1) Run a real scan to get fresh market data
+      const scanStarted = new Date();
+      const result = await fetchPolymarkets();
+      const rawMarkets = result.markets;
+      const filtered = rawMarkets
+        .filter((item) =>
+          item.acceptingOrders === true &&
+          item.active === true &&
+          item.closed === false &&
+          item.bestBid !== null &&
+          item.bestAsk !== null &&
+          item.spread !== null
+        )
+        .map(normalizeMarket)
+        .sort((a, b) => {
+          const aScore = Math.log(a.volume24hr + 1) * 100 + Math.log(a.liquidity + 1) * 50 - a.spread * 1000;
+          const bScore = Math.log(b.volume24hr + 1) * 100 + Math.log(b.liquidity + 1) * 50 - b.spread * 1000;
+          return bScore - aScore;
+        });
+
+      const saveLimit = Math.min(filtered.length, config.SAVED_PER_SCAN);
+      const toUpsert = filtered.slice(0, saveLimit);
+      const tempScanId = scanStarted.toISOString();
+      await upsertSnapshots(toUpsert, tempScanId);
+
+      // 2) Build ideas using signal engine (same path as /trade page + autoSave)
+      const ideasResult = await buildIdeas({ ...scanStatus, lastScanId: tempScanId }, {});
+      const tradeCandidates = ideasResult.tradeCandidates || [];
+
+      // 3) Find the FIRST viable EXECUTE candidate with valid CLOB data
+      let picked = null;
+      let pickReason = null;
+      let pickIndex = -1;
+
+      for (let i = 0; i < Math.min(tradeCandidates.length, 20); i++) {
+        const item = tradeCandidates[i];
+        try {
+          const dir = inferDirection(item);
+          if (dir.action === "WATCH") continue;
+          const entryNum = inferEntry(item, dir.action);
+          if (entryNum === null) continue;
+          const sizeNum = inferSize(item);
+          if (sizeNum === null || sizeNum < 5) continue;
+
+          // Require a CLOB token ID
+          const tokenId = dir.action === "BUY YES"
+            ? ((item.yesTokenId || "").trim() || null)
+            : ((item.noTokenId || "").trim() || null);
+          if (!tokenId) continue;
+
+          // Require valid conditionId for monitoring
+          const rawConditionId = (item.conditionId || "").trim() || null;
+          if (!rawConditionId || !rawConditionId.startsWith("0x")) continue;
+
+          // Fetch real CLOB book
+          const book = await fetchClobBook(tokenId);
+          if (!book || book.bestBid === null || book.bestAsk === null) continue;
+          if (book.topBidSize === null) continue;
+
+          const entryBidNum = book.bestBid;
+          const entryAskNum = book.bestAsk;
+
+          // Safety: valid executable bid/ask must be > 0
+          if (!(entryBidNum > 0) || !(entryAskNum > 0)) continue;
+
+          // Compute TP/SL from real CLOB bid (sell-to-close basis)
+          const exits = inferExit(entryAskNum, entryBidNum);
+          if (exits.tp === null || exits.stop === null) continue;
+
+          picked = {
+            item, dir, entryNum: entryAskNum, sizeNum,
+            tpNum: exits.tp, stopNum: exits.stop,
+            entryBidNum, entryAskNum,
+            tokenId, rawConditionId, book,
+          };
+          pickIndex = i;
+          pickReason = `Rank #${i + 1} of ${tradeCandidates.length}: ` +
+            `${dir.action}, ask=$${entryAskNum.toFixed(4)}, bid=$${entryBidNum.toFixed(4)}, ` +
+            `liq=$${Math.round(item.liquidity)}, vol24=$${Math.round(item.volume24hr)}`;
+          break;
+        } catch (_) { continue; }
+      }
+
+      if (!picked) {
+        await log("ERROR", {
+          reason: "NO_VIABLE_CANDIDATE",
+          candidatesScanned: Math.min(tradeCandidates.length, 20),
+          totalCandidates: tradeCandidates.length,
+          totalFetched: rawMarkets.length,
+        });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: false, runId,
+          error: "No viable candidate found",
+          candidatesScanned: Math.min(tradeCandidates.length, 20),
+          totalCandidates: tradeCandidates.length,
+        }));
+        return;
+      }
+
+      const { item, dir, entryNum, sizeNum, tpNum, stopNum, entryBidNum, entryAskNum, tokenId, rawConditionId, book } = picked;
+
+      // 4) Log CANDIDATE_SELECTED
+      await log("CANDIDATE_SELECTED", {
+        pickIndex, pickReason,
+        question: safeQuestion(item),
+        conditionId: rawConditionId,
+        marketSlug: item.marketSlug || null,
+        action: dir.action,
+        tokenId,
+        liquidity: item.liquidity,
+        volume24hr: item.volume24hr,
+        latestYes: item.latestYes,
+        reasonCodes: item.reasonCodes || [],
+      });
+
+      // 5) Log ENTRY_SNAPSHOT (raw CLOB book data at entry time)
+      await log("ENTRY_SNAPSHOT", {
+        tokenId,
+        bestBid: book.bestBid,
+        bestAsk: book.bestAsk,
+        topBidSize: book.topBidSize,
+        topAskSize: book.topAskSize,
+        entryAsk: entryAskNum,
+        entryBid: entryBidNum,
+      });
+
+      // 6) Create the paper ticket — using the SAME TradeTicket.create path
+      const marketId = rawConditionId || item.marketSlug || safeQuestion(item);
+      const actionEnum = dir.action === "BUY YES" ? "BUY_YES" : "BUY_NO";
+      const midNum = (entryAskNum + entryBidNum) / 2;
+      const spreadAbs = entryAskNum - entryBidNum;
+      const spreadPct = midNum > 0 ? spreadAbs / midNum : null;
+
+      const shares = sizeNum / entryAskNum;
+      const pnlTpPct = (tpNum - entryAskNum) / entryAskNum * 100;
+      const pnlStopPct = (stopNum - entryAskNum) / entryAskNum * 100;
+      const pnlTpUsd = sizeNum * (tpNum - entryAskNum) / entryAskNum;
+      const pnlStopUsd = sizeNum * (stopNum - entryAskNum) / entryAskNum;
+
+      const ticketData = {
+        scanId: tempScanId,
+        source: "TRADE_PAGE",
+        marketId,
+        conditionId: rawConditionId,
+        marketSlug: (item.marketSlug || "").trim() || null,
+        yesTokenId: (item.yesTokenId || "").trim() || null,
+        noTokenId: (item.noTokenId || "").trim() || null,
+        eventSlug: item.eventSlug || null,
+        eventTitle: item.eventTitle || null,
+        groupItemTitle: item.groupItemTitle || null,
+        marketUrl: polymarketUrl(item) || null,
+        question: safeQuestion(item),
+        tradeability: "EXECUTE",
+        action: actionEnum,
+        reasonCodes: item.reasonCodes || [],
+        whyNow: whyNowSummary(item),
+        planTbd: false,
+        entryLimit: entryAskNum,
+        takeProfit: tpNum,
+        riskExitLimit: stopNum,
+        maxSizeUsd: sizeNum,
+        pnlTpUsd: Math.round(pnlTpUsd * 100) / 100,
+        pnlTpPct: Math.round(pnlTpPct * 10) / 1000,
+        pnlExitUsd: Math.round(pnlStopUsd * 100) / 100,
+        pnlExitPct: Math.round(pnlStopPct * 10) / 1000,
+        endDate: item.endDate || null,
+        entryBid: entryBidNum,
+        entryAsk: entryAskNum,
+        entryMid: Math.round(midNum * 10000) / 10000,
+        entrySpreadAbs: Math.round(spreadAbs * 10000) / 10000,
+        entrySpreadPct: spreadPct !== null ? Math.round(spreadPct * 10000) / 10000 : null,
+        entryBidSize: book.topBidSize,
+        entryAskSize: book.topAskSize,
+        entryExecutionBasis: "ASK",
+        triggerReferenceBasis: "BID",
+        autoCloseEnabled: true,
+        autoCloseBlockedReason: null,
+        status: "OPEN",
+        isSimulated: true,
+      };
+
+      // Use a unique dedupeKey for the runner (includes runId to avoid collisions)
+      ticketData.dedupeKey = crypto.createHash("sha1")
+        .update(`paper-runner|${runId}|${marketId}|${actionEnum}|${entryAskNum}`)
+        .digest("hex");
+
+      const ticket = await TradeTicket.create(ticketData);
+
+      // 7) Log PAPER_FILL
+      await log("PAPER_FILL", {
+        ticketId: ticket._id,
+        entryFillPrice: entryAskNum,
+        shares: Math.round(shares * 100) / 100,
+        maxSizeUsd: sizeNum,
+        takeProfit: tpNum,
+        riskExitLimit: stopNum,
+        triggerBasis: "BID",
+        entryBasis: "ASK",
+      });
+
+      // Update the log docs with the ticketId
+      await PaperRunnerLog.updateMany(
+        { runId, ticketId: null },
+        { $set: { ticketId: ticket._id } }
+      ).catch(() => {});
+
+      console.log(JSON.stringify({
+        msg: "paper-runner-opened",
+        runId,
+        ticketId: String(ticket._id),
+        question: safeQuestion(item),
+        entryAsk: entryAskNum,
+        entryBid: entryBidNum,
+        tp: tpNum,
+        sl: stopNum,
+        shares: Math.round(shares * 100) / 100,
+        maxSizeUsd: sizeNum,
+        ts: new Date().toISOString(),
+      }));
+
+      res.writeHead(201, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        ok: true,
+        runId,
+        ticketId: String(ticket._id),
+        question: safeQuestion(item),
+        pickReason,
+        entry: {
+          fillPrice: entryAskNum,
+          bid: entryBidNum,
+          ask: entryAskNum,
+          shares: Math.round(shares * 100) / 100,
+          maxSizeUsd: sizeNum,
+        },
+        exits: { takeProfit: tpNum, riskExitLimit: stopNum },
+        monitor: "Ticket is OPEN with autoCloseEnabled=true. The existing auto-monitor will monitor and close at TP/SL using CLOB bid.",
+      }));
+    } catch (err) {
+      await log("ERROR", { error: err.message, stack: err.stack });
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, runId, error: err.message }));
+    }
+    return;
+  }
+
+  // ── GET /api/paper-runner/status/:runId — Audit trail for a runner ────
+  const runStatusMatch = url.pathname.match(/^\/api\/paper-runner\/status\/(.+)$/);
+  if (runStatusMatch && req.method === "GET") {
+    try {
+      const runId = decodeURIComponent(runStatusMatch[1]);
+      const logs = await PaperRunnerLog.find({ runId }).sort({ ts: 1 }).lean();
+      if (logs.length === 0) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Run not found" }));
+        return;
+      }
+      // Find the ticket if it exists
+      const fillLog = logs.find(l => l.phase === "PAPER_FILL");
+      let ticket = null;
+      if (fillLog && fillLog.ticketId) {
+        ticket = await TradeTicket.findById(fillLog.ticketId).lean();
+      }
+      // Gather close attempts if ticket exists
+      let closeAttempts = [];
+      if (ticket) {
+        closeAttempts = await CloseAttempt.find({ ticketId: ticket._id }).sort({ createdAt: -1 }).lean();
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ runId, logs, ticket, closeAttempts }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // ── GET /api/paper-runner/runs — List recent paper-runner runs ────────
+  if (url.pathname === "/api/paper-runner/runs" && req.method === "GET") {
+    try {
+      // Get distinct runIds, most recent first
+      const runs = await PaperRunnerLog.aggregate([
+        { $group: {
+          _id: "$runId",
+          firstTs: { $min: "$ts" },
+          lastTs: { $max: "$ts" },
+          phases: { $push: "$phase" },
+          ticketId: { $first: "$ticketId" },
+          count: { $sum: 1 },
+        }},
+        { $sort: { firstTs: -1 } },
+        { $limit: 50 },
+      ]);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ runs }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // ── GET /paper-runner — Operator page ─────────────────────────────────
+  if (url.pathname === "/paper-runner") {
+    try {
+      // Get recent runs
+      const runs = await PaperRunnerLog.aggregate([
+        { $group: {
+          _id: "$runId",
+          firstTs: { $min: "$ts" },
+          lastTs: { $max: "$ts" },
+          phases: { $push: "$phase" },
+          ticketId: { $first: "$ticketId" },
+          count: { $sum: 1 },
+        }},
+        { $sort: { firstTs: -1 } },
+        { $limit: 20 },
+      ]);
+
+      // For each run with a ticket, get the ticket status
+      const ticketIds = runs.filter(r => r.ticketId).map(r => r.ticketId);
+      const tickets = ticketIds.length > 0
+        ? await TradeTicket.find({ _id: { $in: ticketIds } }).lean()
+        : [];
+      const ticketMap = {};
+      for (const t of tickets) ticketMap[String(t._id)] = t;
+
+      // Build operator page HTML
+      let runsHtml = "";
+      if (runs.length === 0) {
+        runsHtml = `<p style="color:#888;margin:24px 0">No paper-runner executions yet. Use the button above to start one.</p>`;
+      } else {
+        for (const run of runs) {
+          const tid = run.ticketId ? String(run.ticketId) : null;
+          const t = tid ? ticketMap[tid] : null;
+          const statusCls = t ? (t.status === "CLOSED" ? "pill-closed" : t.status === "OPEN" ? "pill-open" : "pill-watch") : "pill-watch";
+          const statusLabel = t ? t.status : "NO_TICKET";
+          const pnl = t && t.realizedPnlUsd !== null && t.realizedPnlUsd !== undefined
+            ? `$${t.realizedPnlUsd >= 0 ? "+" : ""}${t.realizedPnlUsd.toFixed(2)} (${((t.realizedPnlPct || 0) * 100).toFixed(1)}%)`
+            : "—";
+          const question = t ? (t.question || "—").slice(0, 80) : "—";
+          const phases = run.phases.join(" → ");
+          const ts = new Date(run.firstTs).toLocaleString();
+
+          runsHtml += `
+          <div style="border:1px solid #333;border-radius:8px;padding:16px;margin-bottom:12px;background:#1a1a2e">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-weight:600;color:#e0e0e0">${question}</span>
+              <span class="${statusCls}" style="padding:2px 10px;border-radius:12px;font-size:13px">${statusLabel}</span>
+            </div>
+            <div style="font-size:13px;color:#aaa;margin-bottom:4px">
+              <b>Run:</b> ${run._id}<br>
+              <b>Started:</b> ${ts}<br>
+              <b>Phases:</b> ${phases}<br>
+              ${t ? `<b>Entry:</b> $${(t.entryAsk || t.entryLimit || 0).toFixed(4)} (ask) | <b>Bid at entry:</b> $${(t.entryBid || 0).toFixed(4)}<br>` : ""}
+              ${t ? `<b>TP:</b> $${(t.takeProfit || 0).toFixed(4)} | <b>SL:</b> $${(t.riskExitLimit || 0).toFixed(4)}<br>` : ""}
+              ${t ? `<b>Shares:</b> ${t.maxSizeUsd && t.entryLimit ? (t.maxSizeUsd / t.entryLimit).toFixed(2) : "—"} | <b>Size:</b> $${(t.maxSizeUsd || 0).toFixed(2)}<br>` : ""}
+              ${t && t.lastObservedPrice ? `<b>Last observed bid:</b> $${t.lastObservedPrice.toFixed(4)}<br>` : ""}
+              ${t && t.closePrice !== null && t.closePrice !== undefined ? `<b>Close price:</b> $${t.closePrice.toFixed(4)} | <b>Reason:</b> ${t.closeReason || "—"}<br>` : ""}
+              <b>PnL:</b> ${pnl}
+            </div>
+            ${tid ? `<a href="/tickets/${tid}" style="color:#4ea8de;font-size:13px">View ticket →</a> | ` : ""}
+            <a href="/api/paper-runner/status/${encodeURIComponent(run._id)}" style="color:#4ea8de;font-size:13px" target="_blank">Full audit trail (JSON) →</a>
+          </div>`;
+        }
+      }
+
+      const body = `
+      <div style="max-width:800px;margin:0 auto;padding:24px">
+        <h1 style="color:#e0e0e0;margin-bottom:8px">🧪 Paper Trading Runner</h1>
+        <p style="color:#aaa;margin-bottom:20px">
+          Execute one complete paper-trading lifecycle using real Polymarket data.<br>
+          Scans real markets → picks one candidate → opens one paper trade → auto-monitor closes at TP/SL.
+        </p>
+        <div style="margin-bottom:24px">
+          <button id="runBtn" onclick="runPaperTrader()" style="padding:12px 24px;background:#4ea8de;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;font-weight:600">
+            ▶ Run Paper Trader (1 trade)
+          </button>
+          <span id="runStatus" style="margin-left:12px;color:#aaa;font-size:14px"></span>
+        </div>
+        <div id="runResult" style="margin-bottom:24px"></div>
+        <h2 style="color:#e0e0e0;margin-bottom:12px">Recent Runs</h2>
+        ${runsHtml}
+      </div>
+      <script>
+      async function runPaperTrader() {
+        const btn = document.getElementById("runBtn");
+        const status = document.getElementById("runStatus");
+        const result = document.getElementById("runResult");
+        btn.disabled = true;
+        status.textContent = "Running scan + opening trade...";
+        result.innerHTML = "";
+        try {
+          const res = await fetch("/api/paper-runner", { method: "POST" });
+          const data = await res.json();
+          if (data.ok) {
+            status.textContent = "✅ Trade opened!";
+            result.innerHTML = '<div style="border:1px solid #2a9d2a;border-radius:8px;padding:16px;background:#1a2e1a;margin-top:12px">' +
+              '<b style="color:#4ade80">Trade Opened Successfully</b><br>' +
+              '<b>Ticket:</b> <a href="/tickets/' + data.ticketId + '" style="color:#4ea8de">' + data.ticketId + '</a><br>' +
+              '<b>Market:</b> ' + (data.question || '—') + '<br>' +
+              '<b>Reason:</b> ' + (data.pickReason || '—') + '<br>' +
+              '<b>Entry (ask):</b> $' + (data.entry.fillPrice || 0).toFixed(4) + '<br>' +
+              '<b>Bid at entry:</b> $' + (data.entry.bid || 0).toFixed(4) + '<br>' +
+              '<b>Shares:</b> ' + (data.entry.shares || 0) + '<br>' +
+              '<b>TP:</b> $' + (data.exits.takeProfit || 0).toFixed(4) + ' | <b>SL:</b> $' + (data.exits.riskExitLimit || 0).toFixed(4) + '<br>' +
+              '<b>Run ID:</b> ' + data.runId + '<br>' +
+              '<p style="color:#aaa;margin-top:8px">' + data.monitor + '</p>' +
+              '</div>';
+          } else {
+            status.textContent = "⚠️ No trade opened";
+            result.innerHTML = '<div style="border:1px solid #a00;border-radius:8px;padding:16px;background:#2e1a1a;margin-top:12px">' +
+              '<b style="color:#f87171">No Viable Candidate</b><br>' +
+              '<span style="color:#aaa">' + (data.error || 'Unknown error') + '</span><br>' +
+              '<b>Candidates scanned:</b> ' + (data.candidatesScanned || 0) +
+              '</div>';
+          }
+        } catch (err) {
+          status.textContent = "❌ Error: " + err.message;
+        }
+        btn.disabled = false;
+        setTimeout(() => location.reload(), 3000);
+      }
+      </script>`;
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(pageShell("Paper Runner", "/paper-runner", body));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(`paper-runner error: ${err.message}`);
+    }
+    return;
   }
 
   // ── GET /api/system/danger-zone/counts ──────────────────────────────

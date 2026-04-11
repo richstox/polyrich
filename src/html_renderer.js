@@ -1095,6 +1095,7 @@ function renderNav(active) {
     { href: "/watchlist", label: "Watchlist" },
     { href: "/tickets", label: "Tickets" },
     { href: "/history", label: "History" },
+    { href: "/paper-runner", label: "Runner" },
     { href: "/system", label: "System" },
   ];
   const items = links.map((l) => {

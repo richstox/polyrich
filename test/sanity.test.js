@@ -3039,6 +3039,161 @@ console.log("\nfinal selection: mispricing quota");
   console.log("    9. Null TP/SL: no trigger (safety) ✓");
 }
 
+// ===========================================================================
+// PAPER RUNNER: safety rules + audit trail model validation
+// ===========================================================================
+{
+  console.log("\n=== PAPER RUNNER: safety rules + audit trail ===");
+  const { inferEntry, inferExit, inferSize, inferDirection } = require("../src/html_renderer");
+  const { checkTrigger, normalizePrice, normalizeSize, resolveTokenId } = require("../src/auto_monitor");
+
+  // -----------------------------------------------------------------------
+  // Safety rule 1: No open without valid bid/ask
+  // -----------------------------------------------------------------------
+  console.log("\n  Safety: No open without valid executable bid/ask");
+
+  // Missing bestAskNum → inferEntry returns null → cannot open
+  const noBidMarket = {
+    bestBidNum: 0, bestAskNum: 0, liquidity: 80000, volume24hr: 15000,
+    delta1: 0.03, absMove: 0.03, volatility: 0.05, latestYes: 0.50,
+  };
+  const entryNoBid = inferEntry(noBidMarket, "BUY YES");
+  assert(entryNoBid === null, "No bestAsk → inferEntry returns null (cannot open)");
+
+  // bestBid=0 → inferExit returns null TP/SL → cannot open
+  const noBidExits = inferExit(0.50, 0);
+  assert(noBidExits.tp === null, "bidBasis=0 → TP null (cannot set exits)");
+  assert(noBidExits.stop === null, "bidBasis=0 → SL null (cannot set exits)");
+
+  // -----------------------------------------------------------------------
+  // Safety rule 2: Never close at 0.00 in normal path
+  // -----------------------------------------------------------------------
+  console.log("\n  Safety: Never close at 0.00");
+  const ticket = { takeProfit: 0.528, riskExitLimit: 0.4416 };
+  assert(!checkTrigger(ticket, 0).triggered, "Price 0 → no trigger");
+  assert(!checkTrigger(ticket, 0.00).triggered, "Price 0.00 → no trigger");
+  assert(!checkTrigger(ticket, -0.01).triggered, "Price negative → no trigger");
+
+  // -----------------------------------------------------------------------
+  // Safety rule 3: No close without valid bid (monitor path)
+  // -----------------------------------------------------------------------
+  console.log("\n  Safety: No close without valid bid");
+  assert(!checkTrigger(ticket, null).triggered, "null bid → no close");
+  assert(!checkTrigger(ticket, NaN).triggered, "NaN bid → no close");
+  assert(!checkTrigger(ticket, undefined).triggered, "undefined bid → no close");
+  assert(!checkTrigger(ticket, Infinity).triggered, "Infinity bid → no close");
+
+  // -----------------------------------------------------------------------
+  // Safety rule 4: CLOB normalization rejects invalid prices
+  // -----------------------------------------------------------------------
+  console.log("\n  Safety: CLOB normalization rejects invalid prices");
+  assert(normalizePrice(0) === null, "CLOB price 0 → null");
+  assert(normalizePrice(1.0) === null, "CLOB price 1.0 → null (settled)");
+  assert(normalizePrice(-0.5) === null, "CLOB price negative → null");
+  assert(normalizePrice(NaN) === null, "CLOB price NaN → null");
+  assert(normalizeSize(0) === null, "CLOB size 0 → null");
+  assert(normalizeSize(-10) === null, "CLOB size negative → null");
+
+  // -----------------------------------------------------------------------
+  // Audit trail: PaperRunnerLog model loads
+  // -----------------------------------------------------------------------
+  console.log("\n  Audit trail: PaperRunnerLog model exists");
+  const PaperRunnerLog = require("../models/PaperRunnerLog");
+  assert(typeof PaperRunnerLog === "function" || typeof PaperRunnerLog === "object",
+    "PaperRunnerLog model loads");
+  assert(PaperRunnerLog.schema.path("runId"), "runId field exists in schema");
+  assert(PaperRunnerLog.schema.path("phase"), "phase field exists in schema");
+  assert(PaperRunnerLog.schema.path("data"), "data field exists in schema");
+  assert(PaperRunnerLog.schema.path("ticketId"), "ticketId field exists in schema");
+  assert(PaperRunnerLog.schema.path("ts"), "ts field exists in schema");
+
+  // Verify phase enum
+  const phaseEnum = PaperRunnerLog.schema.path("phase").enumValues;
+  assert(phaseEnum.includes("CANDIDATE_SELECTED"), "phase includes CANDIDATE_SELECTED");
+  assert(phaseEnum.includes("ENTRY_SNAPSHOT"), "phase includes ENTRY_SNAPSHOT");
+  assert(phaseEnum.includes("PAPER_FILL"), "phase includes PAPER_FILL");
+  assert(phaseEnum.includes("MONITOR_OBSERVATION"), "phase includes MONITOR_OBSERVATION");
+  assert(phaseEnum.includes("CLOSE"), "phase includes CLOSE");
+  assert(phaseEnum.includes("ERROR"), "phase includes ERROR");
+
+  // -----------------------------------------------------------------------
+  // End-to-end paper runner flow: candidate → entry → exits → monitor → close
+  // Simulates what POST /api/paper-runner does with real data
+  // -----------------------------------------------------------------------
+  console.log("\n  E2E: Paper runner flow simulation");
+
+  // A liquid market with CLOB data
+  const liquidMarket = {
+    bestBidNum: 0.42, bestAskNum: 0.44, spreadPct: 0.046,
+    liquidity: 50000, volume24hr: 8000,
+    delta1: -0.04, absMove: 0.04, volatility: 0.06,
+    latestYes: 0.44, mispricing: false, momentum: false, breakout: false,
+    conditionId: "0xabc123", marketSlug: "test-market",
+    yesTokenId: "tok_yes_123", noTokenId: "tok_no_123",
+    hoursLeft: 48,
+  };
+
+  // Step 1: Direction
+  const dir = inferDirection(liquidMarket);
+  // delta1 < -0.02 and latestYes < 0.5 → BUY YES
+  assert(dir.action === "BUY YES", `Direction: ${dir.action} (expected BUY YES)`);
+
+  // Step 2: Entry at ask
+  const entry = inferEntry(liquidMarket, dir.action);
+  assert(entry === 0.44, `Entry = bestAskNum ($0.44), got $${entry}`);
+
+  // Step 3: Size from liquidity
+  const size = inferSize(liquidMarket);
+  assert(size !== null && size > 0, `Size computed: $${size}`);
+
+  // Step 4: TP/SL from bid (CLOB book bid)
+  const clobBid = 0.42;  // from CLOB book
+  const exits = inferExit(entry, clobBid);
+  assert(exits.tp !== null, "TP computed from CLOB bid");
+  assert(exits.stop !== null, "SL computed from CLOB bid");
+  const expectedTp = Math.min(clobBid * 1.10, 0.99);
+  const expectedStop = Math.max(clobBid * 0.92, 0.01);
+  assert(Math.abs(exits.tp - expectedTp) < 0.0001,
+    `TP = ${exits.tp.toFixed(4)} (bid×1.10=${expectedTp.toFixed(4)})`);
+  assert(Math.abs(exits.stop - expectedStop) < 0.0001,
+    `SL = ${exits.stop.toFixed(4)} (bid×0.92=${expectedStop.toFixed(4)})`);
+
+  // Step 5: Token ID
+  const fakeTicket = { action: "BUY_YES", yesTokenId: "tok_yes_123", noTokenId: "tok_no_123" };
+  const tokId = resolveTokenId(fakeTicket);
+  assert(tokId === "tok_yes_123", `Token ID = yesTokenId for BUY_YES`);
+
+  // Step 6: Shares
+  const shares = size / entry;
+  assert(shares > 0, `Shares = ${shares.toFixed(2)} (size/entry)`);
+
+  // Step 7: Monitor — bid below TP, no trigger
+  const monTicket = { takeProfit: exits.tp, riskExitLimit: exits.stop };
+  assert(!checkTrigger(monTicket, 0.43).triggered, "Bid 0.43 < TP → no trigger");
+
+  // Step 8: Monitor — bid rises to TP
+  const tpBid = exits.tp + 0.01;
+  const tpResult = checkTrigger(monTicket, tpBid);
+  assert(tpResult.triggered, "Bid >= TP → trigger");
+  assert(tpResult.reason === "TP_HIT", "Trigger reason = TP_HIT");
+
+  // Step 9: PnL at TP close
+  const closePrice = tpBid;
+  const exitValue = shares * closePrice;
+  const pnlUsd = exitValue - size;
+  assert(pnlUsd > 0, `PnL at TP: +$${pnlUsd.toFixed(2)}`);
+
+  // Step 10: SL path
+  const slBid = exits.stop - 0.01;
+  const slResult = checkTrigger(monTicket, slBid);
+  assert(slResult.triggered, "Bid <= SL → trigger");
+  assert(slResult.reason === "EXIT_HIT", "Trigger reason = EXIT_HIT");
+  const slPnl = (shares * slBid) - size;
+  assert(slPnl < 0, `PnL at SL: $${slPnl.toFixed(2)} (negative as expected)`);
+
+  console.log("\n  ✅ Paper runner safety + flow validated");
+}
+
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
