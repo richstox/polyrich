@@ -1,6 +1,7 @@
 "use strict";
 
 const { formatHoursLeft, formatVolume } = require("./normalizer");
+const config = require("./config");
 
 // ---------------------------------------------------------------------------
 // Canonical diagnostic reasons — operator-facing copywriting
@@ -132,7 +133,7 @@ function computeTradeability(item) {
   }
   if (
     (item.hoursLeft !== null && item.hoursLeft > 240) ||
-    item.spreadPct > 0.15 ||
+    item.spreadPct > config.MAX_ENTRY_SPREAD_PCT ||
     item.liquidity < 500 ||
     item.volume24hr < 50 ||
     (item.hoursLeft !== null && item.hoursLeft < 2)
@@ -1176,7 +1177,7 @@ function pageShell(title, activeNav, bodyHtml) {
         headers: { "Content-Type": "application/json" },
         body: payload,
       }).then(function(r) { return r.json(); }).then(function(d) {
-        if (d.error) { saveBtn.textContent = "Error"; }
+        if (d.error) { saveBtn.textContent = d.error === "SPREAD_TOO_WIDE" ? "Spread too wide" : d.error === "BID_BELOW_SL" ? "Bid below SL" : "Error"; saveBtn.disabled = false; }
         else {
           saveBtn.textContent = "Saved ✓";
           saveBtn.style.background = "#dcfce7";
@@ -1313,8 +1314,6 @@ const PRICE_MIDPOINT = 0.5;              // YES price midpoint for side selectio
 const SIZE_LIQUIDITY_PCT = 0.01;         // max 1% of liquidity
 const SIZE_VOLUME_PCT = 0.02;            // max 2% of 24h volume
 const SIZE_CAP = 50;                     // max position size in $
-const TP_MULTIPLIER = 1.10;              // take profit at +10%
-const STOP_MULTIPLIER = 0.92;            // stop loss at -8%
 const PRICE_CEILING = 0.99;
 const PRICE_FLOOR = 0.01;
 const RISK_PCT_DEFAULT = 0.01;         // 1% of bankroll per trade
@@ -1338,9 +1337,9 @@ function inferDirection(item) {
     } else if (item.hoursLeft !== null && item.hoursLeft > 240) {
       whyWatch = "Too far from expiry (>10 days)";
       nextStep = "Wait for market to approach expiry window";
-    } else if (item.spreadPct > 0.15) {
+    } else if (item.spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
       whyWatch = `Spread too wide (${(item.spreadPct * 100).toFixed(1)}%)`;
-      nextStep = "Need spread \u2264 15%";
+      nextStep = `Need spread \u2264 ${(config.MAX_ENTRY_SPREAD_PCT * 100).toFixed(0)}%`;
     } else if (item.liquidity < 500) {
       whyWatch = `Low liquidity ($${Math.round(item.liquidity)})`;
       nextStep = "Need liquidity \u2265 $500";
@@ -1415,31 +1414,53 @@ function inferEntry(item, direction) {
 }
 
 /** Infer conservative max size (numeric $) from liquidity/volume. Returns null if not computable. */
-function inferSize(item) {
+function inferSize(item, opts) {
+  opts = opts || {};
   if (item.liquidity < 500 || item.volume24hr < 50) return null;
   const fromLiq = item.liquidity * SIZE_LIQUIDITY_PCT;
   const fromVol = item.volume24hr * SIZE_VOLUME_PCT;
-  const raw = Math.min(fromLiq, fromVol, MAX_TRADE_CAP_USD_DEFAULT);
+  // User cap or default hard cap
+  const capUsd = (typeof opts.maxTradeCapUsd === "number" && opts.maxTradeCapUsd > 0)
+    ? opts.maxTradeCapUsd : MAX_TRADE_CAP_USD_DEFAULT;
+  // Risk budget: bankroll × riskPct (when both provided)
+  const riskBudget = (typeof opts.bankrollUsd === "number" && opts.bankrollUsd > 0 &&
+                      typeof opts.riskPct === "number" && opts.riskPct > 0)
+    ? opts.bankrollUsd * opts.riskPct : Infinity;
+  const raw = Math.min(fromLiq, fromVol, capUsd, riskBudget);
   if (raw < 1) return null;
   return Math.floor(raw);
 }
 
 /**
- * Infer exit plan (take profit + stop-loss).
- * TP/SL are computed relative to the bid price (sell-to-close basis) so that
- * monitoring against the current bid is apples-to-apples.
+ * Infer exit plan (take profit + stop-loss) using volatility-adaptive targets.
  *
- * When `bidBasis` is null/undefined/zero, returns { tp: null, stop: null } —
- * the caller must handle this as "cannot compute exits" (fail-closed).
- * There is no fallback to the ask-based entry price.
+ * When `opts.volatility` is provided (from enrichItem's stddev of price series),
+ * targets scale with observed market movement:
+ *   TP = entry + K_TP × volatility   (wider on volatile markets)
+ *   SL = entry − K_SL × volatility   (asymmetric R:R since K_TP > K_SL)
+ *
+ * Minimum distances ensure quiet markets don't get absurdly tight targets.
+ * Clamped to [PRICE_FLOOR, PRICE_CEILING].
  *
  * Returns { tp, stop } as numbers or null.
  */
-function inferExit(entryNum, bidBasis) {
-  const basis = (Number.isFinite(bidBasis) && bidBasis > 0) ? bidBasis : null;
-  if (basis === null || basis >= PRICE_CEILING) return { tp: null, stop: null };
-  const tp = Math.min(basis * TP_MULTIPLIER, PRICE_CEILING);
-  const stop = Math.max(basis * STOP_MULTIPLIER, PRICE_FLOOR);
+function inferExit(entryNum, opts) {
+  if (!Number.isFinite(entryNum) || entryNum <= 0 || entryNum >= PRICE_CEILING)
+    return { tp: null, stop: null };
+
+  const kTp = config.K_TP;
+  const kSl = config.K_SL;
+  const minTpDist = config.MIN_TP_DISTANCE;
+  const minSlDist = config.MIN_SL_DISTANCE;
+
+  const vol = (opts && Number.isFinite(opts.volatility) && opts.volatility > 0)
+    ? opts.volatility : 0;
+
+  const tpDist = Math.max(kTp * vol, minTpDist);
+  const slDist = Math.max(kSl * vol, minSlDist);
+
+  const tp = Math.min(entryNum + tpDist, PRICE_CEILING);
+  const stop = Math.max(entryNum - slDist, PRICE_FLOOR);
   return { tp, stop };
 }
 
@@ -1533,7 +1554,7 @@ function renderTradeCard(item) {
     entryNum = inferEntry(item, action);
     if (entryNum !== null) {
       sizeNum = inferSize(item);
-      const exits = inferExit(entryNum, entryBidNum);
+      const exits = inferExit(entryNum, { volatility: item.volatility });
       tpNum = exits.tp;
       stopNum = exits.stop;
     }
@@ -1649,8 +1670,8 @@ function renderTradeCard(item) {
         <div class="trade-plan-grid">
           <div class="trade-plan-item"><span class="trade-plan-label">Entry (ask)</span><span class="trade-plan-value">$${entryNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">Entry closeable (bid)</span><span class="trade-plan-value">${(Number.isFinite(entryBidNum) && entryBidNum > 0) ? "$" + entryBidNum.toFixed(2) : "\u2014"}</span></div>
-          <div class="trade-plan-item"><span class="trade-plan-label">TAKE PROFIT (bid-based)</span><span class="trade-plan-value">$${tpNum.toFixed(2)}</span></div>
-          <div class="trade-plan-item"><span class="trade-plan-label">STOP-LOSS (bid-based)</span><span class="trade-plan-value">$${stopNum.toFixed(2)}</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">TAKE PROFIT</span><span class="trade-plan-value">$${tpNum.toFixed(2)}</span></div>
+          <div class="trade-plan-item"><span class="trade-plan-label">STOP-LOSS</span><span class="trade-plan-value">$${stopNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">PnL @ TP (approx)</span><span class="trade-plan-value trade-pnl-tp" style="color:#22c55e;">+$${pnlTpUsd.toFixed(2)} (+${pnlTpPct.toFixed(1)}% of stake)</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">PnL @ SL (approx)</span><span class="trade-plan-value trade-pnl-stop" style="color:#dc2626;">-$${Math.abs(pnlStopUsd).toFixed(2)} (${pnlStopPct.toFixed(1)}% of stake)</span></div>
         </div>
@@ -1812,8 +1833,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
         const entryNum = inferEntry(item, dir.action);
         if (entryNum !== null) {
           const sizeNum = inferSize(item);
-          const bidBasis = (item.bestBidNum > 0) ? item.bestBidNum : null;
-          const exits = inferExit(entryNum, bidBasis);
+          const exits = inferExit(entryNum, { volatility: item.volatility });
           if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
             executeCards.push(item);
             continue;
@@ -2419,14 +2439,13 @@ function renderExplorePage(data) {
       const entryNum = inferEntry(item, dir.action);
       if (entryNum !== null) {
         const sizeNum = inferSize(item);
-        const bidBasis = (item.bestBidNum > 0) ? item.bestBidNum : null;
-        const exits = inferExit(entryNum, bidBasis);
+        const exits = inferExit(entryNum, { volatility: item.volatility });
         if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
           return `<div style="margin-top:8px;padding:8px 10px;background:rgba(22,101,52,.15);border:1px solid rgba(34,197,94,.2);border-radius:6px;font-size:0.78rem;">
             <span style="font-weight:700;color:#22c55e;">⚡ EXECUTE</span>
-            <span style="margin-left:10px;"><span style="color:#6b7280;">ENTRY (ask)</span> <strong>$${entryNum.toFixed(2)}</strong></span>
-            <span style="margin-left:10px;"><span style="color:#6b7280;">TP (bid-based)</span> <strong>$${exits.tp.toFixed(2)}</strong></span>
-            <span style="margin-left:10px;"><span style="color:#6b7280;">SL (bid-based)</span> <strong>$${exits.stop.toFixed(2)}</strong></span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">ENTRY</span> <strong>$${entryNum.toFixed(2)}</strong></span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">TP</span> <strong>$${exits.tp.toFixed(2)}</strong></span>
+            <span style="margin-left:10px;"><span style="color:#6b7280;">SL</span> <strong>$${exits.stop.toFixed(2)}</strong></span>
           </div>`;
         }
       }
@@ -3827,8 +3846,8 @@ function renderTicketDetailPage(ticket, prevId, nextId) {
           <div class="td-grid">
             <div class="td-row"><span class="td-label">Entry (ask)</span><span class="td-val">${fmtPrice(t.entryLimit)}</span></div>
             <div class="td-row"><span class="td-label">Entry closeable (bid)</span><span class="td-val">${fmtPrice(t.entryBid)}</span></div>
-            <div class="td-row"><span class="td-label">Take Profit (bid-based)</span><span class="td-val" id="td-tp-val">${fmtPrice(t.takeProfit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="takeProfit" title="Edit Take Profit">\u{270F}\u{FE0F}</span>' : ""}</span></div>
-            <div class="td-row"><span class="td-label">Exit / risk (bid-based)</span><span class="td-val" id="td-exit-val">${fmtPrice(t.riskExitLimit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="riskExitLimit" title="Edit Exit (risk)">\u{270F}\u{FE0F}</span>' : ""}</span></div>
+            <div class="td-row"><span class="td-label">Take Profit</span><span class="td-val" id="td-tp-val">${fmtPrice(t.takeProfit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="takeProfit" title="Edit Take Profit">\u{270F}\u{FE0F}</span>' : ""}</span></div>
+            <div class="td-row"><span class="td-label">Exit / risk</span><span class="td-val" id="td-exit-val">${fmtPrice(t.riskExitLimit)}${!isClosed ? ' <span class="tk-edit-icon" data-edit-field="riskExitLimit" title="Edit Exit (risk)">\u{270F}\u{FE0F}</span>' : ""}</span></div>
             <div class="td-row"><span class="td-label">Size (USD)</span><span class="td-val">${fmtUsd(t.maxSizeUsd)}</span></div>
             <div class="td-row"><span class="td-label">Bankroll</span><span class="td-val">${fmtUsd(t.bankrollUsd)}</span></div>
             <div class="td-row"><span class="td-label">Risk %</span><span class="td-val">${fmtPct(t.riskPct)}</span></div>

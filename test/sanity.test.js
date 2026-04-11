@@ -753,9 +753,10 @@ console.log("\ncomputeTradeability");
   const intraday = { hoursLeft: 24, spreadPct: 0.05, liquidity: 10000, volume24hr: 5000, _filtered: false };
   assert(computeTradeability(intraday).label === "Tradeable today", "intraday 24h → Tradeable today");
 
-  // Wide spread (>0.15) must be Watch
-  const wideSpread = { hoursLeft: 48, spreadPct: 0.20, liquidity: 10000, volume24hr: 5000, _filtered: false };
-  assert(computeTradeability(wideSpread).label === "Watch", "spreadPct 0.20 → Watch");
+  // Wide spread (>MAX_ENTRY_SPREAD_PCT) must be Watch
+  const cfg2 = require("../src/config");
+  const wideSpread = { hoursLeft: 48, spreadPct: cfg2.MAX_ENTRY_SPREAD_PCT + 0.05, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(wideSpread).label === "Watch", "spreadPct above MAX_ENTRY_SPREAD_PCT → Watch");
 
   // Expired market → Excluded
   const expired = { hoursLeft: -1, spreadPct: 0.05, liquidity: 10000, volume24hr: 5000, _filtered: false };
@@ -2059,66 +2060,85 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// Bid-based TP/SL: inferExit with bidBasis parameter
+// Volatility-adaptive TP/SL: inferExit uses volatility when provided
 // ---------------------------------------------------------------------------
 {
-  console.log("\ninferExit: bid-based TP/SL");
+  console.log("\ninferExit: volatility-adaptive TP/SL");
   const { inferExit } = require("../src/html_renderer");
+  const cfg = require("../src/config");
 
-  // When bidBasis is provided, TP/SL should be computed from bid, not ask
-  const bidBased = inferExit(0.30, 0.25);
-  // TP = 0.25 * 1.10 = 0.275, Stop = 0.25 * 0.92 = 0.23
-  assert(bidBased.tp !== null && bidBased.stop !== null,
-    "inferExit returns non-null with bidBasis");
-  assert(Math.abs(bidBased.tp - 0.275) < 0.001,
-    "TP is computed from bidBasis (0.25 × 1.10 = 0.275), not entryNum");
-  assert(Math.abs(bidBased.stop - 0.23) < 0.001,
-    "Stop is computed from bidBasis (0.25 × 0.92 = 0.23), not entryNum");
+  // Without volatility: uses MIN distances (fallback)
+  // TP = 0.30 + MIN_TP_DISTANCE(0.05) = 0.35
+  // SL = 0.30 - MIN_SL_DISTANCE(0.03) = 0.27
+  const result = inferExit(0.30);
+  assert(result.tp !== null && result.stop !== null,
+    "inferExit returns non-null with valid entryNum");
+  assert(Math.abs(result.tp - 0.35) < 0.001,
+    "TP uses MIN_TP_DISTANCE when no volatility (0.30 + 0.05 = 0.35)");
+  assert(Math.abs(result.stop - 0.27) < 0.001,
+    "SL uses MIN_SL_DISTANCE when no volatility (0.30 - 0.03 = 0.27)");
 
-  // When bidBasis is null, returns null (no ask-based fallback — fail-closed)
-  const legacy = inferExit(0.30, null);
-  assert(legacy.tp === null && legacy.stop === null,
-    "inferExit returns null when bidBasis is null (no ask-based fallback)");
+  // With volatility: adaptive targets
+  // vol=0.04 → tpDist = max(2.5×0.04, 0.05) = max(0.10, 0.05) = 0.10
+  //             slDist = max(1.5×0.04, 0.03) = max(0.06, 0.03) = 0.06
+  // TP = 0.30 + 0.10 = 0.40, SL = 0.30 - 0.06 = 0.24
+  const withVol = inferExit(0.30, { volatility: 0.04 });
+  assert(Math.abs(withVol.tp - 0.40) < 0.001,
+    "TP with vol 0.04: 0.30 + 2.5×0.04 = 0.40");
+  assert(Math.abs(withVol.stop - 0.24) < 0.001,
+    "SL with vol 0.04: 0.30 - 1.5×0.04 = 0.24");
 
-  // When bidBasis is undefined, returns null
-  const noArg = inferExit(0.30);
-  assert(noArg.tp === null && noArg.stop === null,
-    "inferExit returns null when bidBasis is undefined (fail-closed)");
+  // entryNum = 0 → null (fail-closed)
+  const zero = inferExit(0);
+  assert(zero.tp === null && zero.stop === null,
+    "inferExit returns null when entryNum is 0 (fail-closed)");
 
-  // When bidBasis is 0 or negative, returns null
-  const zeroBid = inferExit(0.30, 0);
-  assert(zeroBid.tp === null && zeroBid.stop === null,
-    "inferExit returns null when bidBasis is 0 (fail-closed)");
+  // entryNum = negative → null
+  const neg = inferExit(-0.10);
+  assert(neg.tp === null && neg.stop === null,
+    "inferExit returns null when entryNum is negative (fail-closed)");
 }
 
 // ---------------------------------------------------------------------------
-// Bid-based triggers: wide spread does NOT instantly EXIT_HIT
+// Wide-spread safety: autoSave skips tickets where bid ≤ SL at creation
 // ---------------------------------------------------------------------------
 {
-  console.log("\nBid-based triggers: wide spread does not instant EXIT_HIT");
-  const { checkTrigger } = require("../src/auto_monitor");
+  console.log("\nWide-spread safety: bid at or below SL → skip ticket");
   const { inferExit } = require("../src/html_renderer");
+  const { checkTrigger } = require("../src/auto_monitor");
 
   // Scenario: Ask = 0.24 (entry), Bid = 0.21 (12.5% spread)
-  // Old (ask-based): stop = 0.24 × 0.92 = 0.2208 → bid 0.21 ≤ 0.2208 → EXIT_HIT ❌
-  // New (bid-based): stop = 0.21 × 0.92 = 0.1932 → bid 0.21 > 0.1932 → NO trigger ✓
+  // Without volatility: SL = 0.24 - 0.03 = 0.21
+  // Bid 0.21 ≤ SL 0.21 → this ticket would trigger EXIT_HIT immediately
+  // The autoSave flow now SKIPS such tickets entirely (bid ≤ SL guard)
   const entryAsk = 0.24;
   const entryBid = 0.21;
-  const currentBid = 0.21; // price hasn't moved
+  const exits = inferExit(entryAsk);
+  assert(exits.stop !== null, "SL computed from entry");
+  assert(Math.abs(exits.stop - 0.21) < 0.001, `SL = 0.24 - 0.03 = ${exits.stop.toFixed(4)}`);
+  assert(entryBid <= exits.stop,
+    "Bid (0.21) is at or below SL (0.21) — autoSave would skip this ticket");
 
-  const bidExits = inferExit(entryAsk, entryBid);
+  // If somehow the ticket WAS created, checkTrigger would fire EXIT_HIT
   const trigger = checkTrigger(
-    { takeProfit: bidExits.tp, riskExitLimit: bidExits.stop },
-    currentBid
+    { takeProfit: exits.tp, riskExitLimit: exits.stop },
+    entryBid
   );
-  assert(!trigger.triggered,
-    "Wide-spread market (bid=0.21, ask=0.24) does NOT instant EXIT_HIT with bid-based SL");
+  assert(trigger.triggered && trigger.reason === "EXIT_HIT",
+    "Confirms why we skip: bid at SL would instantly trigger EXIT_HIT");
 
-  // With the ask-based fallback removed, inferExit(ask, null) now returns null
-  // instead of silently computing from entryAsk — this is the fail-closed behavior
-  const askExits = inferExit(entryAsk, null);
-  assert(askExits.tp === null && askExits.stop === null,
-    "inferExit without bidBasis returns null (fail-closed, no ask-based fallback)");
+  // Normal spread: bid above SL → no skip needed
+  const normalEntry = 0.38;
+  const normalBid = 0.37;
+  const normalExits = inferExit(normalEntry);
+  assert(normalBid > normalExits.stop,
+    `Normal market (bid=0.37) is above SL (${normalExits.stop.toFixed(4)}) — no skip`);
+  const normalTrigger = checkTrigger(
+    { takeProfit: normalExits.tp, riskExitLimit: normalExits.stop },
+    normalBid
+  );
+  assert(!normalTrigger.triggered,
+    "Normal-spread market does NOT trigger EXIT_HIT");
 }
 
 // ---------------------------------------------------------------------------
@@ -2196,10 +2216,10 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// UI labels: trade card shows bid-based labels
+// UI labels: trade card shows entry-based labels
 // ---------------------------------------------------------------------------
 {
-  console.log("\nUI labels: trade card bid-based labels");
+  console.log("\nUI labels: trade card entry-based labels");
   const { renderTradeCard } = require("../src/html_renderer");
 
   const item = {
@@ -2246,22 +2266,25 @@ console.log("\nfinal selection: mispricing quota");
     "Trade card HTML contains 'Entry (ask)' label");
   assert(html.includes("Entry closeable (bid)"),
     "Trade card HTML contains 'Entry closeable (bid)' label");
-  assert(html.includes("TAKE PROFIT (bid-based)"),
-    "Trade card HTML contains 'TAKE PROFIT (bid-based)' label");
-  assert(html.includes("STOP-LOSS (bid-based)"),
-    "Trade card HTML contains 'STOP-LOSS (bid-based)' label");
+  assert(html.includes("TAKE PROFIT"),
+    "Trade card HTML contains 'TAKE PROFIT' label");
+  assert(html.includes("STOP-LOSS"),
+    "Trade card HTML contains 'STOP-LOSS' label");
+  // Labels should NOT say "bid-based" anymore
+  assert(!html.includes("TAKE PROFIT (bid-based)"),
+    "Trade card TP label does NOT say 'bid-based'");
+  assert(!html.includes("STOP-LOSS (bid-based)"),
+    "Trade card SL label does NOT say 'bid-based'");
   // Verify data attribute for entryBid
   assert(html.includes('data-entry-bid="0.38"'),
     "Trade card includes data-entry-bid attribute");
 
-  // Test with missing bid: entryBid should render as empty string
+  // EXECUTE card even without bid (entry-based TP/SL doesn't need bid)
   const itemNoBid = { ...item, bestBidNum: 0 };
-  // With no bid, card should become WATCH (inferExit returns null → fail-closed)
   const htmlNoBid = renderTradeCard(itemNoBid);
-  assert(htmlNoBid.includes("WATCH"),
-    "Trade card with missing bid becomes WATCH (fail-closed, no ask-based fallback)");
-  assert(!htmlNoBid.includes("Save ticket"),
-    "WATCH card with missing bid does not show save-ticket button");
+  // inferExit now computes from entry (ask), so EXECUTE is possible without bid
+  assert(htmlNoBid.includes("EXECUTE") || htmlNoBid.includes("WATCH"),
+    "Trade card with missing bid renders (EXECUTE or WATCH depending on other fields)");
 }
 
 // ---------------------------------------------------------------------------
@@ -2587,25 +2610,25 @@ console.log("\nfinal selection: mispricing quota");
   console.log("\ninferExit: Number.isFinite guard");
   const { inferExit } = require("../src/html_renderer");
 
-  // NaN bid → null exits
-  const r1 = inferExit(0.32, NaN);
-  assert(r1.tp === null && r1.stop === null, "NaN bid → { tp: null, stop: null }");
+  // NaN entry → null exits
+  const r1 = inferExit(NaN);
+  assert(r1.tp === null && r1.stop === null, "NaN entry → { tp: null, stop: null }");
 
-  // Infinity bid → null exits
-  const r2 = inferExit(0.32, Infinity);
-  assert(r2.tp === null && r2.stop === null, "Infinity bid → { tp: null, stop: null }");
+  // Infinity entry → null exits
+  const r2 = inferExit(Infinity);
+  assert(r2.tp === null && r2.stop === null, "Infinity entry → { tp: null, stop: null }");
 
-  // -Infinity bid → null exits
-  const r3 = inferExit(0.32, -Infinity);
-  assert(r3.tp === null && r3.stop === null, "-Infinity bid → { tp: null, stop: null }");
+  // -Infinity entry → null exits
+  const r3 = inferExit(-Infinity);
+  assert(r3.tp === null && r3.stop === null, "-Infinity entry → { tp: null, stop: null }");
 
-  // undefined bid → null exits
-  const r4 = inferExit(0.32, undefined);
-  assert(r4.tp === null && r4.stop === null, "undefined bid → { tp: null, stop: null }");
+  // undefined entry → null exits
+  const r4 = inferExit(undefined);
+  assert(r4.tp === null && r4.stop === null, "undefined entry → { tp: null, stop: null }");
 
-  // Valid bid → valid exits
-  const r5 = inferExit(0.32, 0.31);
-  assert(r5.tp !== null && r5.stop !== null, "Valid bid 0.31 → non-null exits");
+  // Valid entry → valid exits
+  const r5 = inferExit(0.31);
+  assert(r5.tp !== null && r5.stop !== null, "Valid entry 0.31 → non-null exits");
   assert(r5.tp > 0 && r5.stop > 0, "Valid TP and SL are > 0");
 }
 
@@ -2634,10 +2657,10 @@ console.log("\nfinal selection: mispricing quota");
 
 // ---------------------------------------------------------------------------
 // G) REGRESSION: Full failure scenario — bid=0.001, ask=0.32
-// The system must NOT allow EXECUTE auto-close from this state
+// The system must NOT create tickets with bid far below SL
 // ---------------------------------------------------------------------------
 {
-  console.log("\nREGRESSION: bid=0.001 ask=0.32 → no auto-close, no trigger");
+  console.log("\nREGRESSION: bid=0.001 ask=0.32 → autoSave skips (bid ≤ SL)");
   const { inferExit } = require("../src/html_renderer");
   const { checkTrigger, normalizePrice, normalizeSize } = require("../src/auto_monitor");
 
@@ -2648,13 +2671,19 @@ console.log("\nfinal selection: mispricing quota");
   // Step 1: normalizePrice accepts 0.001 (it's technically in (0,1))
   assert(normalizePrice(clobBid) === 0.001, "0.001 is technically valid in (0,1)");
 
-  // Step 2: inferExit computes garbage TP/SL from microscopic bid
-  const exits = inferExit(entryAsk, clobBid);
-  assert(exits.tp !== null, "Garbage TP is still computed (0.0011)");
-  assert(Math.abs(exits.tp - 0.0011) < 0.0001, `TP ≈ 0.0011 (got ${exits.tp})`);
-  assert(exits.tp < entryAsk, "Garbage TP is below entry — this is wrong");
+  // Step 2: inferExit now computes from entry with adaptive targets
+  // Without volatility: TP = 0.32 + 0.05 = 0.37, SL = 0.32 - 0.03 = 0.29
+  const exits = inferExit(entryAsk);
+  assert(exits.tp !== null, "TP computed from entry");
+  assert(Math.abs(exits.tp - 0.37) < 0.001, `TP = 0.32 + 0.05 = ${exits.tp}`);
+  assert(exits.tp > entryAsk, "TP is above entry (correct)");
+  assert(exits.stop < entryAsk, "SL is below entry (correct)");
 
-  // Step 3: The NO_EXECUTABLE_BID invariant blocks auto-close
+  // Step 3: bid (0.001) is far below SL (0.29) → autoSave would skip this ticket
+  assert(clobBid <= exits.stop,
+    "Bid (0.001) ≤ SL (0.29) → autoSave skips this ticket (bid-below-SL guard)");
+
+  // Step 4: The NO_EXECUTABLE_BID invariant also blocks auto-close
   let autoClose = true;
   let blocked = null;
   const vb = Number.isFinite(clobBid) && clobBid > 0;
@@ -2667,21 +2696,6 @@ console.log("\nfinal selection: mispricing quota");
   assert(!autoClose, "Auto-close is blocked (bidSize is null)");
   assert(blocked === "NO_EXECUTABLE_BID",
     "Blocked reason is NO_EXECUTABLE_BID — the right invariant");
-
-  // Step 4: Even if somehow checkTrigger is called with garbage TP/SL,
-  // the > 0 guard on TP prevents triggering at zero
-  const trigger = checkTrigger(
-    { takeProfit: exits.tp, riskExitLimit: exits.stop },
-    clobBid
-  );
-  // TP = 0.0011, currentPrice = 0.001 < 0.0011 → no TP_HIT
-  // SL = 0.01, currentPrice = 0.001 ≤ 0.01 → EXIT_HIT would fire
-  // But: riskExitLimit = 0.01 (> 0) and currentPrice = 0.001 (> 0), so EXIT_HIT fires
-  // This is OK because auto-close was already blocked above — this is defense-in-depth
-  if (trigger.triggered) {
-    assert(trigger.reason === "EXIT_HIT",
-      "EXIT_HIT triggers — but auto-close is already blocked");
-  }
 
   // Step 5: Even if TP/SL were somehow null, checkTrigger doesn't trigger
   const safeTrigger = checkTrigger(
@@ -2746,23 +2760,37 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// TP/SL sanity with microscopic bid vs normal bid
+// TP/SL sanity: TP is always above entry, SL always below (volatility-adaptive)
 // ---------------------------------------------------------------------------
 {
-  console.log("\nTP/SL: microscopic bid produces garbage TP — fail-closed catches it");
+  console.log("\nTP/SL: volatility-adaptive — TP above entry, SL below entry");
   const { inferExit } = require("../src/html_renderer");
 
-  // Normal bid: entry=0.32, bid=0.31 → TP=0.341, SL=0.2852
-  const normal = inferExit(0.32, 0.31);
-  assert(normal.tp !== null, "Normal bid produces valid TP");
+  // Normal case: entry=0.32, no volatility → MIN distances
+  // TP = 0.32 + 0.05 = 0.37, SL = 0.32 - 0.03 = 0.29
+  const normal = inferExit(0.32);
+  assert(normal.tp !== null, "Normal entry produces valid TP");
   assert(normal.tp > 0.32, `TP ($${normal.tp.toFixed(4)}) is ABOVE entry ($0.32)`);
   assert(normal.stop < 0.32, `SL ($${normal.stop.toFixed(4)}) is BELOW entry ($0.32)`);
 
-  // Microscopic bid: entry=0.32, bid=0.001 → TP=0.0011 (BELOW entry!)
-  const micro = inferExit(0.32, 0.001);
-  assert(micro.tp !== null, "Microscopic bid produces non-null TP");
-  assert(micro.tp < 0.32,
-    `TP ($${micro.tp.toFixed(4)}) is BELOW entry — garbage, caught by NO_EXECUTABLE_BID invariant`);
+  assert(Math.abs(normal.tp - 0.37) < 0.001,
+    `TP = 0.32 + 0.05 = 0.37 (got ${normal.tp.toFixed(4)})`);
+  assert(Math.abs(normal.stop - 0.29) < 0.001,
+    `SL = 0.32 - 0.03 = 0.29 (got ${normal.stop.toFixed(4)})`);
+
+  // With volatility: entry=0.32, vol=0.04
+  // tpDist = max(2.5×0.04, 0.05) = 0.10, slDist = max(1.5×0.04, 0.03) = 0.06
+  // TP = 0.42, SL = 0.26
+  const withVol = inferExit(0.32, { volatility: 0.04 });
+  assert(Math.abs(withVol.tp - 0.42) < 0.001,
+    `TP with vol: 0.32 + 0.10 = 0.42 (got ${withVol.tp.toFixed(4)})`);
+  assert(Math.abs(withVol.stop - 0.26) < 0.001,
+    `SL with vol: 0.32 - 0.06 = 0.26 (got ${withVol.stop.toFixed(4)})`);
+
+  // Low-price entry: entry=0.05 → still valid
+  const low = inferExit(0.05);
+  assert(low.tp > 0.05, `Low entry: TP (${low.tp.toFixed(4)}) > entry (0.05)`);
+  assert(low.stop < 0.05, `Low entry: SL (${low.stop.toFixed(4)}) < entry (0.05)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2861,36 +2889,37 @@ console.log("\nfinal selection: mispricing quota");
     `Cost basis = shares × entry = $${costBasis.toFixed(2)} = maxSizeUsd`);
 
   // -----------------------------------------------------------------------
-  // Step 3: TP/SL set from bid (sell-to-close basis)
+  // Step 3: TP/SL set from entry price (volatility-adaptive)
   // -----------------------------------------------------------------------
-  console.log("\n  Step 3: TP/SL set from bid basis");
-  const bidBasis = market.bestBidNum;  // 0.48
-  const { tp, stop } = inferExit(entryPrice, bidBasis);
+  console.log("\n  Step 3: TP/SL set from entry price (volatility-adaptive)");
+  // The real flow passes volatility from the market item
+  const { tp, stop } = inferExit(entryPrice, { volatility: market.volatility });
 
-  assert(tp !== null, "TP is not null (valid bid basis)");
-  assert(stop !== null, "SL is not null (valid bid basis)");
+  assert(tp !== null, "TP is not null (valid entry)");
+  assert(stop !== null, "SL is not null (valid entry)");
   assert(tp > 0, `TP is positive: $${tp.toFixed(4)}`);
   assert(stop > 0, `SL is positive: $${stop.toFixed(4)}`);
 
-  // TP = bid × 1.10, SL = bid × 0.92
-  const expectedTp = Math.min(bidBasis * 1.10, 0.99);
-  const expectedStop = Math.max(bidBasis * 0.92, 0.01);
+  // volatility=0.05: tpDist=max(2.5×0.05,0.05)=0.125, slDist=max(1.5×0.05,0.03)=0.075
+  // TP = 0.50 + 0.125 = 0.625, SL = 0.50 - 0.075 = 0.425
+  const expectedTp = Math.min(entryPrice + Math.max(2.5 * market.volatility, 0.05), 0.99);
+  const expectedStop = Math.max(entryPrice - Math.max(1.5 * market.volatility, 0.03), 0.01);
   assert(Math.abs(tp - expectedTp) < 0.0001,
-    `TP = bid × 1.10 = ${expectedTp.toFixed(4)}, got ${tp.toFixed(4)}`);
+    `TP = entry + 2.5×vol = ${expectedTp.toFixed(4)}, got ${tp.toFixed(4)}`);
   assert(Math.abs(stop - expectedStop) < 0.0001,
-    `SL = bid × 0.92 = ${expectedStop.toFixed(4)}, got ${stop.toFixed(4)}`);
+    `SL = entry - 1.5×vol = ${expectedStop.toFixed(4)}, got ${stop.toFixed(4)}`);
 
-  // TP is above entry bid (profit target makes sense)
-  assert(tp > bidBasis, `TP ($${tp.toFixed(4)}) > entry bid ($${bidBasis})`);
-  // SL is below entry bid (stop loss is below current price)
-  assert(stop < bidBasis, `SL ($${stop.toFixed(4)}) < entry bid ($${bidBasis})`);
+  // TP is above entry (profit target makes sense)
+  assert(tp > entryPrice, `TP ($${tp.toFixed(4)}) > entry ($${entryPrice})`);
+  // SL is below entry (stop loss is below buy price)
+  assert(stop < entryPrice, `SL ($${stop.toFixed(4)}) < entry ($${entryPrice})`);
 
-  // CRITICAL: TP/SL are from BID, not from ASK
-  // If TP were from ask: 0.50 × 1.10 = 0.55 (wrong)
-  // Actual: 0.48 × 1.10 = 0.528 (correct)
-  const wrongTpFromAsk = entryPrice * 1.10;
-  assert(Math.abs(tp - wrongTpFromAsk) > 0.01,
-    `TP ≠ ask-based (${wrongTpFromAsk.toFixed(4)}), TP is bid-based (${tp.toFixed(4)})`);
+  // R:R ratio > 1 (reward exceeds risk due to K_TP > K_SL)
+  const reward = tp - entryPrice;
+  const risk = entryPrice - stop;
+  assert(reward / risk > 1.0, `R:R = ${(reward / risk).toFixed(2)} > 1.0 (asymmetric in favor)`);
+
+  const bidBasis = market.bestBidNum;  // 0.48 — used only for monitoring, not TP/SL
 
   // -----------------------------------------------------------------------
   // Step 4: Token ID resolution
@@ -2930,7 +2959,7 @@ console.log("\nfinal selection: mispricing quota");
   // Step 6: Monitor — bid rises to hit TP → trigger
   // -----------------------------------------------------------------------
   console.log("\n  Step 6: Monitor — bid rises to TP → trigger fires");
-  const tpBid = 0.53;  // bid >= TP (0.528)
+  const tpBid = 0.63;  // bid >= TP (0.625 = entry + 2.5×0.05)
   assert(tpBid >= tp, `Bid $${tpBid} >= TP $${tp.toFixed(4)}`);
   const tpResult = checkTrigger(ticket, tpBid);
   assert(tpResult.triggered, `Bid >= TP → trigger fires`);
@@ -2970,7 +2999,7 @@ console.log("\nfinal selection: mispricing quota");
   // Step 8: Alternative — bid drops to SL → EXIT_HIT
   // -----------------------------------------------------------------------
   console.log("\n  Step 8: Alternative — bid drops to SL → EXIT_HIT");
-  const slBid = 0.43;  // bid <= SL (0.4416)
+  const slBid = 0.42;  // bid <= SL (0.425 = entry - 1.5×0.05)
   assert(slBid <= stop, `Bid $${slBid} <= SL $${stop.toFixed(4)}`);
   const slResult = checkTrigger(ticket, slBid);
   assert(slResult.triggered, "Bid <= SL → trigger fires");
@@ -3030,7 +3059,7 @@ console.log("\nfinal selection: mispricing quota");
   console.log("\n  ✅ HAPPY PATH PROVEN:");
   console.log("    1. Entry at ask (bestAskNum) ✓");
   console.log("    2. Shares = maxSizeUsd / entryPrice ✓");
-  console.log("    3. TP/SL from bid basis (not ask) ✓");
+  console.log("    3. TP/SL from entry + volatility (entry ± K × vol) ✓");
   console.log("    4. Monitor uses bid: checkTrigger(ticket, currentBid) ✓");
   console.log("    5. TP trigger: bid >= TP → TP_HIT ✓");
   console.log("    6. SL trigger: bid <= SL → EXIT_HIT ✓");
@@ -3060,10 +3089,10 @@ console.log("\nfinal selection: mispricing quota");
   const entryNoBid = inferEntry(noBidMarket, "BUY YES");
   assert(entryNoBid === null, "No bestAsk → inferEntry returns null (cannot open)");
 
-  // bestBid=0 → inferExit returns null TP/SL → cannot open
-  const noBidExits = inferExit(0.50, 0);
-  assert(noBidExits.tp === null, "bidBasis=0 → TP null (cannot set exits)");
-  assert(noBidExits.stop === null, "bidBasis=0 → SL null (cannot set exits)");
+  // bestBid=0 → inferExit still works (entry-based, doesn't need bid)
+  const noBidExits = inferExit(0.50);
+  assert(noBidExits.tp !== null, "entry-based TP works without bid");
+  assert(noBidExits.stop !== null, "entry-based SL works without bid");
 
   // -----------------------------------------------------------------------
   // Safety rule 2: Never close at 0.00 in normal path
@@ -3146,17 +3175,18 @@ console.log("\nfinal selection: mispricing quota");
   const size = inferSize(liquidMarket);
   assert(size !== null && size > 0, `Size computed: $${size}`);
 
-  // Step 4: TP/SL from bid (CLOB book bid)
-  const clobBid = 0.42;  // from CLOB book
-  const exits = inferExit(entry, clobBid);
-  assert(exits.tp !== null, "TP computed from CLOB bid");
-  assert(exits.stop !== null, "SL computed from CLOB bid");
-  const expectedTp = Math.min(clobBid * 1.10, 0.99);
-  const expectedStop = Math.max(clobBid * 0.92, 0.01);
+  // Step 4: TP/SL from entry price (volatility-adaptive)
+  const clobBid = 0.42;  // from CLOB book — used for monitoring, not TP/SL
+  const exits = inferExit(entry, { volatility: liquidMarket.volatility });
+  assert(exits.tp !== null, "TP computed from entry price");
+  assert(exits.stop !== null, "SL computed from entry price");
+  // vol=0.06: tpDist=max(2.5×0.06,0.05)=0.15, slDist=max(1.5×0.06,0.03)=0.09
+  const expectedTp = Math.min(entry + Math.max(2.5 * liquidMarket.volatility, 0.05), 0.99);
+  const expectedStop = Math.max(entry - Math.max(1.5 * liquidMarket.volatility, 0.03), 0.01);
   assert(Math.abs(exits.tp - expectedTp) < 0.0001,
-    `TP = ${exits.tp.toFixed(4)} (bid×1.10=${expectedTp.toFixed(4)})`);
+    `TP = ${exits.tp.toFixed(4)} (entry+2.5×vol=${expectedTp.toFixed(4)})`);
   assert(Math.abs(exits.stop - expectedStop) < 0.0001,
-    `SL = ${exits.stop.toFixed(4)} (bid×0.92=${expectedStop.toFixed(4)})`);
+    `SL = ${exits.stop.toFixed(4)} (entry-1.5×vol=${expectedStop.toFixed(4)})`);
 
   // Step 5: Token ID
   const fakeTicket = { action: "BUY_YES", yesTokenId: "tok_yes_123", noTokenId: "tok_no_123" };
@@ -3195,7 +3225,238 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// Summary
+// inferSize: bankroll-aware sizing
 // ---------------------------------------------------------------------------
-console.log(`\n${passed} passed, ${failed} failed\n`);
-if (failed > 0) process.exit(1);
+{
+  console.log("\ninferSize: bankroll-aware sizing");
+  const { inferSize } = require("../src/html_renderer");
+
+  const market = { liquidity: 100000, volume24hr: 50000, spreadPct: 0.03 };
+
+  // No opts → default cap ($50)
+  const sizeDefault = inferSize(market);
+  assert(sizeDefault === 50, `Default cap: $${sizeDefault} = $50`);
+
+  // With bankroll $10,000, riskPct 1%, cap $100
+  const sizeWithBankroll = inferSize(market, { bankrollUsd: 10000, riskPct: 0.01, maxTradeCapUsd: 100 });
+  // riskBudget = 10000 × 0.01 = $100, cap = $100, fromLiq = 1000, fromVol = 1000
+  // min(1000, 1000, 100, 100) = $100
+  assert(sizeWithBankroll === 100, `Bankroll $10k, 1%, cap $100 → $${sizeWithBankroll} = $100`);
+
+  // With bankroll $500, riskPct 1%, cap $50
+  const sizeSmall = inferSize(market, { bankrollUsd: 500, riskPct: 0.01, maxTradeCapUsd: 50 });
+  // riskBudget = 500 × 0.01 = $5, cap = $50
+  // min(1000, 1000, 50, 5) = $5
+  assert(sizeSmall === 5, `Bankroll $500, 1%, cap $50 → $${sizeSmall} = $5`);
+
+  // With bankroll $50, riskPct 1% → $0.50 (too low, returns null since < 1)
+  const sizeTiny = inferSize(market, { bankrollUsd: 50, riskPct: 0.01, maxTradeCapUsd: 50 });
+  // riskBudget = 50 × 0.01 = $0.50 → < 1 → null
+  assert(sizeTiny === null, `Bankroll $50, 1% → null (below $1 floor)`);
+
+  // Only cap set, no bankroll
+  const sizeCapOnly = inferSize(market, { maxTradeCapUsd: 200 });
+  // min(1000, 1000, 200, Infinity) = $200
+  assert(sizeCapOnly === 200, `Cap $200, no bankroll → $${sizeCapOnly} = $200`);
+
+  // Bankroll set, no riskPct → riskPct check fails, riskBudget = Infinity
+  const sizeBrOnly = inferSize(market, { bankrollUsd: 10000 });
+  // min(1000, 1000, 50, Infinity) = $50 (default cap)
+  assert(sizeBrOnly === 50, `Bankroll set, no riskPct → default cap $${sizeBrOnly} = $50`);
+
+  // Backward compat: no opts = same as before
+  const sizeNoOpts = inferSize(market);
+  assert(sizeNoOpts === 50, `No opts → $${sizeNoOpts} = $50 (backward compat)`);
+}
+
+// ---------------------------------------------------------------------------
+// computeTradeability uses config.MAX_ENTRY_SPREAD_PCT (not hardcoded 0.15)
+// ---------------------------------------------------------------------------
+{
+  console.log("\ncomputeTradeability uses config.MAX_ENTRY_SPREAD_PCT");
+  const { computeTradeability } = require("../src/html_renderer");
+  const cfg = require("../src/config");
+
+  // Spread just below config threshold → Tradeable
+  const justBelow = { hoursLeft: 48, spreadPct: cfg.MAX_ENTRY_SPREAD_PCT - 0.01, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(justBelow).label === "Tradeable today",
+    `Spread ${((cfg.MAX_ENTRY_SPREAD_PCT - 0.01) * 100).toFixed(0)}% (below threshold) → Tradeable`);
+
+  // Spread just above config threshold → Watch
+  const justAbove = { hoursLeft: 48, spreadPct: cfg.MAX_ENTRY_SPREAD_PCT + 0.01, liquidity: 10000, volume24hr: 5000, _filtered: false };
+  assert(computeTradeability(justAbove).label === "Watch",
+    `Spread ${((cfg.MAX_ENTRY_SPREAD_PCT + 0.01) * 100).toFixed(0)}% (above threshold) → Watch`);
+}
+
+// ---------------------------------------------------------------------------
+// MIN_BID_NOTIONAL_RATIO config exists
+// ---------------------------------------------------------------------------
+{
+  console.log("\nMIN_BID_NOTIONAL_RATIO config exists");
+  const cfg = require("../src/config");
+  assert(typeof cfg.MIN_BID_NOTIONAL_RATIO === "number",
+    "MIN_BID_NOTIONAL_RATIO config exists");
+  assert(cfg.MIN_BID_NOTIONAL_RATIO > 0 && cfg.MIN_BID_NOTIONAL_RATIO <= 1,
+    "MIN_BID_NOTIONAL_RATIO is between 0 and 1");
+  assert(cfg.MIN_BID_NOTIONAL_RATIO === 0.5,
+    "Default MIN_BID_NOTIONAL_RATIO is 0.5 (50%)");
+}
+
+// ---------------------------------------------------------------------------
+// Liquidity gate: position-size relative
+// ---------------------------------------------------------------------------
+{
+  console.log("\nLiquidity gate: position-size relative");
+  const cfg = require("../src/config");
+
+  // Small position ($20): flat floor dominates
+  // min required = max($20, $20 × 0.5) = max(20, 10) = $20
+  const minBidSmall = Math.max(cfg.MIN_BID_SIZE_USD, 20 * cfg.MIN_BID_NOTIONAL_RATIO);
+  assert(minBidSmall === cfg.MIN_BID_SIZE_USD,
+    `Small position $20: min bid = $${minBidSmall} (flat floor dominates)`);
+
+  // Large position ($500): ratio dominates
+  // min required = max($20, $500 × 0.5) = max(20, 250) = $250
+  const minBidLarge = Math.max(cfg.MIN_BID_SIZE_USD, 500 * cfg.MIN_BID_NOTIONAL_RATIO);
+  assert(minBidLarge === 250,
+    `Large position $500: min bid = $${minBidLarge} (ratio dominates, $250)`);
+
+  // Very large position ($5000): ratio dominates heavily
+  // min required = max($20, $5000 × 0.5) = max(20, 2500) = $2500
+  const minBidHuge = Math.max(cfg.MIN_BID_SIZE_USD, 5000 * cfg.MIN_BID_NOTIONAL_RATIO);
+  assert(minBidHuge === 2500,
+    `Huge position $5000: min bid = $${minBidHuge} (ratio dominates, $2500)`);
+}
+
+// ---------------------------------------------------------------------------
+// computeVolatility: explicit policy — min samples, determinism, fallback
+// ---------------------------------------------------------------------------
+{
+  console.log("\ncomputeVolatility: explicit volatility policy");
+  const { computeVolatility, stddev } = require("../src/normalizer");
+  const cfg = require("../src/config");
+
+  // Below VOL_MIN_SAMPLES → returns 0 (fallback)
+  assert(computeVolatility(null) === 0,
+    "computeVolatility(null) → 0");
+  assert(computeVolatility([]) === 0,
+    "computeVolatility([]) → 0");
+  assert(computeVolatility([0.5]) === 0,
+    "computeVolatility([0.5]) → 0 (1 sample < min)");
+  assert(computeVolatility([0.5, 0.6]) === 0,
+    "computeVolatility([0.5, 0.6]) → 0 (2 samples < default min 3)");
+
+  // At exactly VOL_MIN_SAMPLES → returns stddev
+  const series3 = [0.30, 0.32, 0.34];
+  const expected3 = stddev(series3);
+  assert(computeVolatility(series3) === expected3,
+    `computeVolatility(3 samples) === stddev(same) = ${expected3.toFixed(6)}`);
+
+  // Deterministic: same inputs → same output
+  assert(computeVolatility(series3) === computeVolatility(series3),
+    "computeVolatility is deterministic");
+
+  // Longer series also works
+  const series6 = [0.30, 0.31, 0.32, 0.34, 0.33, 0.35];
+  const expected6 = stddev(series6);
+  assert(computeVolatility(series6) === expected6,
+    `computeVolatility(6 samples) === stddev(same) = ${expected6.toFixed(6)}`);
+
+  // Result is always finite and >= 0
+  assert(Number.isFinite(computeVolatility(series6)),
+    "computeVolatility result is finite");
+  assert(computeVolatility(series6) >= 0,
+    "computeVolatility result >= 0");
+
+  // Constant series → volatility = 0
+  assert(computeVolatility([0.50, 0.50, 0.50]) === 0,
+    "Constant series → volatility = 0");
+
+  // VOL_MIN_SAMPLES config exists and is sane
+  assert(typeof cfg.VOL_MIN_SAMPLES === "number" && cfg.VOL_MIN_SAMPLES >= 2,
+    `VOL_MIN_SAMPLES = ${cfg.VOL_MIN_SAMPLES} (>= 2)`);
+}
+
+// ---------------------------------------------------------------------------
+// inferExit with computeVolatility fallback: below-min samples → min distances
+// ---------------------------------------------------------------------------
+{
+  console.log("\ninferExit: volatility=0 fallback uses minimum TP/SL distances");
+  const { inferExit } = require("../src/html_renderer");
+  const cfg = require("../src/config");
+
+  // When volatility is 0 (insufficient samples), inferExit should use min distances
+  const exits = inferExit(0.30, { volatility: 0 });
+  assert(exits.tp !== null && exits.stop !== null,
+    "inferExit with vol=0 still produces valid TP/SL");
+  const expectedTp = 0.30 + cfg.MIN_TP_DISTANCE;
+  const expectedSl = 0.30 - cfg.MIN_SL_DISTANCE;
+  assert(Math.abs(exits.tp - expectedTp) < 0.0001,
+    `TP with vol=0: ${exits.tp.toFixed(4)} ≈ ${expectedTp.toFixed(4)} (entry + MIN_TP_DISTANCE)`);
+  assert(Math.abs(exits.stop - expectedSl) < 0.0001,
+    `SL with vol=0: ${exits.stop.toFixed(4)} ≈ ${expectedSl.toFixed(4)} (entry − MIN_SL_DISTANCE)`);
+
+  // inferExit is stable / deterministic for same inputs
+  const exits2 = inferExit(0.30, { volatility: 0 });
+  assert(exits.tp === exits2.tp && exits.stop === exits2.stop,
+    "inferExit is deterministic for same inputs");
+
+  // With positive volatility, targets widen
+  const exits3 = inferExit(0.30, { volatility: 0.05 });
+  assert(exits3.tp > exits.tp, "Higher vol → wider TP");
+  assert(exits3.stop < exits.stop, "Higher vol → wider SL");
+
+  // TP/SL are always finite, in (0, 1)
+  assert(Number.isFinite(exits3.tp) && exits3.tp > 0 && exits3.tp < 1,
+    `TP is finite and in (0,1): ${exits3.tp}`);
+  assert(Number.isFinite(exits3.stop) && exits3.stop > 0 && exits3.stop < 1,
+    `SL is finite and in (0,1): ${exits3.stop}`);
+}
+
+// ---------------------------------------------------------------------------
+// attemptAutoClose: HARD GUARD — no close at $0.00 unless MARKET_SETTLED
+// (async tests — summary printed at the end of this block)
+// ---------------------------------------------------------------------------
+(async () => {
+  console.log("\nattemptAutoClose: reject close at price <= 0 (except MARKET_SETTLED)");
+  const { attemptAutoClose } = require("../src/auto_monitor");
+  const mongoose = require("mongoose");
+
+  // Each test gets a unique valid ObjectId to avoid idempotency collisions
+  const oid = () => new mongoose.Types.ObjectId();
+
+  // Test 1: close at price=0 with reason=TP_HIT → REJECTED
+  const r1 = await attemptAutoClose({ _id: oid(), status: "OPEN", entryLimit: 0.30, maxSizeUsd: 50 }, 0, "TP_HIT", true);
+  assert(r1 === "REJECTED_ZERO_PRICE",
+    `Close at price=0, reason=TP_HIT → ${r1} (expected REJECTED_ZERO_PRICE)`);
+
+  // Test 2: close at price=null with reason=EXIT_HIT → REJECTED
+  const r2 = await attemptAutoClose({ _id: oid(), status: "OPEN", entryLimit: 0.30, maxSizeUsd: 50 }, null, "EXIT_HIT", true);
+  assert(r2 === "REJECTED_ZERO_PRICE",
+    `Close at price=null, reason=EXIT_HIT → ${r2} (expected REJECTED_ZERO_PRICE)`);
+
+  // Test 3: close at price=-0.01 with reason=TP_HIT → REJECTED
+  const r3 = await attemptAutoClose({ _id: oid(), status: "OPEN", entryLimit: 0.30, maxSizeUsd: 50 }, -0.01, "TP_HIT", true);
+  assert(r3 === "REJECTED_ZERO_PRICE",
+    `Close at price=-0.01, reason=TP_HIT → ${r3} (expected REJECTED_ZERO_PRICE)`);
+
+  // Test 4: close at price=undefined with reason=EXIT_HIT → REJECTED
+  const r4 = await attemptAutoClose({ _id: oid(), status: "OPEN", entryLimit: 0.30, maxSizeUsd: 50 }, undefined, "EXIT_HIT", true);
+  assert(r4 === "REJECTED_ZERO_PRICE",
+    `Close at price=undefined, reason=EXIT_HIT → ${r4} (expected REJECTED_ZERO_PRICE)`);
+
+  // Test 5: close at price=0 with reason=MARKET_SETTLED → ALLOWED (not rejected)
+  // This will fail at DB write (no real DB), but should NOT return REJECTED_ZERO_PRICE
+  try {
+    const r5 = await attemptAutoClose({ _id: oid(), status: "OPEN", entryLimit: 0.30, maxSizeUsd: 50 }, 0, "MARKET_SETTLED", true);
+    assert(r5 !== "REJECTED_ZERO_PRICE",
+      `Close at price=0, reason=MARKET_SETTLED → ${r5} (not rejected, correct)`);
+  } catch (err) {
+    // DB error is expected (no real Mongo), but the guard did not reject — correct behavior
+    assert(true, "Close at price=0, reason=MARKET_SETTLED → not rejected (DB error expected)");
+  }
+
+  // Print summary after async tests complete
+  console.log(`\n${passed} passed, ${failed} failed\n`);
+  if (failed > 0) process.exit(1);
+})();

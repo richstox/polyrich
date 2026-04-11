@@ -341,6 +341,7 @@ async function autoSaveExecuteTickets(scanId) {
     ? settings.riskPct : null;
 
   const cards = tradeCandidates.slice(0, 20);
+  const sizingOpts = { bankrollUsd: userBankroll, riskPct: userRiskPct, maxTradeCapUsd: userCap };
   const executeItems = [];
   for (const item of cards) {
     try {
@@ -348,30 +349,15 @@ async function autoSaveExecuteTickets(scanId) {
       if (dir.action === "WATCH") continue;
       const entryNum = inferEntry(item, dir.action);
       if (entryNum === null) continue;
-      let sizeNum = inferSize(item);
+      const sizeNum = inferSize(item, sizingOpts);
       if (sizeNum === null) continue;
-
-      // Clamp to user's settings (mirrors client-side updateCards logic)
-      if (userCap !== null || userBankroll !== null) {
-        const hMax = sizeNum; // heuristic max from inferSize
-        let maxSizeRaw;
-        if (userBankroll !== null && userRiskPct !== null) {
-          const riskBudget = userBankroll * userRiskPct;
-          maxSizeRaw = Math.min(userCap || Infinity, riskBudget, hMax);
-        } else if (userCap !== null) {
-          maxSizeRaw = Math.min(userCap, hMax);
-        } else {
-          maxSizeRaw = hMax;
-        }
-        sizeNum = Math.round(maxSizeRaw * 100) / 100;
-      }
 
       // Skip if below min limit order ($5)
       if (sizeNum < 5) continue;
 
-      // Bid-based TP/SL: use bestBidNum as close-price basis
+      // Entry-based TP/SL (volatility-adaptive)
       const entryBidNum = (item.bestBidNum > 0) ? item.bestBidNum : null;
-      const exits = inferExit(entryNum, entryBidNum);
+      const exits = inferExit(entryNum, { volatility: item.volatility });
       if (exits.tp === null || exits.stop === null) continue;
       executeItems.push({ item, dir, entryNum, sizeNum, tpNum: exits.tp, stopNum: exits.stop, entryBidNum });
     } catch (_) { /* skip */ }
@@ -431,14 +417,8 @@ async function autoSaveExecuteTickets(scanId) {
       ts: new Date().toISOString(),
     }));
 
-    // Recompute TP/SL with CLOB-verified bid (may differ from Gamma screening pass)
-    if (Number.isFinite(entryBidNum) && entryBidNum > 0) {
-      const clobExits = inferExit(entryNum, entryBidNum);
-      if (clobExits.tp !== null && clobExits.stop !== null) {
-        tpNum = clobExits.tp;
-        stopNum = clobExits.stop;
-      }
-    }
+    // TP/SL are entry-based — computed from entryNum during initial calculation
+    // and remain constant based on entry price regardless of CLOB bid.
 
     // ---------------------------------------------------------------------------
     // HARD INVARIANT: Fail-closed on missing executable bid
@@ -447,7 +427,7 @@ async function autoSaveExecuteTickets(scanId) {
     //  1. entryBid: finite > 0 (valid executable bid from CLOB)
     //  2. entryAsk: finite > 0 (entry price)
     //  3. entryBidSize: finite > 0 (liquidity exists at that bid level)
-    //  4. TP and SL: finite > 0 (computed from valid bid basis)
+    //  4. TP and SL: finite > 0
     // If ANY is missing → block auto-close with NO_EXECUTABLE_BID.
     const hasValidBid  = Number.isFinite(entryBidNum) && entryBidNum > 0;
     const hasValidAsk  = Number.isFinite(entryNum) && entryNum > 0;
@@ -466,27 +446,39 @@ async function autoSaveExecuteTickets(scanId) {
     const spreadAbs = (hasValidBid && entryAskNum) ? (entryAskNum - entryBidNum) : null;
     const spreadPct = (midNum && midNum > 0 && spreadAbs !== null) ? spreadAbs / midNum : null;
 
-    // --- Spread warning (advisory only, NOT a hard gate) ---
-    // Wide spread is logged for operator awareness but does NOT skip the ticket.
+    // --- Spread gate: SKIP wide-spread tickets entirely ---
+    // Do NOT create tickets for markets where the spread is too wide.
+    // Previously these were created with autoClose disabled (SPREAD_TOO_WIDE),
+    // but that just clutters the ticket list with un-closeable positions.
     if (spreadPct !== null && spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
       console.log(JSON.stringify({
-        msg: "autoSave-spread-warning",
+        msg: "autoSave-spread-skip",
         marketId, spreadPct: Math.round(spreadPct * 10000) / 10000,
         threshold: config.MAX_ENTRY_SPREAD_PCT,
         ts: new Date().toISOString(),
       }));
-      // Block auto-close for operator review, but still create the ticket
-      if (effectiveAutoClose) {
-        effectiveAutoClose = false;
-        autoCloseBlockedReason = autoCloseBlockedReason || "SPREAD_TOO_WIDE";
-      }
+      continue; // skip — do not create ticket
+    }
+
+    // --- Safety: bid already below SL → skip ---
+    // With entry-based TP/SL, a wide spread can mean the current bid is already
+    // at or below the stop-loss. Don't open a position that instantly triggers EXIT.
+    if (hasValidBid && stopNum > 0 && entryBidNum <= stopNum) {
+      console.log(JSON.stringify({
+        msg: "autoSave-bid-below-sl-skip",
+        marketId, entryBid: entryBidNum, stop: stopNum,
+        ts: new Date().toISOString(),
+      }));
+      continue; // skip — would trigger EXIT_HIT immediately
     }
 
     // --- Admission gates: liquidity ---
     // Liquidity gate: close-side = bid (selling shares). Check notional at top bid.
+    // Threshold scales with position size: max(flat floor, sizeNum × ratio)
     if (effectiveAutoClose && hasValidBid && bidSizeRaw !== null) {
       const bidNotionalUsd = entryBidNum * bidSizeRaw;
-      if (bidNotionalUsd < config.MIN_BID_SIZE_USD) {
+      const minBidRequired = Math.max(config.MIN_BID_SIZE_USD, sizeNum * config.MIN_BID_NOTIONAL_RATIO);
+      if (bidNotionalUsd < minBidRequired) {
         effectiveAutoClose = false;
         autoCloseBlockedReason = autoCloseBlockedReason || "INSUFFICIENT_BID_SIZE";
       }
@@ -747,7 +739,7 @@ if (url.pathname === "/trade") {
           const entryNum = inferEntry(item, dir.action);
           if (entryNum === null) return false;
           const sizeNum = inferSize(item);
-          const exits = inferExit(entryNum);
+          const exits = inferExit(entryNum, { volatility: item.volatility });
           return sizeNum !== null && exits.tp !== null && exits.stop !== null;
         } catch (_) { return false; }
       }
@@ -1587,10 +1579,19 @@ if (url.pathname === "/trade") {
             }
           }
         }
-        // Spread warning: advisory only — block auto-close but don't reject the ticket
-        if (data.autoCloseEnabled && typeof data.entrySpreadPct === "number" && data.entrySpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
-          data.autoCloseEnabled = false;
-          data.autoCloseBlockedReason = data.autoCloseBlockedReason || "SPREAD_TOO_WIDE";
+        // Spread gate: reject wide-spread tickets entirely (same logic as autoSave)
+        if (typeof data.entrySpreadPct === "number" && data.entrySpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
+          res.writeHead(422, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SPREAD_TOO_WIDE", spreadPct: data.entrySpreadPct, threshold: config.MAX_ENTRY_SPREAD_PCT }));
+          return;
+        }
+        // Bid-below-SL gate: reject if bid already at or below stop-loss (instant EXIT)
+        if (typeof data.entryBid === "number" && data.entryBid > 0 &&
+            typeof data.riskExitLimit === "number" && data.riskExitLimit > 0 &&
+            data.entryBid <= data.riskExitLimit) {
+          res.writeHead(422, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "BID_BELOW_SL", entryBid: data.entryBid, riskExitLimit: data.riskExitLimit }));
+          return;
         }
         // Admission gates for auto-close: liquidity
         if (data.autoCloseEnabled && typeof data.entryBid === "number" && typeof data.entryBidSize === "number") {
@@ -1873,41 +1874,61 @@ if (url.pathname === "/trade") {
       let pickReason = null;
       let pickIndex = -1;
 
+      // Load sizing settings for bankroll-aware sizing
+      const paperSettings = await SystemSetting.findOne().lean().catch(() => ({})) || {};
+      const paperSizingOpts = {
+        bankrollUsd: typeof paperSettings.bankrollUsd === "number" && paperSettings.bankrollUsd > 0 ? paperSettings.bankrollUsd : null,
+        riskPct: typeof paperSettings.riskPct === "number" && paperSettings.riskPct > 0 ? paperSettings.riskPct : null,
+        maxTradeCapUsd: typeof paperSettings.maxTradeCapUsd === "number" && paperSettings.maxTradeCapUsd > 0 ? paperSettings.maxTradeCapUsd : null,
+      };
+
       const maxCandidatesToEval = config.PAPER_RUNNER_MAX_CANDIDATES;
+      // Track skip reasons for operator-grade diagnostics
+      const skipReasons = {
+        skipped_watch: 0,
+        skipped_no_entry: 0,
+        skipped_size_too_small: 0,
+        skipped_no_token: 0,
+        skipped_no_conditionId: 0,
+        skipped_no_clob_book: 0,
+        skipped_invalid_bid_ask: 0,
+        skipped_exits_null: 0,
+        skipped_error: 0,
+      };
       for (let i = 0; i < Math.min(tradeCandidates.length, maxCandidatesToEval); i++) {
         const item = tradeCandidates[i];
         try {
           const dir = inferDirection(item);
-          if (dir.action === "WATCH") continue;
+          if (dir.action === "WATCH") { skipReasons.skipped_watch++; continue; }
           const entryNum = inferEntry(item, dir.action);
-          if (entryNum === null) continue;
-          const sizeNum = inferSize(item);
-          if (sizeNum === null || sizeNum < 5) continue;
+          if (entryNum === null) { skipReasons.skipped_no_entry++; continue; }
+          const sizeNum = inferSize(item, paperSizingOpts);
+          if (sizeNum === null || sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
 
           // Require a CLOB token ID
           const tokenId = dir.action === "BUY YES"
             ? ((item.yesTokenId || "").trim() || null)
             : ((item.noTokenId || "").trim() || null);
-          if (!tokenId) continue;
+          if (!tokenId) { skipReasons.skipped_no_token++; continue; }
 
           // Require valid conditionId for monitoring
           const rawConditionId = (item.conditionId || "").trim() || null;
-          if (!rawConditionId || !rawConditionId.startsWith("0x")) continue;
+          if (!rawConditionId || !rawConditionId.startsWith("0x")) { skipReasons.skipped_no_conditionId++; continue; }
 
           // Fetch real CLOB book
           const book = await fetchClobBook(tokenId);
-          if (!book || book.bestBid === null || book.bestAsk === null) continue;
-          if (book.topBidSize === null) continue;
+          if (!book || book.bestBid === null || book.bestAsk === null) { skipReasons.skipped_no_clob_book++; continue; }
+          if (book.topBidSize === null) { skipReasons.skipped_no_clob_book++; continue; }
 
           const entryBidNum = book.bestBid;
           const entryAskNum = book.bestAsk;
 
           // Safety: valid executable bid/ask must be > 0
-          if (!(entryBidNum > 0) || !(entryAskNum > 0)) continue;
+          if (!(entryBidNum > 0) || !(entryAskNum > 0)) { skipReasons.skipped_invalid_bid_ask++; continue; }
 
-          // Compute TP/SL from real CLOB bid (sell-to-close basis)
-          const exits = inferExit(entryAskNum, entryBidNum);
-          if (exits.tp === null || exits.stop === null) continue;
+          // Compute TP/SL from entry price (volatility-adaptive)
+          const exits = inferExit(entryAskNum, { volatility: item.volatility });
+          if (exits.tp === null || exits.stop === null) { skipReasons.skipped_exits_null++; continue; }
 
           picked = {
             item, dir, entryNum: entryAskNum, sizeNum,
@@ -1920,7 +1941,7 @@ if (url.pathname === "/trade") {
             `${dir.action}, ask=$${entryAskNum.toFixed(4)}, bid=$${entryBidNum.toFixed(4)}, ` +
             `liq=$${Math.round(item.liquidity)}, vol24=$${Math.round(item.volume24hr)}`;
           break;
-        } catch (_) { continue; }
+        } catch (_) { skipReasons.skipped_error++; continue; }
       }
 
       if (!picked) {
@@ -1929,6 +1950,7 @@ if (url.pathname === "/trade") {
           candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
           totalCandidates: tradeCandidates.length,
           totalFetched: rawMarkets.length,
+          skipReasons,
         });
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
@@ -1936,6 +1958,7 @@ if (url.pathname === "/trade") {
           error: "No viable candidate found",
           candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
           totalCandidates: tradeCandidates.length,
+          skipReasons,
         }));
         return;
       }
@@ -2251,10 +2274,22 @@ if (url.pathname === "/trade") {
               '</div>';
           } else {
             status.textContent = "⚠️ No trade opened";
+            let skipHtml = '';
+            if (data.skipReasons) {
+              const sr = data.skipReasons;
+              const entries = Object.entries(sr).filter(([, v]) => v > 0);
+              if (entries.length > 0) {
+                skipHtml = '<div style="margin-top:8px;padding:8px;background:#2a1a1a;border-radius:4px;font-size:13px">' +
+                  '<b style="color:#f87171">Skip Reasons:</b><br>' +
+                  entries.map(([k, v]) => '<span style="color:#aaa">' + k + ':</span> <b style="color:#fbbf24">' + v + '</b>').join('<br>') +
+                  '</div>';
+              }
+            }
             result.innerHTML = '<div style="border:1px solid #a00;border-radius:8px;padding:16px;background:#2e1a1a;margin-top:12px">' +
-              '<b style="color:#f87171">No Viable Candidate</b><br>' +
+              '<b style="color:#f87171">NO_VIABLE_CANDIDATE</b><br>' +
               '<span style="color:#aaa">' + (data.error || 'Unknown error') + '</span><br>' +
-              '<b>Candidates scanned:</b> ' + (data.candidatesScanned || 0) +
+              '<b>Candidates scanned:</b> ' + (data.candidatesScanned || 0) + ' of ' + (data.totalCandidates || 0) +
+              skipHtml +
               '</div>';
           }
         } catch (err) {

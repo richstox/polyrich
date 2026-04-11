@@ -5,6 +5,7 @@ const { MarketSnapshot, ShownCandidate } = require("./persistence");
 const {
   asNumber,
   stddev,
+  computeVolatility,
   mean,
   median,
   quantile,
@@ -540,7 +541,7 @@ function enrichItem(item, historyMap, recentlyShownSet) {
   const delta2 = yesSeries.length >= 3 ? yesSeries[yesSeries.length - 2] - yesSeries[yesSeries.length - 3] : 0;
 
   const absMove = Math.abs(delta1);
-  const volatility = stddev(yesSeries);
+  const volatility = computeVolatility(yesSeries);
   const recentAbsDiffs = diffs.map((d) => Math.abs(d));
   const medianRecentMove = median(recentAbsDiffs);
 

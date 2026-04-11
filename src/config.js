@@ -82,14 +82,33 @@ module.exports = {
   // ---------------------------------------------------------------------------
   // Admission gates — market quality checks at ticket creation
   // ---------------------------------------------------------------------------
-  // Advisory spread threshold (warning-only, NOT a hard admission gate).
-  // When CLOB-verified spread exceeds this, auto-close is blocked with
-  // SPREAD_TOO_WIDE, but the ticket is still created for manual review.
-  // The hard invariant is NO_EXECUTABLE_BID (missing/invalid bid/ask/size).
+  // Hard spread threshold: tickets with spread above this are rejected entirely.
+  // Both autoSave and POST /api/tickets refuse to create tickets with
+  // CLOB-verified spread exceeding this limit.
   MAX_ENTRY_SPREAD_PCT: parseFloat(process.env.MAX_ENTRY_SPREAD_PCT || "0.15"),
   // Min top-of-book bid size (USD notional at bid price) to enable auto-close.
   // If close-side liquidity is below this, autoClose is blocked with INSUFFICIENT_BID_SIZE.
   MIN_BID_SIZE_USD: parseFloat(process.env.MIN_BID_SIZE_USD || "20"),
+  // Bid notional must also cover this fraction of position size.
+  // E.g. 0.5 = bid notional ≥ 50% of maxSizeUsd. Ensures exit liquidity scales with position.
+  MIN_BID_NOTIONAL_RATIO: parseFloat(process.env.MIN_BID_NOTIONAL_RATIO || "0.5"),
+
+  // ---------------------------------------------------------------------------
+  // Volatility-adaptive TP/SL
+  // ---------------------------------------------------------------------------
+  // TP = entry + K_TP × volatility; SL = entry − K_SL × volatility
+  // Asymmetric R:R — K_TP > K_SL so reward > risk.
+  K_TP: parseFloat(process.env.K_TP || "2.5"),
+  K_SL: parseFloat(process.env.K_SL || "1.5"),
+  // Minimum distances (cents) so quiet markets don't get absurdly tight targets
+  MIN_TP_DISTANCE: parseFloat(process.env.MIN_TP_DISTANCE || "0.05"),
+  MIN_SL_DISTANCE: parseFloat(process.env.MIN_SL_DISTANCE || "0.03"),
+  // Minimum snapshot samples required for volatility computation.
+  // Below this, volatility returns 0 (fallback to minimum TP/SL distances).
+  // Using raw price levels (not returns) because prediction market prices are
+  // bounded [0,1] and typically exhibit mean-reversion, making level-dispersion
+  // a better proxy for achievable TP/SL distance than return-based vol.
+  VOL_MIN_SAMPLES: parseInt(process.env.VOL_MIN_SAMPLES || "3", 10),
 
   // Paper-runner: max candidates to evaluate before giving up
   PAPER_RUNNER_MAX_CANDIDATES: parseInt(process.env.PAPER_RUNNER_MAX_CANDIDATES || "20", 10),
