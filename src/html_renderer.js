@@ -1905,7 +1905,7 @@ function renderTradeCard(item) {
 }
 
 /** Render the compact status bar at top of /trade. */
-function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings) {
+function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings, lastAutoSaveResult) {
   const lastScan = utcSpan(scanStatus.lastScanAt, "not yet");
   const nextScan = utcSpan(scanStatus.nextScanAt, "\u2014");
   const eventsScanned = scanStatus.lastEventsFetched || 0;
@@ -1925,6 +1925,31 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
   const autoSaveStatusLine = autoSaveEnabled
     ? '<div style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#22c55e;">💾 Auto‑Save ON: will save new EXECUTE ideas after each scan.</div>'
     : "";
+
+  // Last Auto-Save result panel (shows NO_VIABLE_CANDIDATE breakdown or CREATED count)
+  let autoSaveResultHtml = "";
+  if (autoSaveEnabled && lastAutoSaveResult) {
+    const r = lastAutoSaveResult;
+    if (r.result === "ERROR" && r.error === "NO_VIABLE_CANDIDATE" && r.skipReasons) {
+      const reasons = r.skipReasons;
+      const reasonParts = Object.entries(reasons)
+        .filter(([, v]) => v > 0)
+        .map(([k, v]) => `${k.replace("skipped_", "")}: ${v}`)
+        .join(", ");
+      const ts = r.createdAt ? new Date(r.createdAt).toISOString().slice(11, 19) + "Z" : "";
+      autoSaveResultHtml = `<div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#fca5a5;">` +
+        `📊 Last Auto‑Save: <b>NO_VIABLE_CANDIDATE</b> (scanId: ${escHtml(r.scanId || "")})` +
+        (reasonParts ? ` — ${escHtml(reasonParts)}` : "") +
+        (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
+        `</div>`;
+    } else if (r.result === "CREATED") {
+      const ts = r.createdAt ? new Date(r.createdAt).toISOString().slice(11, 19) + "Z" : "";
+      autoSaveResultHtml = `<div style="background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#86efac;">` +
+        `✅ Last Auto‑Save: <b>CREATED</b> ticket` +
+        (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
+        `</div>`;
+    }
+  }
 
   return `
     <div class="status-bar">
@@ -1983,6 +2008,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
       <a href="/scan?returnTo=/trade" class="cta-primary" style="padding:5px 14px;font-size:0.82rem;white-space:nowrap;">Refresh scan</a>
     </div>
     ${autoSaveStatusLine}
+    ${autoSaveResultHtml}
     <div id="sizing-block-warning" style="display:none;background:rgba(127,29,29,.35);border:2px solid #991b1b;border-radius:10px;padding:12px 16px;margin-bottom:10px;font-size:0.88rem;color:#fecaca;line-height:1.5;">
     </div>
     <div id="limit-order-warning" style="display:none;background:rgba(127,29,29,.3);border:1px solid #7f1d1d;border-radius:8px;padding:8px 14px;margin-bottom:8px;font-size:0.82rem;color:#fecaca;">
@@ -1993,9 +2019,9 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
 }
 
 /** Render the full /trade page body. */
-function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSettings) {
+function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSettings, lastAutoSaveResult) {
   const cards = tradeCandidates.slice(0, 20);
-  const statusBar = renderStatusBar(scanStatus, cards.length, relaxedMode, systemSettings);
+  const statusBar = renderStatusBar(scanStatus, cards.length, relaxedMode, systemSettings, lastAutoSaveResult);
   const defaultAutoClose = (systemSettings && systemSettings.defaultAutoCloseEnabled) || false;
 
   // Split cards into EXECUTE vs WATCH at render time using unified evaluation
@@ -2436,6 +2462,26 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
 
           var sizeEl = card.querySelector('.trade-size');
           if (sizeEl) sizeEl.innerHTML = '$' + maxSizeDisplay.toFixed(2) + ' <span class="size-note">' + sizeNote + '</span>';
+
+          // Update sizing details line with current user settings
+          var sdEl = card.querySelector('.sizing-details');
+          if (sdEl) {
+            var bdParts = [];
+            bdParts.push('fromLiq=$' + (Math.round(fromLiq * 100) / 100));
+            bdParts.push('fromVol=$' + (Math.round(fromVol * 100) / 100));
+            if (isFinite(riskBudget)) bdParts.push('riskBudget=$' + (Math.round(riskBudget * 100) / 100));
+            bdParts.push('cap=$' + capUsd);
+            bdParts.push('min=$' + MIN_ORDER);
+            bdParts.push('chosen=$' + maxSizeDisplay.toFixed(2));
+            var bn;
+            if (capUsd < MIN_ORDER) bn = 'CAP';
+            else if (isFinite(riskBudget) && riskBudget <= fromLiq && riskBudget <= fromVol && riskBudget <= capUsd) bn = 'RISK';
+            else if (fromLiq <= fromVol && fromLiq <= capUsd) bn = 'LIQUIDITY';
+            else if (fromVol <= capUsd) bn = 'VOLUME';
+            else bn = 'CAP';
+            bdParts.push('bottleneck=' + bn);
+            sdEl.textContent = bdParts.join(' \u00B7 ');
+          }
 
           if (!isNaN(tp) && !isNaN(stop)) {
             var pTpU = maxSizeDisplay * (tp - entry) / entry;

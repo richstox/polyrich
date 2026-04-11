@@ -731,7 +731,13 @@ if (url.pathname === "/trade") {
 
     scanStatus.lastInterestingCount = rawCandidates.length;
 
-    const body = renderTradePage(scanStatus, rawCandidates, relaxedMode, systemSettings);
+    // Fetch last auto-save result for status panel (most recent log entry)
+    let lastAutoSaveResult = null;
+    try {
+      lastAutoSaveResult = await AutoSaveLog.findOne().sort({ createdAt: -1 }).lean();
+    } catch (_) {}
+
+    const body = renderTradePage(scanStatus, rawCandidates, relaxedMode, systemSettings, lastAutoSaveResult);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(pageShell("Trade", "/trade", body));
     return;
@@ -2341,11 +2347,34 @@ if (url.pathname === "/trade") {
                   '</div>';
               }
             }
+            // Show top candidate details for operator diagnostics
+            var candidateHtml = '';
+            if (data.candidateDetails && data.candidateDetails.length > 0) {
+              candidateHtml = '<div style="margin-top:8px;padding:8px;background:#1a2a1a;border-radius:4px;font-size:12px">' +
+                '<b style="color:#86efac">Top ' + data.candidateDetails.length + ' Candidates:</b><br>';
+              data.candidateDetails.forEach(function(cd, idx) {
+                candidateHtml += '<div style="margin-top:4px;padding:4px 0;border-top:1px solid #333">' +
+                  '<span style="color:#fbbf24">#' + (idx + 1) + '</span> ' +
+                  '<span style="color:#e2e8f0">' + (cd.question || 'unknown').slice(0, 60) + '</span><br>' +
+                  '<span style="color:#aaa">status=' + cd.status + ' skip=' + (cd.skipReason || 'none') + '</span>';
+                if (cd.sizingBreakdown) {
+                  var b = cd.sizingBreakdown;
+                  candidateHtml += '<br><span style="color:#6b7280;font-family:monospace;font-size:11px">' +
+                    'fromLiq=$' + b.fromLiq + ' fromVol=$' + b.fromVol +
+                    (b.riskBudget !== null ? ' riskBudget=$' + b.riskBudget : '') +
+                    ' cap=$' + b.cap + ' chosen=$' + b.chosen +
+                    ' bottleneck=' + b.bottleneck + '</span>';
+                }
+                candidateHtml += '</div>';
+              });
+              candidateHtml += '</div>';
+            }
             result.innerHTML = '<div style="border:1px solid #a00;border-radius:8px;padding:16px;background:#2e1a1a;margin-top:12px">' +
               '<b style="color:#f87171">NO_VIABLE_CANDIDATE</b><br>' +
               '<span style="color:#aaa">' + (data.error || 'Unknown error') + '</span><br>' +
               '<b>Candidates scanned:</b> ' + (data.candidatesScanned || 0) + ' of ' + (data.totalCandidates || 0) +
               skipHtml +
+              candidateHtml +
               '</div>';
           }
         } catch (err) {
