@@ -3249,7 +3249,7 @@ console.log("\nfinal selection: mispricing quota");
   // min(1000, 1000, 50, 5) = $5
   assert(sizeSmall === 5, `Bankroll $500, 1%, cap $50 → $${sizeSmall} = $5`);
 
-  // With bankroll $100, riskPct 1% → $1 (too low, returns null since < 1)
+  // With bankroll $50, riskPct 1% → $0.50 (too low, returns null since < 1)
   const sizeTiny = inferSize(market, { bankrollUsd: 50, riskPct: 0.01, maxTradeCapUsd: 50 });
   // riskBudget = 50 × 0.01 = $0.50 → < 1 → null
   assert(sizeTiny === null, `Bankroll $50, 1% → null (below $1 floor)`);
