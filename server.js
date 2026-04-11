@@ -46,6 +46,7 @@ const {
   inferEntry,
   inferSize,
   inferExit,
+  evaluateCandidateForExecution,
   polymarketUrl,
   safeQuestion,
   whyNowSummary,
@@ -349,9 +350,9 @@ async function autoSaveExecuteTickets(scanId) {
     ? settings.riskPct : null;
 
   const cards = tradeCandidates.slice(0, 20);
-  const sizingOpts = { bankrollUsd: userBankroll, riskPct: userRiskPct, maxTradeCapUsd: userCap };
+  const sizingSettings = { bankrollUsd: userBankroll, riskPct: userRiskPct, maxTradeCapUsd: userCap };
   const executeItems = [];
-  // Track skip reasons for operator-grade diagnostics (mirrors paper-runner pattern)
+  // Track skip reasons for operator-grade diagnostics
   const skipReasons = {
     skipped_watch: 0,
     skipped_no_entry: 0,
@@ -360,38 +361,57 @@ async function autoSaveExecuteTickets(scanId) {
     skipped_exits_null: 0,
     skipped_error: 0,
   };
+  // Top 5 candidates with their skip reasons for diagnostics
+  const candidateDetails = [];
   for (const item of cards) {
     try {
-      const dir = inferDirection(item);
-      if (dir.action === "WATCH") { skipReasons.skipped_watch++; continue; }
-      const entryNum = inferEntry(item, dir.action);
-      if (entryNum === null) { skipReasons.skipped_no_entry++; continue; }
-      let sizeNum = inferSize(item, sizingOpts);
-      if (sizeNum === null) { skipReasons.skipped_no_size++; continue; }
+      const evalResult = evaluateCandidateForExecution(item, sizingSettings);
+      const detail = {
+        question: safeQuestion(item),
+        conditionId: item.conditionId || null,
+        status: evalResult.status,
+        skipReason: evalResult.skipReason,
+        sizingBreakdown: evalResult.sizingBreakdown,
+      };
+      if (candidateDetails.length < 5) candidateDetails.push(detail);
 
-      // Bump to exchange minimum ($5) when volume-based sizing is conservative
-      // but user's cap allows it.  Prevents rejecting viable trades just because
-      // fromVol (volume24hr × 2%) is below the Polymarket minimum order size.
-      if (sizeNum < 5 && (userCap == null || userCap >= 5)) sizeNum = 5;
-      if (sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
-
-      // Entry-based TP/SL (volatility-adaptive)
-      const entryBidNum = (item.bestBidNum > 0) ? item.bestBidNum : null;
-      const exits = inferExit(entryNum, { volatility: item.volatility });
-      if (exits.tp === null || exits.stop === null) { skipReasons.skipped_exits_null++; continue; }
-      executeItems.push({ item, dir, entryNum, sizeNum, tpNum: exits.tp, stopNum: exits.stop, entryBidNum });
+      if (evalResult.status !== "EXECUTE") {
+        if (evalResult.skipReason && skipReasons[evalResult.skipReason] !== undefined) {
+          skipReasons[evalResult.skipReason]++;
+        } else if (evalResult.skipReason) {
+          skipReasons[evalResult.skipReason] = (skipReasons[evalResult.skipReason] || 0) + 1;
+        }
+        continue;
+      }
+      executeItems.push({
+        item, dir: evalResult.direction,
+        entryNum: evalResult.entryNum, sizeNum: evalResult.sizeNum,
+        tpNum: evalResult.exits.tp, stopNum: evalResult.exits.stop,
+        entryBidNum: evalResult.entryBidNum,
+      });
     } catch (_) { skipReasons.skipped_error++; }
   }
 
   const limit = config.AUTO_SAVE_EXECUTE_LIMIT;
   const toSave = executeItems.slice(0, limit);
   if (toSave.length === 0) {
+    // Persist audit log for NO_VIABLE_CANDIDATE so UI can display reason
+    try {
+      await AutoSaveLog.create({
+        scanId,
+        result: "ERROR",
+        error: "NO_VIABLE_CANDIDATE",
+        skipReasons,
+        candidateDetails,
+      });
+    } catch (_) {}
     console.log(JSON.stringify({
       msg: "autoSave: 0 executeItems after filtering",
       scanId,
       tradeCandidates: tradeCandidates.length,
       cardsEvaluated: cards.length,
       skipReasons,
+      candidateDetails,
       ts: new Date().toISOString(),
     }));
     return;
@@ -1892,7 +1912,7 @@ if (url.pathname === "/trade") {
 
       // Load sizing settings for bankroll-aware sizing
       const paperSettings = await SystemSetting.findOne().lean().catch(() => ({})) || {};
-      const paperSizingOpts = {
+      const paperSizingSettings = {
         bankrollUsd: typeof paperSettings.bankrollUsd === "number" && paperSettings.bankrollUsd > 0 ? paperSettings.bankrollUsd : null,
         riskPct: typeof paperSettings.riskPct === "number" && paperSettings.riskPct > 0 ? paperSettings.riskPct : null,
         maxTradeCapUsd: typeof paperSettings.maxTradeCapUsd === "number" && paperSettings.maxTradeCapUsd > 0 ? paperSettings.maxTradeCapUsd : null,
@@ -1903,6 +1923,7 @@ if (url.pathname === "/trade") {
       const skipReasons = {
         skipped_watch: 0,
         skipped_no_entry: 0,
+        skipped_no_size: 0,
         skipped_size_too_small: 0,
         skipped_no_token: 0,
         skipped_no_conditionId: 0,
@@ -1911,27 +1932,40 @@ if (url.pathname === "/trade") {
         skipped_exits_null: 0,
         skipped_error: 0,
       };
+      // Top 5 candidate details for breakdown
+      const candidateDetails = [];
       for (let i = 0; i < Math.min(tradeCandidates.length, maxCandidatesToEval); i++) {
         const item = tradeCandidates[i];
         try {
-          const dir = inferDirection(item);
-          if (dir.action === "WATCH") { skipReasons.skipped_watch++; continue; }
-          const entryNum = inferEntry(item, dir.action);
-          if (entryNum === null) { skipReasons.skipped_no_entry++; continue; }
-          let sizeNum = inferSize(item, paperSizingOpts);
-          if (sizeNum === null) { skipReasons.skipped_size_too_small++; continue; }
-          // Bump to exchange minimum ($5) when user's cap allows
-          const paperCap = paperSizingOpts.maxTradeCapUsd;
-          if (sizeNum < 5 && (paperCap == null || paperCap >= 5)) sizeNum = 5;
-          if (sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
+          // Use unified evaluation for consistent gates
+          const evalResult = evaluateCandidateForExecution(item, paperSizingSettings);
+          const detail = {
+            question: safeQuestion(item),
+            conditionId: item.conditionId || null,
+            status: evalResult.status,
+            skipReason: evalResult.skipReason,
+            sizingBreakdown: evalResult.sizingBreakdown,
+          };
+          if (candidateDetails.length < 5) candidateDetails.push(detail);
 
-          // Require a CLOB token ID
+          if (evalResult.status !== "EXECUTE") {
+            if (evalResult.skipReason && skipReasons[evalResult.skipReason] !== undefined) {
+              skipReasons[evalResult.skipReason]++;
+            } else if (evalResult.skipReason) {
+              skipReasons[evalResult.skipReason] = (skipReasons[evalResult.skipReason] || 0) + 1;
+            }
+            continue;
+          }
+
+          const dir = evalResult.direction;
+          const sizeNum = evalResult.sizeNum;
+
+          // Additional execution gates: CLOB token ID + conditionId + live book
           const tokenId = dir.action === "BUY YES"
             ? ((item.yesTokenId || "").trim() || null)
             : ((item.noTokenId || "").trim() || null);
           if (!tokenId) { skipReasons.skipped_no_token++; continue; }
 
-          // Require valid conditionId for monitoring
           const rawConditionId = (item.conditionId || "").trim() || null;
           if (!rawConditionId || !rawConditionId.startsWith("0x")) { skipReasons.skipped_no_conditionId++; continue; }
 
@@ -1946,7 +1980,7 @@ if (url.pathname === "/trade") {
           // Safety: valid executable bid/ask must be > 0
           if (!(entryBidNum > 0) || !(entryAskNum > 0)) { skipReasons.skipped_invalid_bid_ask++; continue; }
 
-          // Compute TP/SL from entry price (volatility-adaptive)
+          // Compute TP/SL from live CLOB ask (more accurate than Gamma snapshot)
           const exits = inferExit(entryAskNum, { volatility: item.volatility });
           if (exits.tp === null || exits.stop === null) { skipReasons.skipped_exits_null++; continue; }
 
@@ -1971,6 +2005,7 @@ if (url.pathname === "/trade") {
           totalCandidates: tradeCandidates.length,
           scanId: usedScanId,
           skipReasons,
+          candidateDetails,
         });
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
@@ -1979,6 +2014,7 @@ if (url.pathname === "/trade") {
           candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
           totalCandidates: tradeCandidates.length,
           skipReasons,
+          candidateDetails,
         }));
         return;
       }

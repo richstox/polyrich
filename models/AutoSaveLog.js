@@ -11,6 +11,8 @@ const autoSaveLogSchema = new mongoose.Schema(
     dedupeKey: { type: String },
     result: { type: String, enum: ["CREATED", "DUPLICATE", "ERROR"], required: true },
     error: { type: String, default: null },
+    skipReasons: { type: mongoose.Schema.Types.Mixed, default: null },
+    candidateDetails: { type: [mongoose.Schema.Types.Mixed], default: null },
   },
   { timestamps: true }
 );

@@ -1464,6 +1464,165 @@ function inferExit(entryNum, opts) {
   return { tp, stop };
 }
 
+/**
+ * Like inferSize but also returns the sizing breakdown with bottleneck identification.
+ * Returns { size, breakdown } where breakdown has all component values.
+ */
+function inferSizeWithBreakdown(item, opts) {
+  opts = opts || {};
+  const fromLiq = item.liquidity * SIZE_LIQUIDITY_PCT;
+  const fromVol = item.volume24hr * SIZE_VOLUME_PCT;
+  const capUsd = (typeof opts.maxTradeCapUsd === "number" && opts.maxTradeCapUsd > 0)
+    ? opts.maxTradeCapUsd : MAX_TRADE_CAP_USD_DEFAULT;
+  const riskBudget = (typeof opts.bankrollUsd === "number" && opts.bankrollUsd > 0 &&
+                      typeof opts.riskPct === "number" && opts.riskPct > 0)
+    ? opts.bankrollUsd * opts.riskPct : Infinity;
+
+  const breakdown = {
+    fromLiq: Math.round(fromLiq * 100) / 100,
+    fromVol: Math.round(fromVol * 100) / 100,
+    riskBudget: Number.isFinite(riskBudget) ? Math.round(riskBudget * 100) / 100 : null,
+    cap: capUsd,
+    minOrder: MIN_LIMIT_ORDER_USD,
+    chosen: null,
+    bottleneck: null,
+  };
+
+  // Fail-fast: minimum liquidity/volume floor
+  if (item.liquidity < 500 || item.volume24hr < 50) {
+    breakdown.chosen = 0;
+    breakdown.bottleneck = item.liquidity < 500 ? "LIQUIDITY" : "VOLUME";
+    return { size: null, breakdown };
+  }
+
+  const raw = Math.min(fromLiq, fromVol, capUsd, riskBudget);
+  breakdown.chosen = Math.round(raw * 100) / 100;
+
+  // Identify the dominant constraint
+  if (raw <= fromLiq && fromLiq <= fromVol && fromLiq <= capUsd && fromLiq <= riskBudget) {
+    breakdown.bottleneck = "LIQUIDITY";
+  } else if (raw <= fromVol && fromVol <= capUsd && fromVol <= riskBudget) {
+    breakdown.bottleneck = "VOLUME";
+  } else if (Number.isFinite(riskBudget) && raw <= riskBudget && riskBudget <= capUsd) {
+    breakdown.bottleneck = "RISK";
+  } else {
+    breakdown.bottleneck = "CAP";
+  }
+
+  if (raw < 1) return { size: null, breakdown };
+  return { size: Math.floor(raw), breakdown };
+}
+
+/**
+ * Unified candidate evaluation for execution.
+ * Used by Trade page, Auto-Save, and Paper Runner to produce identical decisions.
+ *
+ * Returns:
+ *   { status: "EXECUTE"|"WATCH"|"SKIP",
+ *     skipReason: string|null,
+ *     sizingBreakdown: object|null,
+ *     direction: object|null,
+ *     entryNum: number|null,
+ *     sizeNum: number|null,
+ *     exits: { tp, stop }|null,
+ *     entryBidNum: number|null,
+ *     whyWatch: string|null,
+ *     nextStep: string|null }
+ */
+function evaluateCandidateForExecution(item, settings) {
+  settings = settings || {};
+  const sizingOpts = {
+    bankrollUsd: settings.bankrollUsd || null,
+    riskPct: settings.riskPct || null,
+    maxTradeCapUsd: settings.maxTradeCapUsd || null,
+  };
+
+  // 1) Direction gate
+  const dir = inferDirection(item);
+  if (dir.action === "WATCH") {
+    return {
+      status: "WATCH", skipReason: "skipped_watch",
+      sizingBreakdown: null, direction: dir,
+      entryNum: null, sizeNum: null, exits: null, entryBidNum: null,
+      whyWatch: dir.whyWatch, nextStep: dir.nextStep,
+    };
+  }
+
+  // 2) Entry gate
+  const entryNum = inferEntry(item, dir.action);
+  if (entryNum === null) {
+    return {
+      status: "WATCH", skipReason: "skipped_no_entry",
+      sizingBreakdown: null, direction: dir,
+      entryNum: null, sizeNum: null, exits: null, entryBidNum: null,
+      whyWatch: "No executable pricing available",
+      nextStep: "Need reliable orderbook bestAsk price",
+    };
+  }
+
+  // 3) Sizing gate (with breakdown)
+  const { size, breakdown } = inferSizeWithBreakdown(item, sizingOpts);
+  const entryBidNum = (item.bestBidNum > 0) ? item.bestBidNum : null;
+
+  if (size === null) {
+    return {
+      status: "WATCH", skipReason: "skipped_no_size",
+      sizingBreakdown: breakdown, direction: dir,
+      entryNum, sizeNum: null, exits: null, entryBidNum,
+      whyWatch: "Cannot determine safe position size",
+      nextStep: "Need liquidity \u2265 $500 and 24h volume \u2265 $50",
+    };
+  }
+
+  // 4) Min order bump & gate
+  let finalSize = size;
+  const capUsd = sizingOpts.maxTradeCapUsd || MAX_TRADE_CAP_USD_DEFAULT;
+  if (finalSize < MIN_LIMIT_ORDER_USD && capUsd >= MIN_LIMIT_ORDER_USD) {
+    finalSize = MIN_LIMIT_ORDER_USD;
+    breakdown.chosen = MIN_LIMIT_ORDER_USD;
+    breakdown.bottleneck = "MIN_ORDER_BUMP";
+  }
+  if (finalSize < MIN_LIMIT_ORDER_USD) {
+    breakdown.bottleneck = "MIN_ORDER";
+    const whyWatch = "Max size $" + breakdown.chosen.toFixed(2) + " is below $" + MIN_LIMIT_ORDER_USD + " minimum limit order";
+    let nextStep;
+    if (capUsd < MIN_LIMIT_ORDER_USD) {
+      nextStep = "Increase your trade cap to at least $" + MIN_LIMIT_ORDER_USD;
+    } else if (breakdown.bottleneck === "RISK") {
+      nextStep = "Increase bankroll or risk%";
+    } else if (breakdown.bottleneck === "LIQUIDITY") {
+      nextStep = "Wait for more liquidity, or increase cap to force minimum";
+    } else {
+      nextStep = "Wait for more volume, or increase cap to force minimum";
+    }
+    return {
+      status: "WATCH", skipReason: "skipped_size_too_small",
+      sizingBreakdown: breakdown, direction: dir,
+      entryNum, sizeNum: finalSize, exits: null, entryBidNum,
+      whyWatch, nextStep,
+    };
+  }
+
+  // 5) Exit gate
+  const exits = inferExit(entryNum, { volatility: item.volatility });
+  if (exits.tp === null || exits.stop === null) {
+    return {
+      status: "WATCH", skipReason: "skipped_exits_null",
+      sizingBreakdown: breakdown, direction: dir,
+      entryNum, sizeNum: finalSize, exits, entryBidNum,
+      whyWatch: "Cannot determine exit levels",
+      nextStep: "Entry price at extreme \u2014 no room for TP/SL",
+    };
+  }
+
+  return {
+    status: "EXECUTE", skipReason: null,
+    sizingBreakdown: breakdown, direction: dir,
+    entryNum, sizeNum: finalSize, exits, entryBidNum,
+    whyWatch: null, nextStep: null,
+  };
+}
+
 /** One-line "Why now" summary. */
 function whyNowSummary(item) {
   const parts = [];
@@ -1531,7 +1690,19 @@ function formatOutcomeAction(rawLabel, rawAction, outcomes) {
 
 /** Render a single trade card for the /trade page. */
 function renderTradeCard(item) {
-  let { action, actionCls, whyWatch, nextStep } = inferDirection(item);
+  // Use unified evaluation for consistent EXECUTE/WATCH decision
+  const evalResult = evaluateCandidateForExecution(item, {});
+  let action = evalResult.status === "EXECUTE" ? evalResult.direction.action : "WATCH";
+  let actionCls = evalResult.status === "EXECUTE" ? evalResult.direction.actionCls : "pill-watch";
+  let whyWatch = evalResult.whyWatch;
+  let nextStep = evalResult.nextStep;
+  let entryNum = evalResult.entryNum;
+  let sizeNum = evalResult.sizeNum;
+  let tpNum = evalResult.exits ? evalResult.exits.tp : null;
+  let stopNum = evalResult.exits ? evalResult.exits.stop : null;
+  const entryBidNum = evalResult.entryBidNum;
+  const sizingBreakdown = evalResult.sizingBreakdown;
+
   const whyNow = whyNowSummary(item);
   const link = polymarketUrl(item);
   const safeLink = link ? escHtml(link) : "";
@@ -1545,35 +1716,6 @@ function renderTradeCard(item) {
   const questionHtml = link
     ? `<a href="${safeLink}" target="_blank" rel="noopener" class="trade-card-title">${escHtml(headline)}</a>${subtextHtml}`
     : `<span class="trade-card-title">${escHtml(headline)}</span>${subtextHtml}`;
-
-  let entryNum = null, sizeNum = null, tpNum = null, stopNum = null;
-  // Entry microstructure: bid is the closeable price basis
-  const entryBidNum = (item.bestBidNum > 0) ? item.bestBidNum : null;
-
-  if (action !== "WATCH") {
-    entryNum = inferEntry(item, action);
-    if (entryNum !== null) {
-      sizeNum = inferSize(item);
-      const exits = inferExit(entryNum, { volatility: item.volatility });
-      tpNum = exits.tp;
-      stopNum = exits.stop;
-    }
-    // EXECUTE completeness rule: all must be numeric
-    if (entryNum === null || sizeNum === null || tpNum === null || stopNum === null) {
-      if (entryNum === null) {
-        whyWatch = "No executable pricing available";
-        nextStep = "Need reliable orderbook bestAsk price";
-      } else if (sizeNum === null) {
-        whyWatch = "Cannot determine safe position size";
-        nextStep = "Need liquidity \u2265 $500 and 24h volume \u2265 $50";
-      } else {
-        whyWatch = "Cannot determine exit levels";
-        nextStep = "Entry price at extreme \u2014 no room for TP/SL";
-      }
-      action = "WATCH";
-      actionCls = "pill-watch";
-    }
-  }
 
   const isExecute = action !== "WATCH";
 
@@ -1662,11 +1804,27 @@ function renderTradeCard(item) {
       triggerReferenceBasis: "BID",
     });
 
+    // Sizing breakdown line (1 line: fromLiq, fromVol, riskBudget, cap, chosen, bottleneck)
+    const bdParts = [];
+    if (sizingBreakdown) {
+      bdParts.push(`fromLiq=$${sizingBreakdown.fromLiq}`);
+      bdParts.push(`fromVol=$${sizingBreakdown.fromVol}`);
+      if (sizingBreakdown.riskBudget !== null) bdParts.push(`riskBudget=$${sizingBreakdown.riskBudget}`);
+      bdParts.push(`cap=$${sizingBreakdown.cap}`);
+      bdParts.push(`min=$${sizingBreakdown.minOrder}`);
+      bdParts.push(`chosen=$${sizingBreakdown.chosen}`);
+      bdParts.push(`bottleneck=${sizingBreakdown.bottleneck}`);
+    }
+    const sizingDetailsHtml = bdParts.length > 0
+      ? `<div class="sizing-details" style="font-size:0.72rem;color:#6b7280;margin:2px 0 6px;font-family:monospace;letter-spacing:-0.3px;">${escHtml(bdParts.join(" \u00B7 "))}</div>`
+      : "";
+
     return `
       <div class="trade-card" data-execute="1" data-entry-num="${entryNum}" data-entry-bid="${entryBidNum || ""}" data-heuristic-max="${sizeNum}" data-tp-num="${tpNum}" data-stop-num="${stopNum}" data-market="${escHtml(qText)}" data-action="${escHtml(action)}" data-outcome="${escHtml(outcomeLabel)}" data-outcomes="${escHtml(JSON.stringify(outcomes))}" data-end-date="${escHtml(item.endDate || "")}" data-liquidity="${item.liquidity || 0}" data-volume24hr="${item.volume24hr || 0}">
         <div class="trade-card-header">${questionHtml}</div>
         <div class="action-pill ${actionCls}">\u26A1 ${displayLabel ? escHtml(displayLabel) + " " : ""}${escHtml(displayAction)} @ $${entryNum.toFixed(2)}</div>
-        <div class="trade-size-row trade-plan-item" style="margin-bottom:6px;"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
+        <div class="trade-size-row trade-plan-item" style="margin-bottom:2px;"><span class="trade-plan-label">MAX SIZE (guideline)</span><span class="trade-plan-value trade-size">$${sizeNum} <span class="size-note">(bankroll not set)</span></span></div>
+        ${sizingDetailsHtml}
         <div class="trade-plan-grid">
           <div class="trade-plan-item"><span class="trade-plan-label">Entry (ask)</span><span class="trade-plan-value">$${entryNum.toFixed(2)}</span></div>
           <div class="trade-plan-item"><span class="trade-plan-label">Entry closeable (bid)</span><span class="trade-plan-value">${(Number.isFinite(entryBidNum) && entryBidNum > 0) ? "$" + entryBidNum.toFixed(2) : "\u2014"}</span></div>
@@ -1715,6 +1873,20 @@ function renderTradeCard(item) {
     endDate: item.endDate || null,
   });
 
+  // Sizing breakdown for WATCH cards (when available)
+  const watchBdParts = [];
+  if (sizingBreakdown) {
+    watchBdParts.push(`fromLiq=$${sizingBreakdown.fromLiq}`);
+    watchBdParts.push(`fromVol=$${sizingBreakdown.fromVol}`);
+    if (sizingBreakdown.riskBudget !== null) watchBdParts.push(`riskBudget=$${sizingBreakdown.riskBudget}`);
+    watchBdParts.push(`cap=$${sizingBreakdown.cap}`);
+    watchBdParts.push(`chosen=$${sizingBreakdown.chosen}`);
+    watchBdParts.push(`bottleneck=${sizingBreakdown.bottleneck}`);
+  }
+  const watchSizingHtml = watchBdParts.length > 0
+    ? `<div class="sizing-details" style="font-size:0.72rem;color:#6b7280;margin:4px 0 0;font-family:monospace;letter-spacing:-0.3px;">${escHtml(watchBdParts.join(" \u00B7 "))}</div>`
+    : "";
+
   return `
     <div class="trade-card">
       <div class="trade-card-header">${questionHtml}</div>
@@ -1722,6 +1894,7 @@ function renderTradeCard(item) {
       <div style="padding:8px 0;">
         <p style="margin:0 0 6px;font-size:0.88rem;"><strong>WHY WATCH:</strong> ${escHtml(watchReason)}</p>
         <p style="margin:0;font-size:0.85rem;color:#6b7280;"><strong>NEXT:</strong> ${escHtml(watchNext)}</p>
+        ${watchSizingHtml}
       </div>
       <div class="cta-row">
         <button class="cta-secondary save-ticket-btn" data-save-ticket="${escHtml(watchSavePayload)}">Save watch</button>
@@ -1825,24 +1998,17 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
   const statusBar = renderStatusBar(scanStatus, cards.length, relaxedMode, systemSettings);
   const defaultAutoClose = (systemSettings && systemSettings.defaultAutoCloseEnabled) || false;
 
-  // Split cards into EXECUTE vs WATCH at render time (presentation-only)
+  // Split cards into EXECUTE vs WATCH at render time using unified evaluation
   const executeCards = [];
   const watchCards = [];
   for (const item of cards) {
     try {
-      const dir = inferDirection(item);
-      if (dir.action !== "WATCH") {
-        const entryNum = inferEntry(item, dir.action);
-        if (entryNum !== null) {
-          const sizeNum = inferSize(item);
-          const exits = inferExit(entryNum, { volatility: item.volatility });
-          if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
-            executeCards.push(item);
-            continue;
-          }
-        }
+      const evalResult = evaluateCandidateForExecution(item, {});
+      if (evalResult.status === "EXECUTE") {
+        executeCards.push(item);
+      } else {
+        watchCards.push(item);
       }
-      watchCards.push(item);
     } catch (_) {
       watchCards.push(item);
     }
@@ -4116,7 +4282,9 @@ module.exports = {
   inferDirection,
   inferEntry,
   inferSize,
+  inferSizeWithBreakdown,
   inferExit,
+  evaluateCandidateForExecution,
   formatOutcomeAction,
   polymarketUrl,
   safeQuestion,
