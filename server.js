@@ -369,9 +369,9 @@ async function autoSaveExecuteTickets(scanId) {
       // Skip if below min limit order ($5)
       if (sizeNum < 5) continue;
 
-      // Entry-based TP/SL
+      // Entry-based TP/SL (volatility-adaptive)
       const entryBidNum = (item.bestBidNum > 0) ? item.bestBidNum : null;
-      const exits = inferExit(entryNum);
+      const exits = inferExit(entryNum, { volatility: item.volatility });
       if (exits.tp === null || exits.stop === null) continue;
       executeItems.push({ item, dir, entryNum, sizeNum, tpNum: exits.tp, stopNum: exits.stop, entryBidNum });
     } catch (_) { /* skip */ }
@@ -751,7 +751,7 @@ if (url.pathname === "/trade") {
           const entryNum = inferEntry(item, dir.action);
           if (entryNum === null) return false;
           const sizeNum = inferSize(item);
-          const exits = inferExit(entryNum);
+          const exits = inferExit(entryNum, { volatility: item.volatility });
           return sizeNum !== null && exits.tp !== null && exits.stop !== null;
         } catch (_) { return false; }
       }
@@ -1918,8 +1918,8 @@ if (url.pathname === "/trade") {
           // Safety: valid executable bid/ask must be > 0
           if (!(entryBidNum > 0) || !(entryAskNum > 0)) continue;
 
-          // Compute TP/SL from entry price
-          const exits = inferExit(entryAskNum);
+          // Compute TP/SL from entry price (volatility-adaptive)
+          const exits = inferExit(entryAskNum, { volatility: item.volatility });
           if (exits.tp === null || exits.stop === null) continue;
 
           picked = {

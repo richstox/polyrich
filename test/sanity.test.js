@@ -2059,26 +2059,33 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// Entry-based TP/SL: inferExit computes from entry price
+// Volatility-adaptive TP/SL: inferExit uses volatility when provided
 // ---------------------------------------------------------------------------
 {
-  console.log("\ninferExit: entry-based TP/SL");
+  console.log("\ninferExit: volatility-adaptive TP/SL");
   const { inferExit } = require("../src/html_renderer");
+  const cfg = require("../src/config");
 
-  // TP/SL are computed from entryNum (the ask / buy price)
+  // Without volatility: uses MIN distances (fallback)
+  // TP = 0.30 + MIN_TP_DISTANCE(0.05) = 0.35
+  // SL = 0.30 - MIN_SL_DISTANCE(0.03) = 0.27
   const result = inferExit(0.30);
-  // TP = 0.30 * 1.10 = 0.33, Stop = 0.30 * 0.92 = 0.276
   assert(result.tp !== null && result.stop !== null,
     "inferExit returns non-null with valid entryNum");
-  assert(Math.abs(result.tp - 0.33) < 0.001,
-    "TP is computed from entryNum (0.30 × 1.10 = 0.33)");
-  assert(Math.abs(result.stop - 0.276) < 0.001,
-    "Stop is computed from entryNum (0.30 × 0.92 = 0.276)");
+  assert(Math.abs(result.tp - 0.35) < 0.001,
+    "TP uses MIN_TP_DISTANCE when no volatility (0.30 + 0.05 = 0.35)");
+  assert(Math.abs(result.stop - 0.27) < 0.001,
+    "SL uses MIN_SL_DISTANCE when no volatility (0.30 - 0.03 = 0.27)");
 
-  // Extra args are ignored (backward compat)
-  const withExtra = inferExit(0.30, 0.25);
-  assert(Math.abs(withExtra.tp - 0.33) < 0.001,
-    "Extra bidBasis arg is ignored — TP still from entryNum");
+  // With volatility: adaptive targets
+  // vol=0.04 → tpDist = max(2.5×0.04, 0.05) = max(0.10, 0.05) = 0.10
+  //             slDist = max(1.5×0.04, 0.03) = max(0.06, 0.03) = 0.06
+  // TP = 0.30 + 0.10 = 0.40, SL = 0.30 - 0.06 = 0.24
+  const withVol = inferExit(0.30, { volatility: 0.04 });
+  assert(Math.abs(withVol.tp - 0.40) < 0.001,
+    "TP with vol 0.04: 0.30 + 2.5×0.04 = 0.40");
+  assert(Math.abs(withVol.stop - 0.24) < 0.001,
+    "SL with vol 0.04: 0.30 - 1.5×0.04 = 0.24");
 
   // entryNum = 0 → null (fail-closed)
   const zero = inferExit(0);
@@ -2100,16 +2107,16 @@ console.log("\nfinal selection: mispricing quota");
   const { checkTrigger } = require("../src/auto_monitor");
 
   // Scenario: Ask = 0.24 (entry), Bid = 0.21 (12.5% spread)
-  // Entry-based SL = 0.24 × 0.92 = 0.2208
-  // Bid 0.21 < SL 0.2208 → this ticket would trigger EXIT_HIT immediately
+  // Without volatility: SL = 0.24 - 0.03 = 0.21
+  // Bid 0.21 ≤ SL 0.21 → this ticket would trigger EXIT_HIT immediately
   // The autoSave flow now SKIPS such tickets entirely (bid ≤ SL guard)
   const entryAsk = 0.24;
   const entryBid = 0.21;
   const exits = inferExit(entryAsk);
   assert(exits.stop !== null, "SL computed from entry");
-  assert(Math.abs(exits.stop - 0.2208) < 0.001, `SL = 0.24 × 0.92 = ${exits.stop.toFixed(4)}`);
+  assert(Math.abs(exits.stop - 0.21) < 0.001, `SL = 0.24 - 0.03 = ${exits.stop.toFixed(4)}`);
   assert(entryBid <= exits.stop,
-    "Bid (0.21) is at or below SL (0.2208) — autoSave would skip this ticket");
+    "Bid (0.21) is at or below SL (0.21) — autoSave would skip this ticket");
 
   // If somehow the ticket WAS created, checkTrigger would fire EXIT_HIT
   const trigger = checkTrigger(
@@ -2663,16 +2670,17 @@ console.log("\nfinal selection: mispricing quota");
   // Step 1: normalizePrice accepts 0.001 (it's technically in (0,1))
   assert(normalizePrice(clobBid) === 0.001, "0.001 is technically valid in (0,1)");
 
-  // Step 2: inferExit now computes from entry, not bid — targets are sensible
+  // Step 2: inferExit now computes from entry with adaptive targets
+  // Without volatility: TP = 0.32 + 0.05 = 0.37, SL = 0.32 - 0.03 = 0.29
   const exits = inferExit(entryAsk);
   assert(exits.tp !== null, "TP computed from entry");
-  assert(Math.abs(exits.tp - 0.352) < 0.001, `TP = 0.32 × 1.10 = ${exits.tp}`);
+  assert(Math.abs(exits.tp - 0.37) < 0.001, `TP = 0.32 + 0.05 = ${exits.tp}`);
   assert(exits.tp > entryAsk, "TP is above entry (correct)");
   assert(exits.stop < entryAsk, "SL is below entry (correct)");
 
-  // Step 3: bid (0.001) is far below SL (0.2944) → autoSave would skip this ticket
+  // Step 3: bid (0.001) is far below SL (0.29) → autoSave would skip this ticket
   assert(clobBid <= exits.stop,
-    "Bid (0.001) ≤ SL (0.2944) → autoSave skips this ticket (bid-below-SL guard)");
+    "Bid (0.001) ≤ SL (0.29) → autoSave skips this ticket (bid-below-SL guard)");
 
   // Step 4: The NO_EXECUTABLE_BID invariant also blocks auto-close
   let autoClose = true;
@@ -2751,24 +2759,32 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// TP/SL sanity: entry-based TP is always above entry, SL always below
+// TP/SL sanity: TP is always above entry, SL always below (volatility-adaptive)
 // ---------------------------------------------------------------------------
 {
-  console.log("\nTP/SL: entry-based — TP above entry, SL below entry");
+  console.log("\nTP/SL: volatility-adaptive — TP above entry, SL below entry");
   const { inferExit } = require("../src/html_renderer");
 
-  // Normal case: entry=0.32
+  // Normal case: entry=0.32, no volatility → MIN distances
+  // TP = 0.32 + 0.05 = 0.37, SL = 0.32 - 0.03 = 0.29
   const normal = inferExit(0.32);
   assert(normal.tp !== null, "Normal entry produces valid TP");
   assert(normal.tp > 0.32, `TP ($${normal.tp.toFixed(4)}) is ABOVE entry ($0.32)`);
   assert(normal.stop < 0.32, `SL ($${normal.stop.toFixed(4)}) is BELOW entry ($0.32)`);
 
-  // TP = entry × 1.10 = 0.352
-  assert(Math.abs(normal.tp - 0.352) < 0.001,
-    `TP = 0.32 × 1.10 = 0.352 (got ${normal.tp.toFixed(4)})`);
-  // SL = entry × 0.92 = 0.2944
-  assert(Math.abs(normal.stop - 0.2944) < 0.001,
-    `SL = 0.32 × 0.92 = 0.2944 (got ${normal.stop.toFixed(4)})`);
+  assert(Math.abs(normal.tp - 0.37) < 0.001,
+    `TP = 0.32 + 0.05 = 0.37 (got ${normal.tp.toFixed(4)})`);
+  assert(Math.abs(normal.stop - 0.29) < 0.001,
+    `SL = 0.32 - 0.03 = 0.29 (got ${normal.stop.toFixed(4)})`);
+
+  // With volatility: entry=0.32, vol=0.04
+  // tpDist = max(2.5×0.04, 0.05) = 0.10, slDist = max(1.5×0.04, 0.03) = 0.06
+  // TP = 0.42, SL = 0.26
+  const withVol = inferExit(0.32, { volatility: 0.04 });
+  assert(Math.abs(withVol.tp - 0.42) < 0.001,
+    `TP with vol: 0.32 + 0.10 = 0.42 (got ${withVol.tp.toFixed(4)})`);
+  assert(Math.abs(withVol.stop - 0.26) < 0.001,
+    `SL with vol: 0.32 - 0.06 = 0.26 (got ${withVol.stop.toFixed(4)})`);
 
   // Low-price entry: entry=0.05 → still valid
   const low = inferExit(0.05);
@@ -2872,34 +2888,35 @@ console.log("\nfinal selection: mispricing quota");
     `Cost basis = shares × entry = $${costBasis.toFixed(2)} = maxSizeUsd`);
 
   // -----------------------------------------------------------------------
-  // Step 3: TP/SL set from entry price
+  // Step 3: TP/SL set from entry price (volatility-adaptive)
   // -----------------------------------------------------------------------
-  console.log("\n  Step 3: TP/SL set from entry price");
-  const { tp, stop } = inferExit(entryPrice);
+  console.log("\n  Step 3: TP/SL set from entry price (volatility-adaptive)");
+  // The real flow passes volatility from the market item
+  const { tp, stop } = inferExit(entryPrice, { volatility: market.volatility });
 
   assert(tp !== null, "TP is not null (valid entry)");
   assert(stop !== null, "SL is not null (valid entry)");
   assert(tp > 0, `TP is positive: $${tp.toFixed(4)}`);
   assert(stop > 0, `SL is positive: $${stop.toFixed(4)}`);
 
-  // TP = entry × 1.10, SL = entry × 0.92
-  const expectedTp = Math.min(entryPrice * 1.10, 0.99);
-  const expectedStop = Math.max(entryPrice * 0.92, 0.01);
+  // volatility=0.05: tpDist=max(2.5×0.05,0.05)=0.125, slDist=max(1.5×0.05,0.03)=0.075
+  // TP = 0.50 + 0.125 = 0.625, SL = 0.50 - 0.075 = 0.425
+  const expectedTp = Math.min(entryPrice + Math.max(2.5 * market.volatility, 0.05), 0.99);
+  const expectedStop = Math.max(entryPrice - Math.max(1.5 * market.volatility, 0.03), 0.01);
   assert(Math.abs(tp - expectedTp) < 0.0001,
-    `TP = entry × 1.10 = ${expectedTp.toFixed(4)}, got ${tp.toFixed(4)}`);
+    `TP = entry + 2.5×vol = ${expectedTp.toFixed(4)}, got ${tp.toFixed(4)}`);
   assert(Math.abs(stop - expectedStop) < 0.0001,
-    `SL = entry × 0.92 = ${expectedStop.toFixed(4)}, got ${stop.toFixed(4)}`);
+    `SL = entry - 1.5×vol = ${expectedStop.toFixed(4)}, got ${stop.toFixed(4)}`);
 
   // TP is above entry (profit target makes sense)
   assert(tp > entryPrice, `TP ($${tp.toFixed(4)}) > entry ($${entryPrice})`);
   // SL is below entry (stop loss is below buy price)
   assert(stop < entryPrice, `SL ($${stop.toFixed(4)}) < entry ($${entryPrice})`);
 
-  // CRITICAL: TP/SL are from ENTRY (ask), not from bid
-  // TP = 0.50 × 1.10 = 0.55
-  const expectedTpFromEntry = entryPrice * 1.10;
-  assert(Math.abs(tp - expectedTpFromEntry) < 0.001,
-    `TP = entry-based (${expectedTpFromEntry.toFixed(4)}), got ${tp.toFixed(4)}`);
+  // R:R ratio > 1 (reward exceeds risk due to K_TP > K_SL)
+  const reward = tp - entryPrice;
+  const risk = entryPrice - stop;
+  assert(reward / risk > 1.0, `R:R = ${(reward / risk).toFixed(2)} > 1.0 (asymmetric in favor)`);
 
   const bidBasis = market.bestBidNum;  // 0.48 — used only for monitoring, not TP/SL
 
@@ -2941,7 +2958,7 @@ console.log("\nfinal selection: mispricing quota");
   // Step 6: Monitor — bid rises to hit TP → trigger
   // -----------------------------------------------------------------------
   console.log("\n  Step 6: Monitor — bid rises to TP → trigger fires");
-  const tpBid = 0.56;  // bid >= TP (0.55 = entry × 1.10)
+  const tpBid = 0.63;  // bid >= TP (0.625 = entry + 2.5×0.05)
   assert(tpBid >= tp, `Bid $${tpBid} >= TP $${tp.toFixed(4)}`);
   const tpResult = checkTrigger(ticket, tpBid);
   assert(tpResult.triggered, `Bid >= TP → trigger fires`);
@@ -2981,7 +2998,7 @@ console.log("\nfinal selection: mispricing quota");
   // Step 8: Alternative — bid drops to SL → EXIT_HIT
   // -----------------------------------------------------------------------
   console.log("\n  Step 8: Alternative — bid drops to SL → EXIT_HIT");
-  const slBid = 0.45;  // bid <= SL (0.46 = entry × 0.92)
+  const slBid = 0.42;  // bid <= SL (0.425 = entry - 1.5×0.05)
   assert(slBid <= stop, `Bid $${slBid} <= SL $${stop.toFixed(4)}`);
   const slResult = checkTrigger(ticket, slBid);
   assert(slResult.triggered, "Bid <= SL → trigger fires");
@@ -3157,17 +3174,18 @@ console.log("\nfinal selection: mispricing quota");
   const size = inferSize(liquidMarket);
   assert(size !== null && size > 0, `Size computed: $${size}`);
 
-  // Step 4: TP/SL from entry price
+  // Step 4: TP/SL from entry price (volatility-adaptive)
   const clobBid = 0.42;  // from CLOB book — used for monitoring, not TP/SL
-  const exits = inferExit(entry);
+  const exits = inferExit(entry, { volatility: liquidMarket.volatility });
   assert(exits.tp !== null, "TP computed from entry price");
   assert(exits.stop !== null, "SL computed from entry price");
-  const expectedTp = Math.min(entry * 1.10, 0.99);
-  const expectedStop = Math.max(entry * 0.92, 0.01);
+  // vol=0.06: tpDist=max(2.5×0.06,0.05)=0.15, slDist=max(1.5×0.06,0.03)=0.09
+  const expectedTp = Math.min(entry + Math.max(2.5 * liquidMarket.volatility, 0.05), 0.99);
+  const expectedStop = Math.max(entry - Math.max(1.5 * liquidMarket.volatility, 0.03), 0.01);
   assert(Math.abs(exits.tp - expectedTp) < 0.0001,
-    `TP = ${exits.tp.toFixed(4)} (entry×1.10=${expectedTp.toFixed(4)})`);
+    `TP = ${exits.tp.toFixed(4)} (entry+2.5×vol=${expectedTp.toFixed(4)})`);
   assert(Math.abs(exits.stop - expectedStop) < 0.0001,
-    `SL = ${exits.stop.toFixed(4)} (entry×0.92=${expectedStop.toFixed(4)})`);
+    `SL = ${exits.stop.toFixed(4)} (entry-1.5×vol=${expectedStop.toFixed(4)})`);
 
   // Step 5: Token ID
   const fakeTicket = { action: "BUY_YES", yesTokenId: "tok_yes_123", noTokenId: "tok_no_123" };

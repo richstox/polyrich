@@ -1,6 +1,7 @@
 "use strict";
 
 const { formatHoursLeft, formatVolume } = require("./normalizer");
+const config = require("./config");
 
 // ---------------------------------------------------------------------------
 // Canonical diagnostic reasons — operator-facing copywriting
@@ -1313,8 +1314,6 @@ const PRICE_MIDPOINT = 0.5;              // YES price midpoint for side selectio
 const SIZE_LIQUIDITY_PCT = 0.01;         // max 1% of liquidity
 const SIZE_VOLUME_PCT = 0.02;            // max 2% of 24h volume
 const SIZE_CAP = 50;                     // max position size in $
-const TP_MULTIPLIER = 1.10;              // take profit at +10%
-const STOP_MULTIPLIER = 0.92;            // stop loss at -8%
 const PRICE_CEILING = 0.99;
 const PRICE_FLOOR = 0.01;
 const RISK_PCT_DEFAULT = 0.01;         // 1% of bankroll per trade
@@ -1425,19 +1424,35 @@ function inferSize(item) {
 }
 
 /**
- * Infer exit plan (take profit + stop-loss).
- * TP/SL are computed relative to the entry price (ask) so that targets are
- * intuitive: "I bought at X, I want to sell at X+10%, I cut losses at X-8%."
- * Monitoring still compares the current *bid* against these thresholds — the
- * bid is the executable sell-to-close price.
+ * Infer exit plan (take profit + stop-loss) using volatility-adaptive targets.
+ *
+ * When `opts.volatility` is provided (from enrichItem's stddev of price series),
+ * targets scale with observed market movement:
+ *   TP = entry + K_TP × volatility   (wider on volatile markets)
+ *   SL = entry − K_SL × volatility   (asymmetric R:R since K_TP > K_SL)
+ *
+ * Minimum distances ensure quiet markets don't get absurdly tight targets.
+ * Clamped to [PRICE_FLOOR, PRICE_CEILING].
  *
  * Returns { tp, stop } as numbers or null.
  */
-function inferExit(entryNum) {
+function inferExit(entryNum, opts) {
   if (!Number.isFinite(entryNum) || entryNum <= 0 || entryNum >= PRICE_CEILING)
     return { tp: null, stop: null };
-  const tp = Math.min(entryNum * TP_MULTIPLIER, PRICE_CEILING);
-  const stop = Math.max(entryNum * STOP_MULTIPLIER, PRICE_FLOOR);
+
+  const kTp = config.K_TP;
+  const kSl = config.K_SL;
+  const minTpDist = config.MIN_TP_DISTANCE;
+  const minSlDist = config.MIN_SL_DISTANCE;
+
+  const vol = (opts && Number.isFinite(opts.volatility) && opts.volatility > 0)
+    ? opts.volatility : 0;
+
+  const tpDist = Math.max(kTp * vol, minTpDist);
+  const slDist = Math.max(kSl * vol, minSlDist);
+
+  const tp = Math.min(entryNum + tpDist, PRICE_CEILING);
+  const stop = Math.max(entryNum - slDist, PRICE_FLOOR);
   return { tp, stop };
 }
 
@@ -1531,7 +1546,7 @@ function renderTradeCard(item) {
     entryNum = inferEntry(item, action);
     if (entryNum !== null) {
       sizeNum = inferSize(item);
-      const exits = inferExit(entryNum);
+      const exits = inferExit(entryNum, { volatility: item.volatility });
       tpNum = exits.tp;
       stopNum = exits.stop;
     }
@@ -1810,7 +1825,7 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
         const entryNum = inferEntry(item, dir.action);
         if (entryNum !== null) {
           const sizeNum = inferSize(item);
-          const exits = inferExit(entryNum);
+          const exits = inferExit(entryNum, { volatility: item.volatility });
           if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
             executeCards.push(item);
             continue;
@@ -2416,7 +2431,7 @@ function renderExplorePage(data) {
       const entryNum = inferEntry(item, dir.action);
       if (entryNum !== null) {
         const sizeNum = inferSize(item);
-        const exits = inferExit(entryNum);
+        const exits = inferExit(entryNum, { volatility: item.volatility });
         if (sizeNum !== null && exits.tp !== null && exits.stop !== null) {
           return `<div style="margin-top:8px;padding:8px 10px;background:rgba(22,101,52,.15);border:1px solid rgba(34,197,94,.2);border-radius:6px;font-size:0.78rem;">
             <span style="font-weight:700;color:#22c55e;">⚡ EXECUTE</span>

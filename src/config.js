@@ -90,6 +90,17 @@ module.exports = {
   // If close-side liquidity is below this, autoClose is blocked with INSUFFICIENT_BID_SIZE.
   MIN_BID_SIZE_USD: parseFloat(process.env.MIN_BID_SIZE_USD || "20"),
 
+  // ---------------------------------------------------------------------------
+  // Volatility-adaptive TP/SL
+  // ---------------------------------------------------------------------------
+  // TP = entry + K_TP × volatility; SL = entry − K_SL × volatility
+  // Asymmetric R:R — K_TP > K_SL so reward > risk.
+  K_TP: parseFloat(process.env.K_TP || "2.5"),
+  K_SL: parseFloat(process.env.K_SL || "1.5"),
+  // Minimum distances (cents) so quiet markets don't get absurdly tight targets
+  MIN_TP_DISTANCE: parseFloat(process.env.MIN_TP_DISTANCE || "0.05"),
+  MIN_SL_DISTANCE: parseFloat(process.env.MIN_SL_DISTANCE || "0.03"),
+
   // Paper-runner: max candidates to evaluate before giving up
   PAPER_RUNNER_MAX_CANDIDATES: parseInt(process.env.PAPER_RUNNER_MAX_CANDIDATES || "20", 10),
 };
