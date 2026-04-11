@@ -3329,7 +3329,134 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// Summary
+// computeVolatility: explicit policy — min samples, determinism, fallback
 // ---------------------------------------------------------------------------
-console.log(`\n${passed} passed, ${failed} failed\n`);
-if (failed > 0) process.exit(1);
+{
+  console.log("\ncomputeVolatility: explicit volatility policy");
+  const { computeVolatility, stddev } = require("../src/normalizer");
+  const cfg = require("../src/config");
+
+  // Below VOL_MIN_SAMPLES → returns 0 (fallback)
+  assert(computeVolatility(null) === 0,
+    "computeVolatility(null) → 0");
+  assert(computeVolatility([]) === 0,
+    "computeVolatility([]) → 0");
+  assert(computeVolatility([0.5]) === 0,
+    "computeVolatility([0.5]) → 0 (1 sample < min)");
+  assert(computeVolatility([0.5, 0.6]) === 0,
+    "computeVolatility([0.5, 0.6]) → 0 (2 samples < default min 3)");
+
+  // At exactly VOL_MIN_SAMPLES → returns stddev
+  const series3 = [0.30, 0.32, 0.34];
+  const expected3 = stddev(series3);
+  assert(computeVolatility(series3) === expected3,
+    `computeVolatility(3 samples) === stddev(same) = ${expected3.toFixed(6)}`);
+
+  // Deterministic: same inputs → same output
+  assert(computeVolatility(series3) === computeVolatility(series3),
+    "computeVolatility is deterministic");
+
+  // Longer series also works
+  const series6 = [0.30, 0.31, 0.32, 0.34, 0.33, 0.35];
+  const expected6 = stddev(series6);
+  assert(computeVolatility(series6) === expected6,
+    `computeVolatility(6 samples) === stddev(same) = ${expected6.toFixed(6)}`);
+
+  // Result is always finite and >= 0
+  assert(Number.isFinite(computeVolatility(series6)),
+    "computeVolatility result is finite");
+  assert(computeVolatility(series6) >= 0,
+    "computeVolatility result >= 0");
+
+  // Constant series → volatility = 0
+  assert(computeVolatility([0.50, 0.50, 0.50]) === 0,
+    "Constant series → volatility = 0");
+
+  // VOL_MIN_SAMPLES config exists and is sane
+  assert(typeof cfg.VOL_MIN_SAMPLES === "number" && cfg.VOL_MIN_SAMPLES >= 2,
+    `VOL_MIN_SAMPLES = ${cfg.VOL_MIN_SAMPLES} (>= 2)`);
+}
+
+// ---------------------------------------------------------------------------
+// inferExit with computeVolatility fallback: below-min samples → min distances
+// ---------------------------------------------------------------------------
+{
+  console.log("\ninferExit: volatility=0 fallback uses minimum TP/SL distances");
+  const { inferExit } = require("../src/html_renderer");
+  const cfg = require("../src/config");
+
+  // When volatility is 0 (insufficient samples), inferExit should use min distances
+  const exits = inferExit(0.30, { volatility: 0 });
+  assert(exits.tp !== null && exits.stop !== null,
+    "inferExit with vol=0 still produces valid TP/SL");
+  const expectedTp = 0.30 + cfg.MIN_TP_DISTANCE;
+  const expectedSl = 0.30 - cfg.MIN_SL_DISTANCE;
+  assert(Math.abs(exits.tp - expectedTp) < 0.0001,
+    `TP with vol=0: ${exits.tp.toFixed(4)} ≈ ${expectedTp.toFixed(4)} (entry + MIN_TP_DISTANCE)`);
+  assert(Math.abs(exits.stop - expectedSl) < 0.0001,
+    `SL with vol=0: ${exits.stop.toFixed(4)} ≈ ${expectedSl.toFixed(4)} (entry − MIN_SL_DISTANCE)`);
+
+  // inferExit is stable / deterministic for same inputs
+  const exits2 = inferExit(0.30, { volatility: 0 });
+  assert(exits.tp === exits2.tp && exits.stop === exits2.stop,
+    "inferExit is deterministic for same inputs");
+
+  // With positive volatility, targets widen
+  const exits3 = inferExit(0.30, { volatility: 0.05 });
+  assert(exits3.tp > exits.tp, "Higher vol → wider TP");
+  assert(exits3.stop < exits.stop, "Higher vol → wider SL");
+
+  // TP/SL are always finite, in (0, 1)
+  assert(Number.isFinite(exits3.tp) && exits3.tp > 0 && exits3.tp < 1,
+    `TP is finite and in (0,1): ${exits3.tp}`);
+  assert(Number.isFinite(exits3.stop) && exits3.stop > 0 && exits3.stop < 1,
+    `SL is finite and in (0,1): ${exits3.stop}`);
+}
+
+// ---------------------------------------------------------------------------
+// attemptAutoClose: HARD GUARD — no close at $0.00 unless MARKET_SETTLED
+// (async tests — summary printed at the end of this block)
+// ---------------------------------------------------------------------------
+(async () => {
+  console.log("\nattemptAutoClose: reject close at price <= 0 (except MARKET_SETTLED)");
+  const { attemptAutoClose } = require("../src/auto_monitor");
+  const mongoose = require("mongoose");
+
+  // Each test gets a unique valid ObjectId to avoid idempotency collisions
+  const oid = () => new mongoose.Types.ObjectId();
+
+  // Test 1: close at price=0 with reason=TP_HIT → REJECTED
+  const r1 = await attemptAutoClose({ _id: oid(), status: "OPEN", entryLimit: 0.30, maxSizeUsd: 50 }, 0, "TP_HIT", true);
+  assert(r1 === "REJECTED_ZERO_PRICE",
+    `Close at price=0, reason=TP_HIT → ${r1} (expected REJECTED_ZERO_PRICE)`);
+
+  // Test 2: close at price=null with reason=EXIT_HIT → REJECTED
+  const r2 = await attemptAutoClose({ _id: oid(), status: "OPEN", entryLimit: 0.30, maxSizeUsd: 50 }, null, "EXIT_HIT", true);
+  assert(r2 === "REJECTED_ZERO_PRICE",
+    `Close at price=null, reason=EXIT_HIT → ${r2} (expected REJECTED_ZERO_PRICE)`);
+
+  // Test 3: close at price=-0.01 with reason=TP_HIT → REJECTED
+  const r3 = await attemptAutoClose({ _id: oid(), status: "OPEN", entryLimit: 0.30, maxSizeUsd: 50 }, -0.01, "TP_HIT", true);
+  assert(r3 === "REJECTED_ZERO_PRICE",
+    `Close at price=-0.01, reason=TP_HIT → ${r3} (expected REJECTED_ZERO_PRICE)`);
+
+  // Test 4: close at price=undefined with reason=EXIT_HIT → REJECTED
+  const r4 = await attemptAutoClose({ _id: oid(), status: "OPEN", entryLimit: 0.30, maxSizeUsd: 50 }, undefined, "EXIT_HIT", true);
+  assert(r4 === "REJECTED_ZERO_PRICE",
+    `Close at price=undefined, reason=EXIT_HIT → ${r4} (expected REJECTED_ZERO_PRICE)`);
+
+  // Test 5: close at price=0 with reason=MARKET_SETTLED → ALLOWED (not rejected)
+  // This will fail at DB write (no real DB), but should NOT return REJECTED_ZERO_PRICE
+  try {
+    const r5 = await attemptAutoClose({ _id: oid(), status: "OPEN", entryLimit: 0.30, maxSizeUsd: 50 }, 0, "MARKET_SETTLED", true);
+    assert(r5 !== "REJECTED_ZERO_PRICE",
+      `Close at price=0, reason=MARKET_SETTLED → ${r5} (not rejected, correct)`);
+  } catch (err) {
+    // DB error is expected (no real Mongo), but the guard did not reject — correct behavior
+    assert(true, "Close at price=0, reason=MARKET_SETTLED → not rejected (DB error expected)");
+  }
+
+  // Print summary after async tests complete
+  console.log(`\n${passed} passed, ${failed} failed\n`);
+  if (failed > 0) process.exit(1);
+})();

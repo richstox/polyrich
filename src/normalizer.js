@@ -1,6 +1,6 @@
 "use strict";
 
-const { TIME_PENALTY_EXPIRED } = require("./config");
+const { TIME_PENALTY_EXPIRED, VOL_MIN_SAMPLES } = require("./config");
 
 function asNumber(value, fallback = 0) {
   const n = Number(value);
@@ -36,6 +36,26 @@ function stddev(values) {
   const m = values.reduce((sum, v) => sum + v, 0) / values.length;
   const variance = values.reduce((sum, v) => sum + (v - m) ** 2, 0) / values.length;
   return Math.sqrt(variance);
+}
+
+/**
+ * Compute market volatility from a price-level series with explicit policy:
+ *
+ * - **Method**: population stddev of raw YES price levels (not returns).
+ *   Bounded [0,1] prediction market prices make level-dispersion a direct
+ *   proxy for achievable TP/SL distance.
+ * - **Window**: last `HISTORY_K` snapshots (default 6), scan-sampled (~5 min apart).
+ * - **Min samples**: `VOL_MIN_SAMPLES` (default 3). Below this → returns 0
+ *   (fallback: inferExit uses MIN_TP_DISTANCE / MIN_SL_DISTANCE floors).
+ * - **Storage**: computed per-enrichment, NOT persisted. Derived from
+ *   MarketSnapshot history each scan cycle.
+ *
+ * @param {number[]} priceSeries - chronologically ordered YES price levels
+ * @returns {number} volatility (>= 0), 0 when insufficient data
+ */
+function computeVolatility(priceSeries) {
+  if (!priceSeries || priceSeries.length < VOL_MIN_SAMPLES) return 0;
+  return stddev(priceSeries);
 }
 
 function mean(values) {
@@ -187,6 +207,7 @@ module.exports = {
   formatHoursLeft,
   formatVolume,
   stddev,
+  computeVolatility,
   mean,
   median,
   quantile,

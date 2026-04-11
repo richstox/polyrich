@@ -1883,40 +1883,52 @@ if (url.pathname === "/trade") {
       };
 
       const maxCandidatesToEval = config.PAPER_RUNNER_MAX_CANDIDATES;
+      // Track skip reasons for operator-grade diagnostics
+      const skipReasons = {
+        skipped_watch: 0,
+        skipped_no_entry: 0,
+        skipped_size_too_small: 0,
+        skipped_no_token: 0,
+        skipped_no_conditionId: 0,
+        skipped_no_clob_book: 0,
+        skipped_invalid_bid_ask: 0,
+        skipped_exits_null: 0,
+        skipped_error: 0,
+      };
       for (let i = 0; i < Math.min(tradeCandidates.length, maxCandidatesToEval); i++) {
         const item = tradeCandidates[i];
         try {
           const dir = inferDirection(item);
-          if (dir.action === "WATCH") continue;
+          if (dir.action === "WATCH") { skipReasons.skipped_watch++; continue; }
           const entryNum = inferEntry(item, dir.action);
-          if (entryNum === null) continue;
+          if (entryNum === null) { skipReasons.skipped_no_entry++; continue; }
           const sizeNum = inferSize(item, paperSizingOpts);
-          if (sizeNum === null || sizeNum < 5) continue;
+          if (sizeNum === null || sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
 
           // Require a CLOB token ID
           const tokenId = dir.action === "BUY YES"
             ? ((item.yesTokenId || "").trim() || null)
             : ((item.noTokenId || "").trim() || null);
-          if (!tokenId) continue;
+          if (!tokenId) { skipReasons.skipped_no_token++; continue; }
 
           // Require valid conditionId for monitoring
           const rawConditionId = (item.conditionId || "").trim() || null;
-          if (!rawConditionId || !rawConditionId.startsWith("0x")) continue;
+          if (!rawConditionId || !rawConditionId.startsWith("0x")) { skipReasons.skipped_no_conditionId++; continue; }
 
           // Fetch real CLOB book
           const book = await fetchClobBook(tokenId);
-          if (!book || book.bestBid === null || book.bestAsk === null) continue;
-          if (book.topBidSize === null) continue;
+          if (!book || book.bestBid === null || book.bestAsk === null) { skipReasons.skipped_no_clob_book++; continue; }
+          if (book.topBidSize === null) { skipReasons.skipped_no_clob_book++; continue; }
 
           const entryBidNum = book.bestBid;
           const entryAskNum = book.bestAsk;
 
           // Safety: valid executable bid/ask must be > 0
-          if (!(entryBidNum > 0) || !(entryAskNum > 0)) continue;
+          if (!(entryBidNum > 0) || !(entryAskNum > 0)) { skipReasons.skipped_invalid_bid_ask++; continue; }
 
           // Compute TP/SL from entry price (volatility-adaptive)
           const exits = inferExit(entryAskNum, { volatility: item.volatility });
-          if (exits.tp === null || exits.stop === null) continue;
+          if (exits.tp === null || exits.stop === null) { skipReasons.skipped_exits_null++; continue; }
 
           picked = {
             item, dir, entryNum: entryAskNum, sizeNum,
@@ -1929,7 +1941,7 @@ if (url.pathname === "/trade") {
             `${dir.action}, ask=$${entryAskNum.toFixed(4)}, bid=$${entryBidNum.toFixed(4)}, ` +
             `liq=$${Math.round(item.liquidity)}, vol24=$${Math.round(item.volume24hr)}`;
           break;
-        } catch (_) { continue; }
+        } catch (_) { skipReasons.skipped_error++; continue; }
       }
 
       if (!picked) {
@@ -1938,6 +1950,7 @@ if (url.pathname === "/trade") {
           candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
           totalCandidates: tradeCandidates.length,
           totalFetched: rawMarkets.length,
+          skipReasons,
         });
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
@@ -1945,6 +1958,7 @@ if (url.pathname === "/trade") {
           error: "No viable candidate found",
           candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
           totalCandidates: tradeCandidates.length,
+          skipReasons,
         }));
         return;
       }
@@ -2260,10 +2274,22 @@ if (url.pathname === "/trade") {
               '</div>';
           } else {
             status.textContent = "⚠️ No trade opened";
+            let skipHtml = '';
+            if (data.skipReasons) {
+              const sr = data.skipReasons;
+              const entries = Object.entries(sr).filter(([, v]) => v > 0);
+              if (entries.length > 0) {
+                skipHtml = '<div style="margin-top:8px;padding:8px;background:#2a1a1a;border-radius:4px;font-size:13px">' +
+                  '<b style="color:#f87171">Skip Reasons:</b><br>' +
+                  entries.map(([k, v]) => '<span style="color:#aaa">' + k + ':</span> <b style="color:#fbbf24">' + v + '</b>').join('<br>') +
+                  '</div>';
+              }
+            }
             result.innerHTML = '<div style="border:1px solid #a00;border-radius:8px;padding:16px;background:#2e1a1a;margin-top:12px">' +
-              '<b style="color:#f87171">No Viable Candidate</b><br>' +
+              '<b style="color:#f87171">NO_VIABLE_CANDIDATE</b><br>' +
               '<span style="color:#aaa">' + (data.error || 'Unknown error') + '</span><br>' +
-              '<b>Candidates scanned:</b> ' + (data.candidatesScanned || 0) +
+              '<b>Candidates scanned:</b> ' + (data.candidatesScanned || 0) + ' of ' + (data.totalCandidates || 0) +
+              skipHtml +
               '</div>';
           }
         } catch (err) {

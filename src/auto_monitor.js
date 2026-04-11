@@ -842,6 +842,21 @@ async function attemptAutoClose(ticket, observedPrice, reason, effectivePaperClo
 
     // --- Paper close mode ---
     if (effectivePaperClose) {
+      // HARD GUARD: reject close at price <= 0 unless market is settled.
+      // Prevents phantom $0.00 closes from null/missing CLOB data.
+      if ((observedPrice === null || observedPrice === undefined || observedPrice <= 0) &&
+          reason !== "MARKET_SETTLED") {
+        try {
+          await CloseAttempt.create({
+            ticketId,
+            observedPrice,
+            reason,
+            result: "REJECTED_ZERO_PRICE",
+          });
+        } catch (_) { /* best-effort logging — guard must still reject */ }
+        return "REJECTED_ZERO_PRICE";
+      }
+
       // Compute approximate realized PnL if entry data is available
       let realizedPnlUsd = null;
       let realizedPnlPct = null;
