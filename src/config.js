@@ -90,4 +90,7 @@ module.exports = {
   // Min top-of-book bid size (USD notional at bid price) to enable auto-close.
   // If close-side liquidity is below this, autoClose is blocked with INSUFFICIENT_BID_SIZE.
   MIN_BID_SIZE_USD: parseFloat(process.env.MIN_BID_SIZE_USD || "20"),
+
+  // Paper-runner: max candidates to evaluate before giving up
+  PAPER_RUNNER_MAX_CANDIDATES: parseInt(process.env.PAPER_RUNNER_MAX_CANDIDATES || "20", 10),
 };

@@ -1873,7 +1873,8 @@ if (url.pathname === "/trade") {
       let pickReason = null;
       let pickIndex = -1;
 
-      for (let i = 0; i < Math.min(tradeCandidates.length, 20); i++) {
+      const maxCandidatesToEval = config.PAPER_RUNNER_MAX_CANDIDATES;
+      for (let i = 0; i < Math.min(tradeCandidates.length, maxCandidatesToEval); i++) {
         const item = tradeCandidates[i];
         try {
           const dir = inferDirection(item);
@@ -1925,7 +1926,7 @@ if (url.pathname === "/trade") {
       if (!picked) {
         await log("ERROR", {
           reason: "NO_VIABLE_CANDIDATE",
-          candidatesScanned: Math.min(tradeCandidates.length, 20),
+          candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
           totalCandidates: tradeCandidates.length,
           totalFetched: rawMarkets.length,
         });
@@ -1933,7 +1934,7 @@ if (url.pathname === "/trade") {
         res.end(JSON.stringify({
           ok: false, runId,
           error: "No viable candidate found",
-          candidatesScanned: Math.min(tradeCandidates.length, 20),
+          candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
           totalCandidates: tradeCandidates.length,
         }));
         return;
