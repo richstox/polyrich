@@ -320,7 +320,10 @@ async function autoSaveExecuteTickets(scanId) {
     console.warn(JSON.stringify({ msg: "autoSave: cannot read settings", err: err.message }));
     return;
   }
-  if (!settings.autoSaveExecuteEnabled) return;
+  if (!settings.autoSaveExecuteEnabled) {
+    console.log(JSON.stringify({ msg: "autoSave: autoSaveExecuteEnabled is OFF, skipping", scanId }));
+    return;
+  }
 
   let tradeCandidates;
   try {
@@ -363,10 +366,13 @@ async function autoSaveExecuteTickets(scanId) {
       if (dir.action === "WATCH") { skipReasons.skipped_watch++; continue; }
       const entryNum = inferEntry(item, dir.action);
       if (entryNum === null) { skipReasons.skipped_no_entry++; continue; }
-      const sizeNum = inferSize(item, sizingOpts);
+      let sizeNum = inferSize(item, sizingOpts);
       if (sizeNum === null) { skipReasons.skipped_no_size++; continue; }
 
-      // Skip if below min limit order ($5)
+      // Bump to exchange minimum ($5) when volume-based sizing is conservative
+      // but user's cap allows it.  Prevents rejecting viable trades just because
+      // fromVol (volume24hr × 2%) is below the Polymarket minimum order size.
+      if (sizeNum < 5 && (userCap === null || userCap >= 5)) sizeNum = 5;
       if (sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
 
       // Entry-based TP/SL (volatility-adaptive)
@@ -1912,8 +1918,12 @@ if (url.pathname === "/trade") {
           if (dir.action === "WATCH") { skipReasons.skipped_watch++; continue; }
           const entryNum = inferEntry(item, dir.action);
           if (entryNum === null) { skipReasons.skipped_no_entry++; continue; }
-          const sizeNum = inferSize(item, paperSizingOpts);
-          if (sizeNum === null || sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
+          let sizeNum = inferSize(item, paperSizingOpts);
+          if (sizeNum === null) { skipReasons.skipped_size_too_small++; continue; }
+          // Bump to exchange minimum ($5) when user's cap allows
+          const paperCap = paperSizingOpts.maxTradeCapUsd;
+          if (sizeNum < 5 && (paperCap === null || paperCap === undefined || paperCap >= 5)) sizeNum = 5;
+          if (sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
 
           // Require a CLOB token ID
           const tokenId = dir.action === "BUY YES"
