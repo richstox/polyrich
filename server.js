@@ -1833,43 +1833,29 @@ if (url.pathname === "/trade") {
   }
 
   // ── POST /api/paper-runner — Execute ONE paper-trading lifecycle ──────
-  // Scans real markets, picks one candidate, opens one paper trade, starts monitoring.
-  // Uses the SAME code paths as normal autoSave + auto-monitor.
+  // Uses the SAME scan candidates as the Trade page, picks one, opens one
+  // paper trade, and starts monitoring.  CLOB book is fetched live per-candidate
+  // for accurate executable pricing.
   if (url.pathname === "/api/paper-runner" && req.method === "POST") {
     const runId = `run_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     const log = (phase, data) => PaperRunnerLog.create({ runId, phase, data }).catch(() => {});
 
     try {
-      // 1) Run a real scan to get fresh market data
-      const scanStarted = new Date();
-      const result = await fetchPolymarkets();
-      const rawMarkets = result.markets;
-      const filtered = rawMarkets
-        .filter((item) =>
-          item.acceptingOrders === true &&
-          item.active === true &&
-          item.closed === false &&
-          item.bestBid !== null &&
-          item.bestAsk !== null &&
-          item.spread !== null
-        )
-        .map(normalizeMarket)
-        .sort((a, b) => {
-          const aScore = Math.log(a.volume24hr + 1) * 100 + Math.log(a.liquidity + 1) * 50 - a.spread * 1000;
-          const bScore = Math.log(b.volume24hr + 1) * 100 + Math.log(b.liquidity + 1) * 50 - b.spread * 1000;
-          return bScore - aScore;
-        });
+      // 1) Reuse the existing scan's candidates (same data as the Trade page).
+      //    This ensures the paper runner evaluates the SAME candidates the user
+      //    sees on the Trade page.  Live CLOB book is still fetched per-candidate
+      //    below for accurate executable pricing.
+      if (!scanStatus.lastScanId) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, runId, error: "No scan data available. Run a scan first." }));
+        return;
+      }
+      const usedScanId = scanStatus.lastScanId;
 
-      const saveLimit = Math.min(filtered.length, config.SAVED_PER_SCAN);
-      const toUpsert = filtered.slice(0, saveLimit);
-      const tempScanId = scanStarted.toISOString();
-      await upsertSnapshots(toUpsert, tempScanId);
-
-      // 2) Build ideas using signal engine (same path as /trade page + autoSave)
-      const ideasResult = await buildIdeas({ ...scanStatus, lastScanId: tempScanId }, {});
+      const ideasResult = await buildIdeas(scanStatus, {});
       const tradeCandidates = ideasResult.tradeCandidates || [];
 
-      // 3) Find the FIRST viable EXECUTE candidate with valid CLOB data
+      // 2) Find the FIRST viable EXECUTE candidate with valid CLOB data
       let picked = null;
       let pickReason = null;
       let pickIndex = -1;
@@ -1949,7 +1935,7 @@ if (url.pathname === "/trade") {
           reason: "NO_VIABLE_CANDIDATE",
           candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
           totalCandidates: tradeCandidates.length,
-          totalFetched: rawMarkets.length,
+          scanId: usedScanId,
           skipReasons,
         });
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -1965,7 +1951,7 @@ if (url.pathname === "/trade") {
 
       const { item, dir, entryNum, sizeNum, tpNum, stopNum, entryBidNum, entryAskNum, tokenId, rawConditionId, book } = picked;
 
-      // 4) Log CANDIDATE_SELECTED
+      // 3) Log CANDIDATE_SELECTED
       await log("CANDIDATE_SELECTED", {
         pickIndex, pickReason,
         question: safeQuestion(item),
@@ -1979,7 +1965,7 @@ if (url.pathname === "/trade") {
         reasonCodes: item.reasonCodes || [],
       });
 
-      // 5) Log ENTRY_SNAPSHOT (raw CLOB book data at entry time)
+      // 4) Log ENTRY_SNAPSHOT (raw CLOB book data at entry time)
       await log("ENTRY_SNAPSHOT", {
         tokenId,
         bestBid: book.bestBid,
@@ -1990,7 +1976,7 @@ if (url.pathname === "/trade") {
         entryBid: entryBidNum,
       });
 
-      // 6) Create the paper ticket — using the SAME TradeTicket.create path
+      // 5) Create the paper ticket — using the SAME TradeTicket.create path
       const marketId = rawConditionId || item.marketSlug || safeQuestion(item);
       const actionEnum = dir.action === "BUY YES" ? "BUY_YES" : "BUY_NO";
       const midNum = (entryAskNum + entryBidNum) / 2;
@@ -2004,7 +1990,7 @@ if (url.pathname === "/trade") {
       const pnlStopUsd = sizeNum * (stopNum - entryAskNum) / entryAskNum;
 
       const ticketData = {
-        scanId: tempScanId,
+        scanId: usedScanId,
         source: "TRADE_PAGE",
         marketId,
         conditionId: rawConditionId,
@@ -2052,7 +2038,7 @@ if (url.pathname === "/trade") {
 
       const ticket = await TradeTicket.create(ticketData);
 
-      // 7) Log PAPER_FILL
+      // 6) Log PAPER_FILL
       await log("PAPER_FILL", {
         ticketId: ticket._id,
         entryFillPrice: entryAskNum,
