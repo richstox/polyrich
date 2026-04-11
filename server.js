@@ -372,7 +372,7 @@ async function autoSaveExecuteTickets(scanId) {
       // Bump to exchange minimum ($5) when volume-based sizing is conservative
       // but user's cap allows it.  Prevents rejecting viable trades just because
       // fromVol (volume24hr × 2%) is below the Polymarket minimum order size.
-      if (sizeNum < 5 && (userCap === null || userCap >= 5)) sizeNum = 5;
+      if (sizeNum < 5 && (userCap == null || userCap >= 5)) sizeNum = 5;
       if (sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
 
       // Entry-based TP/SL (volatility-adaptive)
@@ -1922,7 +1922,7 @@ if (url.pathname === "/trade") {
           if (sizeNum === null) { skipReasons.skipped_size_too_small++; continue; }
           // Bump to exchange minimum ($5) when user's cap allows
           const paperCap = paperSizingOpts.maxTradeCapUsd;
-          if (sizeNum < 5 && (paperCap === null || paperCap === undefined || paperCap >= 5)) sizeNum = 5;
+          if (sizeNum < 5 && (paperCap == null || paperCap >= 5)) sizeNum = 5;
           if (sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
 
           // Require a CLOB token ID
