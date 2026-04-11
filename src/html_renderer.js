@@ -1885,6 +1885,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
       var RISK_PCT_DEF = ${RISK_PCT_DEFAULT};
       var MAX_CAP_DEF = ${MAX_TRADE_CAP_USD_DEFAULT};
       var MIN_ORDER = ${MIN_LIMIT_ORDER_USD};
+      var SIZE_LIQ_PCT = ${SIZE_LIQUIDITY_PCT};
+      var SIZE_VOL_PCT = ${SIZE_VOLUME_PCT};
       var DEFAULT_AUTOCLOSE = ${defaultAutoClose ? "true" : "false"};
       var KEY_BR = 'polyrich_bankroll_usd';
       var KEY_RISK = 'polyrich_risk_pct';
@@ -2160,8 +2162,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
           if (isNaN(hMax) || isNaN(entry) || entry <= 0) continue;
 
           // Compute individual sizing components to identify bottleneck
-          var fromLiq = cardLiq * 0.01;  // SIZE_LIQUIDITY_PCT
-          var fromVol = cardVol * 0.02;  // SIZE_VOLUME_PCT
+          var fromLiq = cardLiq * SIZE_LIQ_PCT;
+          var fromVol = cardVol * SIZE_VOL_PCT;
           var riskBudget = hasBankroll ? bankroll * riskDec : Infinity;
 
           var maxSizeRaw;
