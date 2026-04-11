@@ -431,8 +431,8 @@ async function autoSaveExecuteTickets(scanId) {
       ts: new Date().toISOString(),
     }));
 
-    // TP/SL are entry-based — no recompute needed from bid.
-    // (TP/SL were already computed from entryNum in the screening pass above.)
+    // TP/SL are entry-based — computed from entryNum during initial calculation
+    // and remain constant based on entry price regardless of CLOB bid.
 
     // ---------------------------------------------------------------------------
     // HARD INVARIANT: Fail-closed on missing executable bid
