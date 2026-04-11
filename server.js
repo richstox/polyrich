@@ -369,10 +369,9 @@ async function autoSaveExecuteTickets(scanId) {
       let sizeNum = inferSize(item, sizingOpts);
       if (sizeNum === null) { skipReasons.skipped_no_size++; continue; }
 
-      // Bump to exchange minimum ($5) when volume-based sizing is conservative
-      // but user's cap allows it.  Prevents rejecting viable trades just because
-      // fromVol (volume24hr × 2%) is below the Polymarket minimum order size.
-      if (sizeNum < 5 && (userCap == null || userCap >= 5)) sizeNum = 5;
+      // Strict 2% volume rule: if heuristic sizing (min of 1% liquidity,
+      // 2% volume, user cap, risk budget) yields less than the $5 Polymarket
+      // minimum order, skip.  No bump — the 2% rule is the hard ceiling.
       if (sizeNum < 5) { skipReasons.skipped_size_too_small++; continue; }
 
       // Entry-based TP/SL (volatility-adaptive)
