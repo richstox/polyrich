@@ -369,9 +369,9 @@ async function autoSaveExecuteTickets(scanId) {
       // Skip if below min limit order ($5)
       if (sizeNum < 5) continue;
 
-      // Bid-based TP/SL: use bestBidNum as close-price basis
+      // Entry-based TP/SL
       const entryBidNum = (item.bestBidNum > 0) ? item.bestBidNum : null;
-      const exits = inferExit(entryNum, entryBidNum);
+      const exits = inferExit(entryNum);
       if (exits.tp === null || exits.stop === null) continue;
       executeItems.push({ item, dir, entryNum, sizeNum, tpNum: exits.tp, stopNum: exits.stop, entryBidNum });
     } catch (_) { /* skip */ }
@@ -431,14 +431,8 @@ async function autoSaveExecuteTickets(scanId) {
       ts: new Date().toISOString(),
     }));
 
-    // Recompute TP/SL with CLOB-verified bid (may differ from Gamma screening pass)
-    if (Number.isFinite(entryBidNum) && entryBidNum > 0) {
-      const clobExits = inferExit(entryNum, entryBidNum);
-      if (clobExits.tp !== null && clobExits.stop !== null) {
-        tpNum = clobExits.tp;
-        stopNum = clobExits.stop;
-      }
-    }
+    // TP/SL are entry-based — no recompute needed from bid.
+    // (TP/SL were already computed from entryNum in the screening pass above.)
 
     // ---------------------------------------------------------------------------
     // HARD INVARIANT: Fail-closed on missing executable bid
@@ -447,7 +441,7 @@ async function autoSaveExecuteTickets(scanId) {
     //  1. entryBid: finite > 0 (valid executable bid from CLOB)
     //  2. entryAsk: finite > 0 (entry price)
     //  3. entryBidSize: finite > 0 (liquidity exists at that bid level)
-    //  4. TP and SL: finite > 0 (computed from valid bid basis)
+    //  4. TP and SL: finite > 0
     // If ANY is missing → block auto-close with NO_EXECUTABLE_BID.
     const hasValidBid  = Number.isFinite(entryBidNum) && entryBidNum > 0;
     const hasValidAsk  = Number.isFinite(entryNum) && entryNum > 0;
@@ -466,20 +460,30 @@ async function autoSaveExecuteTickets(scanId) {
     const spreadAbs = (hasValidBid && entryAskNum) ? (entryAskNum - entryBidNum) : null;
     const spreadPct = (midNum && midNum > 0 && spreadAbs !== null) ? spreadAbs / midNum : null;
 
-    // --- Spread warning (advisory only, NOT a hard gate) ---
-    // Wide spread is logged for operator awareness but does NOT skip the ticket.
+    // --- Spread gate: SKIP wide-spread tickets entirely ---
+    // Do NOT create tickets for markets where the spread is too wide.
+    // Previously these were created with autoClose disabled (SPREAD_TOO_WIDE),
+    // but that just clutters the ticket list with un-closeable positions.
     if (spreadPct !== null && spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
       console.log(JSON.stringify({
-        msg: "autoSave-spread-warning",
+        msg: "autoSave-spread-skip",
         marketId, spreadPct: Math.round(spreadPct * 10000) / 10000,
         threshold: config.MAX_ENTRY_SPREAD_PCT,
         ts: new Date().toISOString(),
       }));
-      // Block auto-close for operator review, but still create the ticket
-      if (effectiveAutoClose) {
-        effectiveAutoClose = false;
-        autoCloseBlockedReason = autoCloseBlockedReason || "SPREAD_TOO_WIDE";
-      }
+      continue; // skip — do not create ticket
+    }
+
+    // --- Safety: bid already below SL → skip ---
+    // With entry-based TP/SL, a wide spread can mean the current bid is already
+    // at or below the stop-loss. Don't open a position that instantly triggers EXIT.
+    if (hasValidBid && stopNum > 0 && entryBidNum <= stopNum) {
+      console.log(JSON.stringify({
+        msg: "autoSave-bid-below-sl-skip",
+        marketId, entryBid: entryBidNum, stop: stopNum,
+        ts: new Date().toISOString(),
+      }));
+      continue; // skip — would trigger EXIT_HIT immediately
     }
 
     // --- Admission gates: liquidity ---
@@ -1905,8 +1909,8 @@ if (url.pathname === "/trade") {
           // Safety: valid executable bid/ask must be > 0
           if (!(entryBidNum > 0) || !(entryAskNum > 0)) continue;
 
-          // Compute TP/SL from real CLOB bid (sell-to-close basis)
-          const exits = inferExit(entryAskNum, entryBidNum);
+          // Compute TP/SL from entry price
+          const exits = inferExit(entryAskNum);
           if (exits.tp === null || exits.stop === null) continue;
 
           picked = {
