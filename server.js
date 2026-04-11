@@ -1591,10 +1591,19 @@ if (url.pathname === "/trade") {
             }
           }
         }
-        // Spread warning: advisory only — block auto-close but don't reject the ticket
-        if (data.autoCloseEnabled && typeof data.entrySpreadPct === "number" && data.entrySpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
-          data.autoCloseEnabled = false;
-          data.autoCloseBlockedReason = data.autoCloseBlockedReason || "SPREAD_TOO_WIDE";
+        // Spread gate: reject wide-spread tickets entirely (same logic as autoSave)
+        if (typeof data.entrySpreadPct === "number" && data.entrySpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
+          res.writeHead(422, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SPREAD_TOO_WIDE", spreadPct: data.entrySpreadPct, threshold: config.MAX_ENTRY_SPREAD_PCT }));
+          return;
+        }
+        // Bid-below-SL gate: reject if bid already at or below stop-loss (instant EXIT)
+        if (typeof data.entryBid === "number" && data.entryBid > 0 &&
+            typeof data.riskExitLimit === "number" && data.riskExitLimit > 0 &&
+            data.entryBid <= data.riskExitLimit) {
+          res.writeHead(422, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "BID_BELOW_SL", entryBid: data.entryBid, riskExitLimit: data.riskExitLimit }));
+          return;
         }
         // Admission gates for auto-close: liquidity
         if (data.autoCloseEnabled && typeof data.entryBid === "number" && typeof data.entryBidSize === "number") {

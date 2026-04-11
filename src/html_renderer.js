@@ -1176,7 +1176,7 @@ function pageShell(title, activeNav, bodyHtml) {
         headers: { "Content-Type": "application/json" },
         body: payload,
       }).then(function(r) { return r.json(); }).then(function(d) {
-        if (d.error) { saveBtn.textContent = "Error"; }
+        if (d.error) { saveBtn.textContent = d.error === "SPREAD_TOO_WIDE" ? "Spread too wide" : d.error === "BID_BELOW_SL" ? "Bid below SL" : "Error"; saveBtn.disabled = false; }
         else {
           saveBtn.textContent = "Saved ✓";
           saveBtn.style.background = "#dcfce7";
