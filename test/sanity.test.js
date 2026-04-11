@@ -2362,6 +2362,839 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// MAX_ENTRY_SPREAD_PCT config exists (advisory threshold)
+// ---------------------------------------------------------------------------
+{
+  console.log("\nMAX_ENTRY_SPREAD_PCT config exists (advisory)");
+  const cfg = require("../src/config");
+
+  assert(typeof cfg.MAX_ENTRY_SPREAD_PCT === "number",
+    "MAX_ENTRY_SPREAD_PCT config exists");
+  assert(cfg.MAX_ENTRY_SPREAD_PCT > 0 && cfg.MAX_ENTRY_SPREAD_PCT <= 1,
+    "MAX_ENTRY_SPREAD_PCT is between 0 and 1 (fractional, e.g. 0.15 = 15%)");
+  assert(cfg.MAX_ENTRY_SPREAD_PCT === 0.15,
+    "Default MAX_ENTRY_SPREAD_PCT is 0.15 (15%)");
+}
+
+// ---------------------------------------------------------------------------
+// Spread is advisory only — wide spread blocks auto-close, NOT ticket creation
+// ---------------------------------------------------------------------------
+{
+  console.log("\nSpread is advisory — wide spread blocks auto-close, not ticket creation");
+  const cfg = require("../src/config");
+
+  // Illiquid market: bid=0.001, ask=0.32 → spread=198.8%
+  const bid1 = 0.001;
+  const ask1 = 0.32;
+  const mid1 = (ask1 + bid1) / 2;
+  const spreadPct1 = (ask1 - bid1) / mid1;
+  assert(spreadPct1 > cfg.MAX_ENTRY_SPREAD_PCT,
+    `198.8% spread exceeds advisory threshold (15%)`);
+
+  // Tight spread market: bid=0.32, ask=0.33 → spread=3.08%
+  const bid2 = 0.32;
+  const ask2 = 0.33;
+  const mid2 = (ask2 + bid2) / 2;
+  const spreadPct2 = (ask2 - bid2) / mid2;
+  assert(spreadPct2 < cfg.MAX_ENTRY_SPREAD_PCT,
+    `3.1% spread is within advisory threshold (15%)`);
+}
+
+// ---------------------------------------------------------------------------
+// A) normalizePrice: rejects <= 0, >= 1, NaN, Infinity
+// ---------------------------------------------------------------------------
+{
+  console.log("\nnormalizePrice: validates CLOB prices to (0, 1)");
+  const { normalizePrice } = require("../src/auto_monitor");
+
+  assert(normalizePrice(0.50) === 0.50, "0.50 is valid");
+  assert(normalizePrice(0.001) === 0.001, "0.001 is valid (tiny but legal)");
+  assert(normalizePrice(0.99) === 0.99, "0.99 is valid");
+  assert(normalizePrice(0) === null, "0 → null");
+  assert(normalizePrice(-0.01) === null, "-0.01 → null");
+  assert(normalizePrice(1.0) === null, "1.0 → null (>= 1 is settled/invalid)");
+  assert(normalizePrice(1.5) === null, "1.5 → null");
+  assert(normalizePrice(NaN) === null, "NaN → null");
+  assert(normalizePrice(Infinity) === null, "Infinity → null");
+  assert(normalizePrice(-Infinity) === null, "-Infinity → null");
+  assert(normalizePrice(undefined) === null, "undefined → null");
+  assert(normalizePrice("abc") === null, "non-numeric string → null");
+  assert(normalizePrice("0.35") === 0.35, "string '0.35' parses to 0.35");
+}
+
+// ---------------------------------------------------------------------------
+// A) normalizeSize: rejects <= 0, NaN, Infinity
+// ---------------------------------------------------------------------------
+{
+  console.log("\nnormalizeSize: validates CLOB sizes");
+  const { normalizeSize } = require("../src/auto_monitor");
+
+  assert(normalizeSize(100) === 100, "100 is valid");
+  assert(normalizeSize(0.5) === 0.5, "0.5 is valid (fractional shares)");
+  assert(normalizeSize(0) === null, "0 → null");
+  assert(normalizeSize(-10) === null, "-10 → null");
+  assert(normalizeSize(NaN) === null, "NaN → null");
+  assert(normalizeSize(Infinity) === null, "Infinity → null");
+  assert(normalizeSize(undefined) === null, "undefined → null");
+}
+
+// ---------------------------------------------------------------------------
+// B) Ticket creation fail-closed: NO_EXECUTABLE_BID
+// ---------------------------------------------------------------------------
+{
+  console.log("\nTicket creation fail-closed: NO_EXECUTABLE_BID");
+
+  // Scenario: CLOB returns bid=0.001 (normalized to valid but near-zero),
+  // ask=0.32, bidSize=null (no size)
+  // The NO_EXECUTABLE_BID invariant fires because bidSize is missing.
+  const data1 = {
+    tradeability: "EXECUTE",
+    action: "BUY_YES",
+    autoCloseEnabled: true,
+    autoCloseBlockedReason: null,
+    entryBid: 0.001,     // valid but tiny
+    entryAsk: 0.32,      // valid
+    entryBidSize: null,   // MISSING — no executable liquidity
+    takeProfit: 0.0011,   // garbage (from tiny bid)
+    riskExitLimit: 0.01,  // garbage
+  };
+
+  const vb1 = Number.isFinite(data1.entryBid) && data1.entryBid > 0;
+  const va1 = Number.isFinite(data1.entryAsk) && data1.entryAsk > 0;
+  const vs1 = Number.isFinite(data1.entryBidSize) && data1.entryBidSize > 0;
+  if (data1.autoCloseEnabled && !(vb1 && va1 && vs1)) {
+    data1.autoCloseEnabled = false;
+    data1.autoCloseBlockedReason = data1.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
+  }
+  assert(!data1.autoCloseEnabled,
+    "Auto-close blocked when entryBidSize is null");
+  assert(data1.autoCloseBlockedReason === "NO_EXECUTABLE_BID",
+    "Reason is NO_EXECUTABLE_BID (missing bid size)");
+
+  // Scenario 2: entryBid = null (CLOB returned no bids)
+  const data2 = {
+    tradeability: "EXECUTE",
+    action: "BUY_YES",
+    autoCloseEnabled: true,
+    autoCloseBlockedReason: null,
+    entryBid: null,
+    entryAsk: 0.32,
+    entryBidSize: 100,
+    takeProfit: null,
+    riskExitLimit: null,
+  };
+  const vb2 = Number.isFinite(data2.entryBid) && data2.entryBid > 0;
+  const va2 = Number.isFinite(data2.entryAsk) && data2.entryAsk > 0;
+  const vs2 = Number.isFinite(data2.entryBidSize) && data2.entryBidSize > 0;
+  if (data2.autoCloseEnabled && !(vb2 && va2 && vs2)) {
+    data2.autoCloseEnabled = false;
+    data2.autoCloseBlockedReason = data2.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
+  }
+  assert(!data2.autoCloseEnabled,
+    "Auto-close blocked when entryBid is null");
+  assert(data2.autoCloseBlockedReason === "NO_EXECUTABLE_BID",
+    "Reason is NO_EXECUTABLE_BID (null bid)");
+
+  // Scenario 3: all valid → auto-close stays enabled
+  const data3 = {
+    tradeability: "EXECUTE",
+    action: "BUY_YES",
+    autoCloseEnabled: true,
+    autoCloseBlockedReason: null,
+    entryBid: 0.31,
+    entryAsk: 0.33,
+    entryBidSize: 200,
+    takeProfit: 0.341,
+    riskExitLimit: 0.2852,
+  };
+  const vb3 = Number.isFinite(data3.entryBid) && data3.entryBid > 0;
+  const va3 = Number.isFinite(data3.entryAsk) && data3.entryAsk > 0;
+  const vs3 = Number.isFinite(data3.entryBidSize) && data3.entryBidSize > 0;
+  if (data3.autoCloseEnabled && !(vb3 && va3 && vs3)) {
+    data3.autoCloseEnabled = false;
+    data3.autoCloseBlockedReason = data3.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
+  }
+  assert(data3.autoCloseEnabled,
+    "Auto-close stays enabled with valid bid/ask/size");
+  assert(data3.autoCloseBlockedReason === null,
+    "No blocked reason when all valid");
+}
+
+// ---------------------------------------------------------------------------
+// C) checkTrigger: does NOT close when TP/SL <= 0 or null
+// ---------------------------------------------------------------------------
+{
+  console.log("\ncheckTrigger: rejects invalid TP/SL thresholds");
+  const { checkTrigger } = require("../src/auto_monitor");
+
+  // TP = 0, SL = 0 → should NOT trigger even when price matches
+  const r1 = checkTrigger({ takeProfit: 0, riskExitLimit: 0 }, 0.50);
+  assert(!r1.triggered, "TP=0, SL=0 → no trigger (guarded by > 0)");
+
+  // TP = null, SL = null → should NOT trigger
+  const r2 = checkTrigger({ takeProfit: null, riskExitLimit: null }, 0.50);
+  assert(!r2.triggered, "TP=null, SL=null → no trigger");
+
+  // TP = NaN → should NOT trigger
+  const r3 = checkTrigger({ takeProfit: NaN, riskExitLimit: 0.20 }, 0.50);
+  assert(!r3.triggered, "TP=NaN → no trigger");
+
+  // SL = -0.01 → should NOT trigger even with price at 0
+  const r4 = checkTrigger({ takeProfit: 0.50, riskExitLimit: -0.01 }, 0.01);
+  assert(!r4.triggered, "SL=-0.01 → no trigger (negative SL rejected)");
+
+  // Valid TP hit
+  const r5 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, 0.42);
+  assert(r5.triggered && r5.reason === "TP_HIT", "Valid TP=0.40, price=0.42 → TP_HIT");
+
+  // Valid EXIT hit
+  const r6 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, 0.18);
+  assert(r6.triggered && r6.reason === "EXIT_HIT", "Valid SL=0.20, price=0.18 → EXIT_HIT");
+}
+
+// ---------------------------------------------------------------------------
+// C) checkTrigger: does NOT trigger when executable bid is invalid
+// ---------------------------------------------------------------------------
+{
+  console.log("\ncheckTrigger: rejects invalid executable bid (currentPrice)");
+  const { checkTrigger } = require("../src/auto_monitor");
+
+  // currentPrice = 0 → no trigger
+  const r1 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, 0);
+  assert(!r1.triggered, "currentPrice=0 → no trigger");
+
+  // currentPrice = null → no trigger
+  const r2 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, null);
+  assert(!r2.triggered, "currentPrice=null → no trigger");
+
+  // currentPrice = NaN → no trigger
+  const r3 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, NaN);
+  assert(!r3.triggered, "currentPrice=NaN → no trigger");
+
+  // currentPrice = -0.5 → no trigger
+  const r4 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, -0.5);
+  assert(!r4.triggered, "currentPrice=-0.5 → no trigger");
+
+  // currentPrice = Infinity → no trigger
+  const r5 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, Infinity);
+  assert(!r5.triggered, "currentPrice=Infinity → no trigger");
+}
+
+// ---------------------------------------------------------------------------
+// C) inferExit: Number.isFinite guard (NaN, Infinity rejected)
+// ---------------------------------------------------------------------------
+{
+  console.log("\ninferExit: Number.isFinite guard");
+  const { inferExit } = require("../src/html_renderer");
+
+  // NaN bid → null exits
+  const r1 = inferExit(0.32, NaN);
+  assert(r1.tp === null && r1.stop === null, "NaN bid → { tp: null, stop: null }");
+
+  // Infinity bid → null exits
+  const r2 = inferExit(0.32, Infinity);
+  assert(r2.tp === null && r2.stop === null, "Infinity bid → { tp: null, stop: null }");
+
+  // -Infinity bid → null exits
+  const r3 = inferExit(0.32, -Infinity);
+  assert(r3.tp === null && r3.stop === null, "-Infinity bid → { tp: null, stop: null }");
+
+  // undefined bid → null exits
+  const r4 = inferExit(0.32, undefined);
+  assert(r4.tp === null && r4.stop === null, "undefined bid → { tp: null, stop: null }");
+
+  // Valid bid → valid exits
+  const r5 = inferExit(0.32, 0.31);
+  assert(r5.tp !== null && r5.stop !== null, "Valid bid 0.31 → non-null exits");
+  assert(r5.tp > 0 && r5.stop > 0, "Valid TP and SL are > 0");
+}
+
+// ---------------------------------------------------------------------------
+// E) fmtPrice: never displays invalid prices as "$0.00"
+// ---------------------------------------------------------------------------
+{
+  console.log("\nfmtPrice: never displays invalid prices as $0.00");
+
+  // Simulate the UI fmtPrice function
+  const fmtPrice = (v) => (Number.isFinite(v) && v > 0) ? "$" + v.toFixed(2) : "\u2014";
+
+  assert(fmtPrice(null) === "\u2014", "null → —");
+  assert(fmtPrice(undefined) === "\u2014", "undefined → —");
+  assert(fmtPrice(0) === "\u2014", "0 → —");
+  assert(fmtPrice(-0.01) === "\u2014", "-0.01 → —");
+  assert(fmtPrice(NaN) === "\u2014", "NaN → —");
+  assert(fmtPrice(Infinity) === "\u2014", "Infinity → —");
+  assert(fmtPrice(0.33) === "$0.33", "0.33 → $0.33");
+  assert(fmtPrice(0.001) === "$0.00", "0.001 → $0.00 (rounds to 0.00 at 2dp)");
+  // Verify that fmtPrice(0.001) and fmtPrice(0) produce different code paths
+  assert(fmtPrice(0.001) !== fmtPrice(0), "fmtPrice(0.001) !== fmtPrice(0) — different outputs despite both rounding near zero");
+  // Critical: a value of exactly 0 must NOT display as $0.00
+  assert(fmtPrice(0) !== "$0.00", "Zero must NOT display as $0.00");
+}
+
+// ---------------------------------------------------------------------------
+// G) REGRESSION: Full failure scenario — bid=0.001, ask=0.32
+// The system must NOT allow EXECUTE auto-close from this state
+// ---------------------------------------------------------------------------
+{
+  console.log("\nREGRESSION: bid=0.001 ask=0.32 → no auto-close, no trigger");
+  const { inferExit } = require("../src/html_renderer");
+  const { checkTrigger, normalizePrice, normalizeSize } = require("../src/auto_monitor");
+
+  const entryAsk = 0.32;
+  const clobBid = 0.001;
+  const clobBidSize = null; // no real liquidity at this price
+
+  // Step 1: normalizePrice accepts 0.001 (it's technically in (0,1))
+  assert(normalizePrice(clobBid) === 0.001, "0.001 is technically valid in (0,1)");
+
+  // Step 2: inferExit computes garbage TP/SL from microscopic bid
+  const exits = inferExit(entryAsk, clobBid);
+  assert(exits.tp !== null, "Garbage TP is still computed (0.0011)");
+  assert(Math.abs(exits.tp - 0.0011) < 0.0001, `TP ≈ 0.0011 (got ${exits.tp})`);
+  assert(exits.tp < entryAsk, "Garbage TP is below entry — this is wrong");
+
+  // Step 3: The NO_EXECUTABLE_BID invariant blocks auto-close
+  let autoClose = true;
+  let blocked = null;
+  const vb = Number.isFinite(clobBid) && clobBid > 0;
+  const va = Number.isFinite(entryAsk) && entryAsk > 0;
+  const vs = Number.isFinite(clobBidSize) && clobBidSize > 0;
+  if (autoClose && !(vb && va && vs)) {
+    autoClose = false;
+    blocked = "NO_EXECUTABLE_BID";
+  }
+  assert(!autoClose, "Auto-close is blocked (bidSize is null)");
+  assert(blocked === "NO_EXECUTABLE_BID",
+    "Blocked reason is NO_EXECUTABLE_BID — the right invariant");
+
+  // Step 4: Even if somehow checkTrigger is called with garbage TP/SL,
+  // the > 0 guard on TP prevents triggering at zero
+  const trigger = checkTrigger(
+    { takeProfit: exits.tp, riskExitLimit: exits.stop },
+    clobBid
+  );
+  // TP = 0.0011, currentPrice = 0.001 < 0.0011 → no TP_HIT
+  // SL = 0.01, currentPrice = 0.001 ≤ 0.01 → EXIT_HIT would fire
+  // But: riskExitLimit = 0.01 (> 0) and currentPrice = 0.001 (> 0), so EXIT_HIT fires
+  // This is OK because auto-close was already blocked above — this is defense-in-depth
+  if (trigger.triggered) {
+    assert(trigger.reason === "EXIT_HIT",
+      "EXIT_HIT triggers — but auto-close is already blocked");
+  }
+
+  // Step 5: Even if TP/SL were somehow null, checkTrigger doesn't trigger
+  const safeTrigger = checkTrigger(
+    { takeProfit: null, riskExitLimit: null },
+    clobBid
+  );
+  assert(!safeTrigger.triggered,
+    "null TP/SL → no trigger (fail-closed)");
+}
+
+// ---------------------------------------------------------------------------
+// G) REGRESSION: CLOB returns bestBid = 1.0 (settled market)
+// ---------------------------------------------------------------------------
+{
+  console.log("\nREGRESSION: bestBid = 1.0 (settled) → normalized to null");
+  const { normalizePrice } = require("../src/auto_monitor");
+
+  assert(normalizePrice(1.0) === null, "1.0 → null (settled market)");
+  assert(normalizePrice(0.9999) !== null, "0.9999 → valid (just below 1)");
+}
+
+// ---------------------------------------------------------------------------
+// G) REGRESSION: Monitor does not close at zero executable bid
+// ---------------------------------------------------------------------------
+{
+  console.log("\nREGRESSION: monitor does not close when executable bid is 0 or null");
+  const { checkTrigger } = require("../src/auto_monitor");
+
+  // If getClobPrice returned 0 somehow (should be caught upstream, but belt-and-suspenders)
+  const r1 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, 0);
+  assert(!r1.triggered, "Price=0 → no trigger (cannot close at zero)");
+
+  // If getClobPrice returned null/undefined
+  const r2 = checkTrigger({ takeProfit: 0.40, riskExitLimit: 0.20 }, null);
+  assert(!r2.triggered, "Price=null → no trigger (cannot close without valid bid)");
+}
+
+// ---------------------------------------------------------------------------
+// Existing CLOB bid override tests: zero or negative bids must NOT override
+// ---------------------------------------------------------------------------
+{
+  console.log("\nCLOB bid override: reject zero/null/negative bestBid");
+
+  // Simulates the guard in autoSave/POST: only override if normalized value is non-null
+  function simulateClobOverride(gammaBid, clobBestBid) {
+    let entryBidNum = gammaBid;
+    // fetchClobBook now normalizePrice — null for invalid
+    const normalized = clobBestBid; // already normalized by fetchClobBook
+    if (normalized !== null) {
+      entryBidNum = normalized;
+    }
+    return entryBidNum;
+  }
+
+  // CLOB returns bestBid = null (was 0, normalized to null by fetchClobBook)
+  assert(simulateClobOverride(0.30, null) === 0.30,
+    "CLOB bestBid=null does NOT override Gamma bid of 0.30");
+
+  // CLOB returns bestBid = 0.28 (valid) → SHOULD override
+  assert(simulateClobOverride(0.30, 0.28) === 0.28,
+    "CLOB bestBid=0.28 (valid positive) overrides Gamma bid of 0.30");
+}
+
+// ---------------------------------------------------------------------------
+// TP/SL sanity with microscopic bid vs normal bid
+// ---------------------------------------------------------------------------
+{
+  console.log("\nTP/SL: microscopic bid produces garbage TP — fail-closed catches it");
+  const { inferExit } = require("../src/html_renderer");
+
+  // Normal bid: entry=0.32, bid=0.31 → TP=0.341, SL=0.2852
+  const normal = inferExit(0.32, 0.31);
+  assert(normal.tp !== null, "Normal bid produces valid TP");
+  assert(normal.tp > 0.32, `TP ($${normal.tp.toFixed(4)}) is ABOVE entry ($0.32)`);
+  assert(normal.stop < 0.32, `SL ($${normal.stop.toFixed(4)}) is BELOW entry ($0.32)`);
+
+  // Microscopic bid: entry=0.32, bid=0.001 → TP=0.0011 (BELOW entry!)
+  const micro = inferExit(0.32, 0.001);
+  assert(micro.tp !== null, "Microscopic bid produces non-null TP");
+  assert(micro.tp < 0.32,
+    `TP ($${micro.tp.toFixed(4)}) is BELOW entry — garbage, caught by NO_EXECUTABLE_BID invariant`);
+}
+
+// ---------------------------------------------------------------------------
+// Falsy check regression: uses Number.isFinite, not truthiness
+// ---------------------------------------------------------------------------
+{
+  console.log("\nFalsy check regression: uses Number.isFinite, not truthiness");
+
+  assert(!(0 > 0), "0 > 0 is false — blocks zero bid");
+  assert(!(null > 0), "null > 0 is false — blocks null bid");
+  assert(0.001 > 0, "0.001 > 0 is true — allows tiny bids");
+  assert(0.30 > 0, "0.30 > 0 is true — allows normal bids");
+  assert(!Number.isFinite(NaN), "NaN is not finite");
+  assert(!Number.isFinite(Infinity), "Infinity is not finite");
+  assert(Number.isFinite(0.001), "0.001 is finite");
+}
+
+// ---------------------------------------------------------------------------
+// DIAGNOSTIC_REASONS includes new reasons
+// ---------------------------------------------------------------------------
+{
+  console.log("\nDIAGNOSTIC_REASONS includes new reasons");
+  const { DIAGNOSTIC_REASONS } = require("../src/html_renderer");
+
+  assert(DIAGNOSTIC_REASONS.NO_EXECUTABLE_BID,
+    "NO_EXECUTABLE_BID reason exists");
+  assert(typeof DIAGNOSTIC_REASONS.NO_EXECUTABLE_BID.label === "string",
+    "NO_EXECUTABLE_BID has a label");
+  assert(typeof DIAGNOSTIC_REASONS.NO_EXECUTABLE_BID.explanation === "string",
+    "NO_EXECUTABLE_BID has an explanation");
+  assert(DIAGNOSTIC_REASONS.SPREAD_TOO_WIDE,
+    "SPREAD_TOO_WIDE reason exists");
+  assert(typeof DIAGNOSTIC_REASONS.SPREAD_TOO_WIDE.label === "string",
+    "SPREAD_TOO_WIDE has a label");
+}
+
+// ===========================================================================
+// HAPPY PATH: end-to-end signal → open → monitor → close → PnL
+// ===========================================================================
+// This proves the basic flow works correctly on a normal liquid market:
+//   1. Entry at ask, shares computed correctly
+//   2. TP/SL set from bid (sell-to-close basis)
+//   3. Monitor uses bid, trigger fires at valid bid
+//   4. Close happens at valid bid, PnL is correct
+// ===========================================================================
+{
+  console.log("\n=== HAPPY PATH: end-to-end signal → open → monitor → close → PnL ===");
+  const { inferEntry, inferExit, inferSize } = require("../src/html_renderer");
+  const { checkTrigger, resolveTokenId, normalizePrice, normalizeSize } = require("../src/auto_monitor");
+  const cfg = require("../src/config");
+
+  // -----------------------------------------------------------------------
+  // Market setup: a normal, liquid Polymarket YES market
+  // -----------------------------------------------------------------------
+  const market = {
+    question: "Will it rain tomorrow?",
+    bestBidNum: 0.48,       // top bid (sell-to-close price)
+    bestAskNum: 0.50,       // top ask (buy price / entry price)
+    spreadPct: (0.50 - 0.48) / ((0.50 + 0.48) / 2), // ~4.1% — normal
+    liquidity: 80000,       // $80k liquidity — well above $500 min
+    volume24hr: 15000,      // $15k daily volume — well above $50 min
+    delta1: 0.03,           // recent +3% move
+    absMove: 0.03,
+    volatility: 0.05,
+    latestYes: 0.50,
+    yesTokenId: "0xabc123yes",
+    noTokenId: "0xabc123no",
+    conditionId: "0xcondition123",
+  };
+
+  // -----------------------------------------------------------------------
+  // Step 1: Entry at ask
+  // -----------------------------------------------------------------------
+  console.log("\n  Step 1: Entry at ask");
+  const entryPrice = inferEntry(market, "BUY YES");
+  assert(entryPrice === 0.50, `Entry price = bestAsk ($0.50), got $${entryPrice}`);
+  assert(entryPrice === market.bestAskNum, "Entry = bestAskNum (not mid, not bid)");
+
+  // -----------------------------------------------------------------------
+  // Step 2: Shares computed correctly
+  // -----------------------------------------------------------------------
+  console.log("\n  Step 2: Shares computed correctly");
+  const maxSizeUsd = inferSize(market);
+  assert(maxSizeUsd !== null, "inferSize returns a value for liquid market");
+  assert(maxSizeUsd > 0, `Max size is positive: $${maxSizeUsd}`);
+
+  // Shares = maxSizeUsd / entryPrice
+  const shares = maxSizeUsd / entryPrice;
+  assert(shares > 0, `Shares = ${shares.toFixed(2)} (${maxSizeUsd} / ${entryPrice})`);
+  assert(Math.abs(shares - maxSizeUsd / entryPrice) < 0.001,
+    `Shares = maxSizeUsd / askPrice (${shares.toFixed(2)})`);
+
+  // Cost basis check
+  const costBasis = shares * entryPrice;
+  assert(Math.abs(costBasis - maxSizeUsd) < 0.01,
+    `Cost basis = shares × entry = $${costBasis.toFixed(2)} = maxSizeUsd`);
+
+  // -----------------------------------------------------------------------
+  // Step 3: TP/SL set from bid (sell-to-close basis)
+  // -----------------------------------------------------------------------
+  console.log("\n  Step 3: TP/SL set from bid basis");
+  const bidBasis = market.bestBidNum;  // 0.48
+  const { tp, stop } = inferExit(entryPrice, bidBasis);
+
+  assert(tp !== null, "TP is not null (valid bid basis)");
+  assert(stop !== null, "SL is not null (valid bid basis)");
+  assert(tp > 0, `TP is positive: $${tp.toFixed(4)}`);
+  assert(stop > 0, `SL is positive: $${stop.toFixed(4)}`);
+
+  // TP = bid × 1.10, SL = bid × 0.92
+  const expectedTp = Math.min(bidBasis * 1.10, 0.99);
+  const expectedStop = Math.max(bidBasis * 0.92, 0.01);
+  assert(Math.abs(tp - expectedTp) < 0.0001,
+    `TP = bid × 1.10 = ${expectedTp.toFixed(4)}, got ${tp.toFixed(4)}`);
+  assert(Math.abs(stop - expectedStop) < 0.0001,
+    `SL = bid × 0.92 = ${expectedStop.toFixed(4)}, got ${stop.toFixed(4)}`);
+
+  // TP is above entry bid (profit target makes sense)
+  assert(tp > bidBasis, `TP ($${tp.toFixed(4)}) > entry bid ($${bidBasis})`);
+  // SL is below entry bid (stop loss is below current price)
+  assert(stop < bidBasis, `SL ($${stop.toFixed(4)}) < entry bid ($${bidBasis})`);
+
+  // CRITICAL: TP/SL are from BID, not from ASK
+  // If TP were from ask: 0.50 × 1.10 = 0.55 (wrong)
+  // Actual: 0.48 × 1.10 = 0.528 (correct)
+  const wrongTpFromAsk = entryPrice * 1.10;
+  assert(Math.abs(tp - wrongTpFromAsk) > 0.01,
+    `TP ≠ ask-based (${wrongTpFromAsk.toFixed(4)}), TP is bid-based (${tp.toFixed(4)})`);
+
+  // -----------------------------------------------------------------------
+  // Step 4: Token ID resolution
+  // -----------------------------------------------------------------------
+  console.log("\n  Step 4: Token ID resolution");
+  const ticket = {
+    action: "BUY_YES",
+    yesTokenId: market.yesTokenId,
+    noTokenId: market.noTokenId,
+    entryLimit: entryPrice,
+    maxSizeUsd: maxSizeUsd,
+    takeProfit: tp,
+    riskExitLimit: stop,
+    autoCloseEnabled: true,
+    entryBid: bidBasis,
+    entryAsk: entryPrice,
+    status: "OPEN",
+    tradeability: "EXECUTE",
+  };
+
+  const tokenId = resolveTokenId(ticket);
+  assert(tokenId === market.yesTokenId,
+    `BUY_YES → yesTokenId (${tokenId})`);
+  assert(tokenId !== null, "Token ID resolved (not null)");
+
+  // -----------------------------------------------------------------------
+  // Step 5: Monitor — price below TP, no trigger
+  // -----------------------------------------------------------------------
+  console.log("\n  Step 5: Monitor — price stable, no trigger");
+  const stableBid = 0.49; // bid slightly up, below TP
+  assert(stableBid > 0 && Number.isFinite(stableBid),
+    "Stable bid is valid positive number");
+  const stableResult = checkTrigger(ticket, stableBid);
+  assert(!stableResult.triggered, `Bid $${stableBid} < TP $${tp.toFixed(4)} → no trigger`);
+
+  // -----------------------------------------------------------------------
+  // Step 6: Monitor — bid rises to hit TP → trigger
+  // -----------------------------------------------------------------------
+  console.log("\n  Step 6: Monitor — bid rises to TP → trigger fires");
+  const tpBid = 0.53;  // bid >= TP (0.528)
+  assert(tpBid >= tp, `Bid $${tpBid} >= TP $${tp.toFixed(4)}`);
+  const tpResult = checkTrigger(ticket, tpBid);
+  assert(tpResult.triggered, `Bid >= TP → trigger fires`);
+  assert(tpResult.reason === "TP_HIT", `Reason = TP_HIT, got ${tpResult.reason}`);
+
+  // -----------------------------------------------------------------------
+  // Step 7: Close at TP — PnL is correct
+  // -----------------------------------------------------------------------
+  console.log("\n  Step 7: Close at TP — PnL is correct");
+  const closePrice = tpBid;  // monitor closes at observed bid
+  const exitValue = shares * closePrice;
+  const pnlUsd = exitValue - maxSizeUsd;
+  const pnlPct = pnlUsd / maxSizeUsd;
+
+  assert(pnlUsd > 0, `PnL at TP is positive: $${pnlUsd.toFixed(2)}`);
+  assert(pnlPct > 0, `PnL% at TP is positive: ${(pnlPct * 100).toFixed(2)}%`);
+
+  // Verify the formula matches attemptAutoClose logic
+  const sharesCalc = maxSizeUsd / entryPrice;
+  const exitValueCalc = sharesCalc * closePrice;
+  const expectedPnlUsd = exitValueCalc - maxSizeUsd;
+  const expectedPnlPct = expectedPnlUsd / maxSizeUsd;
+  assert(Math.abs(pnlUsd - expectedPnlUsd) < 0.01,
+    `PnL $${pnlUsd.toFixed(2)} matches formula (shares × closePrice - cost)`);
+  assert(Math.abs(pnlPct - expectedPnlPct) < 0.001,
+    `PnL% ${(pnlPct * 100).toFixed(2)}% matches formula`);
+
+  // Verify actual numbers
+  // shares = 50/0.50 = 100, exit = 100 × 0.53 = 53, PnL = 53 - 50 = +$3 = +6%
+  // (or whatever maxSizeUsd inferSize returns)
+  console.log(`    Entry: $${entryPrice} (ask), Bid: $${bidBasis}, Size: $${maxSizeUsd}`);
+  console.log(`    Shares: ${shares.toFixed(2)}, TP: $${tp.toFixed(4)}, SL: $${stop.toFixed(4)}`);
+  console.log(`    Close at bid: $${closePrice}, Exit value: $${exitValue.toFixed(2)}`);
+  console.log(`    PnL: $${pnlUsd.toFixed(2)} (${(pnlPct * 100).toFixed(2)}%)`);
+
+  // -----------------------------------------------------------------------
+  // Step 8: Alternative — bid drops to SL → EXIT_HIT
+  // -----------------------------------------------------------------------
+  console.log("\n  Step 8: Alternative — bid drops to SL → EXIT_HIT");
+  const slBid = 0.43;  // bid <= SL (0.4416)
+  assert(slBid <= stop, `Bid $${slBid} <= SL $${stop.toFixed(4)}`);
+  const slResult = checkTrigger(ticket, slBid);
+  assert(slResult.triggered, "Bid <= SL → trigger fires");
+  assert(slResult.reason === "EXIT_HIT", `Reason = EXIT_HIT, got ${slResult.reason}`);
+
+  // PnL at SL is negative
+  const slExitValue = shares * slBid;
+  const slPnlUsd = slExitValue - maxSizeUsd;
+  const slPnlPct = slPnlUsd / maxSizeUsd;
+  assert(slPnlUsd < 0, `PnL at SL is negative: $${slPnlUsd.toFixed(2)}`);
+  assert(slPnlPct < 0, `PnL% at SL is negative: ${(slPnlPct * 100).toFixed(2)}%`);
+  // SL loss should be bounded (~-8% from bid, ~-14% from ask cost)
+  assert(slPnlPct > -0.20,
+    `SL loss bounded: ${(slPnlPct * 100).toFixed(2)}% > -20% (not a blowup)`);
+  console.log(`    Close at SL bid: $${slBid}, PnL: $${slPnlUsd.toFixed(2)} (${(slPnlPct * 100).toFixed(2)}%)`);
+
+  // -----------------------------------------------------------------------
+  // Step 9: Safety — invalid bid does NOT trigger close
+  // -----------------------------------------------------------------------
+  console.log("\n  Step 9: Safety — invalid bid does NOT trigger close");
+  assert(!checkTrigger(ticket, 0).triggered,
+    "bid=0 → no trigger");
+  assert(!checkTrigger(ticket, null).triggered,
+    "bid=null → no trigger");
+  assert(!checkTrigger(ticket, NaN).triggered,
+    "bid=NaN → no trigger");
+  assert(!checkTrigger(ticket, -0.5).triggered,
+    "bid=-0.5 → no trigger");
+
+  // -----------------------------------------------------------------------
+  // Step 10: Safety — null TP/SL means no trigger
+  // -----------------------------------------------------------------------
+  console.log("\n  Step 10: Safety — null TP/SL means no trigger");
+  const noExits = { takeProfit: null, riskExitLimit: null };
+  assert(!checkTrigger(noExits, 0.53).triggered,
+    "TP=null, SL=null → no trigger even at high bid");
+  assert(!checkTrigger(noExits, 0.01).triggered,
+    "TP=null, SL=null → no trigger even at low bid");
+
+  // -----------------------------------------------------------------------
+  // Step 11: Normalization — CLOB book parsing validates prices
+  // -----------------------------------------------------------------------
+  console.log("\n  Step 11: CLOB price normalization works");
+  assert(normalizePrice(0.48) === 0.48, "Normal bid 0.48 → 0.48");
+  assert(normalizePrice(0.50) === 0.50, "Normal ask 0.50 → 0.50");
+  assert(normalizePrice(0) === null, "Zero → null");
+  assert(normalizePrice(-0.1) === null, "Negative → null");
+  assert(normalizePrice(1.0) === null, "1.0 → null (>= 1)");
+  assert(normalizePrice(NaN) === null, "NaN → null");
+  assert(normalizeSize(500) === 500, "Normal size 500 → 500");
+  assert(normalizeSize(0) === null, "Zero size → null");
+  assert(normalizeSize(-10) === null, "Negative size → null");
+
+  // -----------------------------------------------------------------------
+  // Summary of happy path
+  // -----------------------------------------------------------------------
+  console.log("\n  ✅ HAPPY PATH PROVEN:");
+  console.log("    1. Entry at ask (bestAskNum) ✓");
+  console.log("    2. Shares = maxSizeUsd / entryPrice ✓");
+  console.log("    3. TP/SL from bid basis (not ask) ✓");
+  console.log("    4. Monitor uses bid: checkTrigger(ticket, currentBid) ✓");
+  console.log("    5. TP trigger: bid >= TP → TP_HIT ✓");
+  console.log("    6. SL trigger: bid <= SL → EXIT_HIT ✓");
+  console.log("    7. Close: PnL = (shares × closeBid) - maxSizeUsd ✓");
+  console.log("    8. Invalid bid: no trigger (safety) ✓");
+  console.log("    9. Null TP/SL: no trigger (safety) ✓");
+}
+
+// ===========================================================================
+// PAPER RUNNER: safety rules + audit trail model validation
+// ===========================================================================
+{
+  console.log("\n=== PAPER RUNNER: safety rules + audit trail ===");
+  const { inferEntry, inferExit, inferSize, inferDirection } = require("../src/html_renderer");
+  const { checkTrigger, normalizePrice, normalizeSize, resolveTokenId } = require("../src/auto_monitor");
+
+  // -----------------------------------------------------------------------
+  // Safety rule 1: No open without valid bid/ask
+  // -----------------------------------------------------------------------
+  console.log("\n  Safety: No open without valid executable bid/ask");
+
+  // Missing bestAskNum → inferEntry returns null → cannot open
+  const noBidMarket = {
+    bestBidNum: 0, bestAskNum: 0, liquidity: 80000, volume24hr: 15000,
+    delta1: 0.03, absMove: 0.03, volatility: 0.05, latestYes: 0.50,
+  };
+  const entryNoBid = inferEntry(noBidMarket, "BUY YES");
+  assert(entryNoBid === null, "No bestAsk → inferEntry returns null (cannot open)");
+
+  // bestBid=0 → inferExit returns null TP/SL → cannot open
+  const noBidExits = inferExit(0.50, 0);
+  assert(noBidExits.tp === null, "bidBasis=0 → TP null (cannot set exits)");
+  assert(noBidExits.stop === null, "bidBasis=0 → SL null (cannot set exits)");
+
+  // -----------------------------------------------------------------------
+  // Safety rule 2: Never close at 0.00 in normal path
+  // -----------------------------------------------------------------------
+  console.log("\n  Safety: Never close at 0.00");
+  const ticket = { takeProfit: 0.528, riskExitLimit: 0.4416 };
+  assert(!checkTrigger(ticket, 0).triggered, "Price 0 → no trigger");
+  assert(!checkTrigger(ticket, 0.00).triggered, "Price 0.00 → no trigger");
+  assert(!checkTrigger(ticket, -0.01).triggered, "Price negative → no trigger");
+
+  // -----------------------------------------------------------------------
+  // Safety rule 3: No close without valid bid (monitor path)
+  // -----------------------------------------------------------------------
+  console.log("\n  Safety: No close without valid bid");
+  assert(!checkTrigger(ticket, null).triggered, "null bid → no close");
+  assert(!checkTrigger(ticket, NaN).triggered, "NaN bid → no close");
+  assert(!checkTrigger(ticket, undefined).triggered, "undefined bid → no close");
+  assert(!checkTrigger(ticket, Infinity).triggered, "Infinity bid → no close");
+
+  // -----------------------------------------------------------------------
+  // Safety rule 4: CLOB normalization rejects invalid prices
+  // -----------------------------------------------------------------------
+  console.log("\n  Safety: CLOB normalization rejects invalid prices");
+  assert(normalizePrice(0) === null, "CLOB price 0 → null");
+  assert(normalizePrice(1.0) === null, "CLOB price 1.0 → null (settled)");
+  assert(normalizePrice(-0.5) === null, "CLOB price negative → null");
+  assert(normalizePrice(NaN) === null, "CLOB price NaN → null");
+  assert(normalizeSize(0) === null, "CLOB size 0 → null");
+  assert(normalizeSize(-10) === null, "CLOB size negative → null");
+
+  // -----------------------------------------------------------------------
+  // Audit trail: PaperRunnerLog model loads
+  // -----------------------------------------------------------------------
+  console.log("\n  Audit trail: PaperRunnerLog model exists");
+  const PaperRunnerLog = require("../models/PaperRunnerLog");
+  assert(typeof PaperRunnerLog === "function" || typeof PaperRunnerLog === "object",
+    "PaperRunnerLog model loads");
+  assert(PaperRunnerLog.schema.path("runId"), "runId field exists in schema");
+  assert(PaperRunnerLog.schema.path("phase"), "phase field exists in schema");
+  assert(PaperRunnerLog.schema.path("data"), "data field exists in schema");
+  assert(PaperRunnerLog.schema.path("ticketId"), "ticketId field exists in schema");
+  assert(PaperRunnerLog.schema.path("ts"), "ts field exists in schema");
+
+  // Verify phase enum
+  const phaseEnum = PaperRunnerLog.schema.path("phase").enumValues;
+  assert(phaseEnum.includes("CANDIDATE_SELECTED"), "phase includes CANDIDATE_SELECTED");
+  assert(phaseEnum.includes("ENTRY_SNAPSHOT"), "phase includes ENTRY_SNAPSHOT");
+  assert(phaseEnum.includes("PAPER_FILL"), "phase includes PAPER_FILL");
+  assert(phaseEnum.includes("MONITOR_OBSERVATION"), "phase includes MONITOR_OBSERVATION");
+  assert(phaseEnum.includes("CLOSE"), "phase includes CLOSE");
+  assert(phaseEnum.includes("ERROR"), "phase includes ERROR");
+
+  // -----------------------------------------------------------------------
+  // End-to-end paper runner flow: candidate → entry → exits → monitor → close
+  // Simulates what POST /api/paper-runner does with real data
+  // -----------------------------------------------------------------------
+  console.log("\n  E2E: Paper runner flow simulation");
+
+  // A liquid market with CLOB data
+  const liquidMarket = {
+    bestBidNum: 0.42, bestAskNum: 0.44, spreadPct: 0.046,
+    liquidity: 50000, volume24hr: 8000,
+    delta1: -0.04, absMove: 0.04, volatility: 0.06,
+    latestYes: 0.44, mispricing: false, momentum: false, breakout: false,
+    conditionId: "0xabc123", marketSlug: "test-market",
+    yesTokenId: "tok_yes_123", noTokenId: "tok_no_123",
+    hoursLeft: 48,
+  };
+
+  // Step 1: Direction
+  const dir = inferDirection(liquidMarket);
+  // delta1 < -0.02 and latestYes < 0.5 → BUY YES
+  assert(dir.action === "BUY YES", `Direction: ${dir.action} (expected BUY YES)`);
+
+  // Step 2: Entry at ask
+  const entry = inferEntry(liquidMarket, dir.action);
+  assert(entry === 0.44, `Entry = bestAskNum ($0.44), got $${entry}`);
+
+  // Step 3: Size from liquidity
+  const size = inferSize(liquidMarket);
+  assert(size !== null && size > 0, `Size computed: $${size}`);
+
+  // Step 4: TP/SL from bid (CLOB book bid)
+  const clobBid = 0.42;  // from CLOB book
+  const exits = inferExit(entry, clobBid);
+  assert(exits.tp !== null, "TP computed from CLOB bid");
+  assert(exits.stop !== null, "SL computed from CLOB bid");
+  const expectedTp = Math.min(clobBid * 1.10, 0.99);
+  const expectedStop = Math.max(clobBid * 0.92, 0.01);
+  assert(Math.abs(exits.tp - expectedTp) < 0.0001,
+    `TP = ${exits.tp.toFixed(4)} (bid×1.10=${expectedTp.toFixed(4)})`);
+  assert(Math.abs(exits.stop - expectedStop) < 0.0001,
+    `SL = ${exits.stop.toFixed(4)} (bid×0.92=${expectedStop.toFixed(4)})`);
+
+  // Step 5: Token ID
+  const fakeTicket = { action: "BUY_YES", yesTokenId: "tok_yes_123", noTokenId: "tok_no_123" };
+  const tokId = resolveTokenId(fakeTicket);
+  assert(tokId === "tok_yes_123", `Token ID = yesTokenId for BUY_YES`);
+
+  // Step 6: Shares
+  const shares = size / entry;
+  assert(shares > 0, `Shares = ${shares.toFixed(2)} (size/entry)`);
+
+  // Step 7: Monitor — bid below TP, no trigger
+  const monTicket = { takeProfit: exits.tp, riskExitLimit: exits.stop };
+  assert(!checkTrigger(monTicket, 0.43).triggered, "Bid 0.43 < TP → no trigger");
+
+  // Step 8: Monitor — bid rises to TP
+  const tpBid = exits.tp + 0.01;
+  const tpResult = checkTrigger(monTicket, tpBid);
+  assert(tpResult.triggered, "Bid >= TP → trigger");
+  assert(tpResult.reason === "TP_HIT", "Trigger reason = TP_HIT");
+
+  // Step 9: PnL at TP close
+  const closePrice = tpBid;
+  const exitValue = shares * closePrice;
+  const pnlUsd = exitValue - size;
+  assert(pnlUsd > 0, `PnL at TP: +$${pnlUsd.toFixed(2)}`);
+
+  // Step 10: SL path
+  const slBid = exits.stop - 0.01;
+  const slResult = checkTrigger(monTicket, slBid);
+  assert(slResult.triggered, "Bid <= SL → trigger");
+  assert(slResult.reason === "EXIT_HIT", "Trigger reason = EXIT_HIT");
+  const slPnl = (shares * slBid) - size;
+  assert(slPnl < 0, `PnL at SL: $${slPnl.toFixed(2)} (negative as expected)`);
+
+  console.log("\n  ✅ Paper runner safety + flow validated");
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed\n`);

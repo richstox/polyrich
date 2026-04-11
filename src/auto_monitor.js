@@ -6,6 +6,7 @@ const TradeTicket = require("../models/TradeTicket");
 const CloseAttempt = require("../models/CloseAttempt");
 const MonitorLease = require("../models/MonitorLease");
 const SystemSetting = require("../models/SystemSetting");
+const PaperRunnerLog = require("../models/PaperRunnerLog");
 
 // ---------------------------------------------------------------------------
 // In-memory state (exposed for /system observability)
@@ -367,6 +368,25 @@ getClobPrice._lastDiag = null;
  * Returns { bestBid, bestAsk, topBidSize, topAskSize } or null on failure.
  * Sizes are in shares/contracts as returned by the CLOB API.
  */
+/**
+ * Normalize a CLOB price: must be finite, > 0, and < 1 (Polymarket prices
+ * are probabilities in (0, 1) — a value of exactly 0 or >= 1 indicates a
+ * stale/settled/invalid book level). Returns the number or null.
+ */
+function normalizePrice(raw) {
+  const v = parseFloat(raw);
+  return (Number.isFinite(v) && v > 0 && v < 1) ? v : null;
+}
+
+/**
+ * Normalize a CLOB size (shares): must be finite and > 0. Returns the
+ * number or null.
+ */
+function normalizeSize(raw) {
+  const v = parseFloat(raw);
+  return (Number.isFinite(v) && v > 0) ? v : null;
+}
+
 async function fetchClobBook(tokenId) {
   if (!tokenId) return null;
   const url = `https://clob.polymarket.com/book?token_id=${encodeURIComponent(tokenId)}`;
@@ -379,16 +399,29 @@ async function fetchClobBook(tokenId) {
     const data = await res.json();
     const bids = Array.isArray(data.bids) ? data.bids : [];
     const asks = Array.isArray(data.asks) ? data.asks : [];
-    const bestBid = bids.length > 0 ? parseFloat(bids[0].price) : NaN;
-    const bestAsk = asks.length > 0 ? parseFloat(asks[0].price) : NaN;
-    const topBidSize = bids.length > 0 ? parseFloat(bids[0].size) : NaN;
-    const topAskSize = asks.length > 0 ? parseFloat(asks[0].size) : NaN;
-    return {
-      bestBid: Number.isFinite(bestBid) && bestBid > 0 ? bestBid : null,
-      bestAsk: Number.isFinite(bestAsk) && bestAsk > 0 ? bestAsk : null,
-      topBidSize: Number.isFinite(topBidSize) && topBidSize > 0 ? topBidSize : null,
-      topAskSize: Number.isFinite(topAskSize) && topAskSize > 0 ? topAskSize : null,
-    };
+
+    const rawBid  = bids.length > 0 ? bids[0].price : undefined;
+    const rawAsk  = asks.length > 0 ? asks[0].price : undefined;
+    const rawBidSz = bids.length > 0 ? bids[0].size : undefined;
+    const rawAskSz = asks.length > 0 ? asks[0].size : undefined;
+
+    const bestBid    = normalizePrice(rawBid);
+    const bestAsk    = normalizePrice(rawAsk);
+    const topBidSize = normalizeSize(rawBidSz);
+    const topAskSize = normalizeSize(rawAskSz);
+
+    // Structured traceability: log normalization decisions when values were
+    // present but got normalized to null (indicates bad book input).
+    const normLog = [];
+    if (rawBid !== undefined && bestBid === null)    normLog.push(`bestBid normalized to null (raw=${rawBid})`);
+    if (rawAsk !== undefined && bestAsk === null)    normLog.push(`bestAsk normalized to null (raw=${rawAsk})`);
+    if (rawBidSz !== undefined && topBidSize === null) normLog.push(`topBidSize normalized to null (raw=${rawBidSz})`);
+    if (rawAskSz !== undefined && topAskSize === null) normLog.push(`topAskSize normalized to null (raw=${rawAskSz})`);
+    if (normLog.length > 0) {
+      console.log(JSON.stringify({ msg: "fetchClobBook-normalization", tokenId, decisions: normLog, ts: new Date().toISOString() }));
+    }
+
+    return { bestBid, bestAsk, topBidSize, topAskSize };
   } catch (err) {
     clearTimeout(timer);
     return null;
@@ -680,13 +713,20 @@ getCurrentCloseablePrice._lastDiag = null;
 
 /**
  * Check if a ticket triggers TP or EXIT conditions.
+ * Hard invariants:
+ *  - TP/SL thresholds must be finite and > 0 (no accidental close at zero)
+ *  - currentPrice (executable bid) must be finite and > 0
  * Returns { triggered: boolean, reason: "TP_HIT"|"EXIT_HIT"|null }
  */
 function checkTrigger(ticket, currentPrice) {
-  if (typeof ticket.takeProfit === "number" && currentPrice >= ticket.takeProfit) {
+  // Invariant: executable bid must be a valid positive number
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+    return { triggered: false, reason: null };
+  }
+  if (Number.isFinite(ticket.takeProfit) && ticket.takeProfit > 0 && currentPrice >= ticket.takeProfit) {
     return { triggered: true, reason: "TP_HIT" };
   }
-  if (typeof ticket.riskExitLimit === "number" && currentPrice <= ticket.riskExitLimit) {
+  if (Number.isFinite(ticket.riskExitLimit) && ticket.riskExitLimit > 0 && currentPrice <= ticket.riskExitLimit) {
     return { triggered: true, reason: "EXIT_HIT" };
   }
   return { triggered: false, reason: null };
@@ -836,6 +876,24 @@ async function attemptAutoClose(ticket, observedPrice, reason, effectivePaperClo
         reason,
         result: "PAPER_CLOSED",
       });
+
+      // Append CLOSE event to PaperRunnerLog audit trail (if this ticket has one)
+      PaperRunnerLog.findOne({ ticketId, phase: "PAPER_FILL" }).lean().then(async (fillLog) => {
+        if (fillLog) {
+          await PaperRunnerLog.create({
+            runId: fillLog.runId,
+            ticketId,
+            phase: "CLOSE",
+            data: {
+              closeFillPrice: observedPrice,
+              closeReason: reason,
+              realizedPnlUsd,
+              realizedPnlPct,
+              isSimulated: true,
+            },
+          });
+        }
+      }).catch(() => {});
 
       monitorState.closesToday++;
       // Reset debounce after successful paper close
@@ -1043,6 +1101,14 @@ async function monitorTick() {
     }
 
     // priceResult is guaranteed non-null here (from CLOB path above)
+    // Belt-and-suspenders: verify executable bid is valid before any trigger evaluation
+    if (!Number.isFinite(priceResult.price) || priceResult.price <= 0) {
+      await persistMonitorReason(ticket, "NO_EXECUTABLE_BID", {
+        tokenId: priceResult.tokenId || null,
+        rawPrice: priceResult.price,
+      });
+      continue;
+    }
     monitorState.lastTickPriceOk++;
 
     // Update last observed price + price source on the ticket
@@ -1057,6 +1123,26 @@ async function monitorTick() {
       { _id: ticket._id },
       { $set: priceUpdate }
     ).catch(() => {});
+
+    // Append MONITOR_OBSERVATION to PaperRunnerLog (fire-and-forget, non-blocking)
+    // Only for tickets that have a paper-runner audit trail
+    PaperRunnerLog.findOne({ ticketId: ticket._id, phase: "PAPER_FILL" }).lean().then(async (fillLog) => {
+      if (fillLog) {
+        await PaperRunnerLog.create({
+          runId: fillLog.runId,
+          ticketId: ticket._id,
+          phase: "MONITOR_OBSERVATION",
+          data: {
+            observedBid: priceResult.price,
+            source: priceResult.source,
+            bestBid: priceResult.bestBid,
+            bestAsk: priceResult.bestAsk,
+            spread: priceResult.spread,
+            topBidSize: priceResult.topBidSize,
+          },
+        });
+      }
+    }).catch(() => {});
 
     const { triggered, reason } = checkTrigger(ticket, priceResult.price);
 
@@ -1253,6 +1339,8 @@ module.exports = {
   getCurrentCloseablePrice,
   getClobPrice,
   fetchClobBook,
+  normalizePrice,
+  normalizeSize,
   resolveTokenId,
   matchMarketFromArray,
   detectMarketEndState,
@@ -1260,5 +1348,6 @@ module.exports = {
   debounceCheck,
   attemptAutoClose,
   persistMonitorReason,
+  monitorTick,
   monitorState,
 };

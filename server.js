@@ -53,6 +53,7 @@ const {
 const { startMonitorLoop, getMonitorStatus, fetchClobBook } = require("./src/auto_monitor");
 
 const MonitorLease = require("./models/MonitorLease");
+const PaperRunnerLog = require("./models/PaperRunnerLog");
 const DANGER_ZONE_VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN", "RESET_TRADES", "FACTORY_RESET"];
 
 // ---------------------------------------------------------------------------
@@ -412,7 +413,7 @@ async function autoSaveExecuteTickets(scanId) {
       try {
         const book = await fetchClobBook(tokenId);
         if (book) {
-          // Override bid from CLOB if available (more accurate than Gamma snapshot)
+          // Override bid from CLOB only if normalized value is non-null
           if (book.bestBid !== null) entryBidNum = book.bestBid;
           bidSizeRaw = book.topBidSize;
           askSizeRaw = book.topAskSize;
@@ -421,8 +422,17 @@ async function autoSaveExecuteTickets(scanId) {
       await new Promise((r) => setTimeout(r, 50)); // rate-limit CLOB calls
     }
 
+    // Structured traceability: log CLOB book state at ticket creation
+    console.log(JSON.stringify({
+      msg: "autoSave-clob-book",
+      tokenId: tokenId || null,
+      entryBid: entryBidNum, entryAsk: entryNum,
+      bidSize: bidSizeRaw, askSize: askSizeRaw,
+      ts: new Date().toISOString(),
+    }));
+
     // Recompute TP/SL with CLOB-verified bid (may differ from Gamma screening pass)
-    if (entryBidNum) {
+    if (Number.isFinite(entryBidNum) && entryBidNum > 0) {
       const clobExits = inferExit(entryNum, entryBidNum);
       if (clobExits.tp !== null && clobExits.stop !== null) {
         tpNum = clobExits.tp;
@@ -430,21 +440,51 @@ async function autoSaveExecuteTickets(scanId) {
       }
     }
 
-    // Fail-closed: if entryBid is missing after CLOB fetch, block auto-close
-    if (effectiveAutoClose && (typeof entryBidNum !== "number" || entryBidNum <= 0)) {
+    // ---------------------------------------------------------------------------
+    // HARD INVARIANT: Fail-closed on missing executable bid
+    // ---------------------------------------------------------------------------
+    // An EXECUTE ticket with auto-close REQUIRES:
+    //  1. entryBid: finite > 0 (valid executable bid from CLOB)
+    //  2. entryAsk: finite > 0 (entry price)
+    //  3. entryBidSize: finite > 0 (liquidity exists at that bid level)
+    //  4. TP and SL: finite > 0 (computed from valid bid basis)
+    // If ANY is missing → block auto-close with NO_EXECUTABLE_BID.
+    const hasValidBid  = Number.isFinite(entryBidNum) && entryBidNum > 0;
+    const hasValidAsk  = Number.isFinite(entryNum) && entryNum > 0;
+    const hasValidSize = Number.isFinite(bidSizeRaw) && bidSizeRaw > 0;
+    const hasValidTP   = Number.isFinite(tpNum) && tpNum > 0;
+    const hasValidSL   = Number.isFinite(stopNum) && stopNum > 0;
+
+    if (effectiveAutoClose && !(hasValidBid && hasValidAsk && hasValidSize && hasValidTP && hasValidSL)) {
       effectiveAutoClose = false;
-      autoCloseBlockedReason = autoCloseBlockedReason || "MISSING_ENTRY_EXEC_PRICES";
+      autoCloseBlockedReason = autoCloseBlockedReason || "NO_EXECUTABLE_BID";
     }
 
     // --- Entry microstructure snapshot ---
     const entryAskNum = entryNum; // inferEntry returns bestAsk
-    const midNum = (entryBidNum && entryAskNum) ? (entryAskNum + entryBidNum) / 2 : null;
-    const spreadAbs = (entryBidNum && entryAskNum) ? (entryAskNum - entryBidNum) : null;
+    const midNum = (hasValidBid && entryAskNum) ? (entryAskNum + entryBidNum) / 2 : null;
+    const spreadAbs = (hasValidBid && entryAskNum) ? (entryAskNum - entryBidNum) : null;
     const spreadPct = (midNum && midNum > 0 && spreadAbs !== null) ? spreadAbs / midNum : null;
+
+    // --- Spread warning (advisory only, NOT a hard gate) ---
+    // Wide spread is logged for operator awareness but does NOT skip the ticket.
+    if (spreadPct !== null && spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
+      console.log(JSON.stringify({
+        msg: "autoSave-spread-warning",
+        marketId, spreadPct: Math.round(spreadPct * 10000) / 10000,
+        threshold: config.MAX_ENTRY_SPREAD_PCT,
+        ts: new Date().toISOString(),
+      }));
+      // Block auto-close for operator review, but still create the ticket
+      if (effectiveAutoClose) {
+        effectiveAutoClose = false;
+        autoCloseBlockedReason = autoCloseBlockedReason || "SPREAD_TOO_WIDE";
+      }
+    }
 
     // --- Admission gates: liquidity ---
     // Liquidity gate: close-side = bid (selling shares). Check notional at top bid.
-    if (effectiveAutoClose && entryBidNum && bidSizeRaw !== null) {
+    if (effectiveAutoClose && hasValidBid && bidSizeRaw !== null) {
       const bidNotionalUsd = entryBidNum * bidSizeRaw;
       if (bidNotionalUsd < config.MIN_BID_SIZE_USD) {
         effectiveAutoClose = false;
@@ -1508,17 +1548,17 @@ if (url.pathname === "/trade") {
             try {
               const book = await fetchClobBook(tokenId);
               if (book) {
-                // Override entry snapshot from CLOB (authoritative)
+                // Override entry snapshot from CLOB only if normalized values are non-null
                 if (book.bestBid !== null) data.entryBid = book.bestBid;
                 if (book.bestAsk !== null) data.entryAsk = book.bestAsk;
                 data.entryBidSize = book.topBidSize;
                 data.entryAskSize = book.topAskSize;
                 // Recompute derived fields from verified CLOB data
-                const mid = (data.entryBid && data.entryAsk)
-                  ? (data.entryAsk + data.entryBid) / 2 : null;
+                const vBid = Number.isFinite(data.entryBid) && data.entryBid > 0;
+                const vAsk = Number.isFinite(data.entryAsk) && data.entryAsk > 0;
+                const mid = (vBid && vAsk) ? (data.entryAsk + data.entryBid) / 2 : null;
                 data.entryMid = mid ? Math.round(mid * 10000) / 10000 : null;
-                const spreadAbs = (data.entryBid && data.entryAsk)
-                  ? (data.entryAsk - data.entryBid) : null;
+                const spreadAbs = (vBid && vAsk) ? (data.entryAsk - data.entryBid) : null;
                 data.entrySpreadAbs = spreadAbs !== null
                   ? Math.round(spreadAbs * 10000) / 10000 : null;
                 const spreadPct = (mid && mid > 0 && spreadAbs !== null)
@@ -1528,11 +1568,29 @@ if (url.pathname === "/trade") {
               }
             } catch (_) { /* CLOB fetch failed — use client-provided data as fallback */ }
           }
-          // Fail-closed: if entryBid is missing after CLOB fetch, block auto-close
-          if (data.autoCloseEnabled && (typeof data.entryBid !== "number" || data.entryBid <= 0)) {
+          // HARD INVARIANT: Fail-closed on missing executable bid
+          // Requires: entryBid (finite > 0), entryAsk (finite > 0), entryBidSize (finite > 0)
+          const vb = Number.isFinite(data.entryBid) && data.entryBid > 0;
+          const va = Number.isFinite(data.entryAsk) && data.entryAsk > 0;
+          const vs = Number.isFinite(data.entryBidSize) && data.entryBidSize > 0;
+          if (data.autoCloseEnabled && !(vb && va && vs)) {
             data.autoCloseEnabled = false;
-            data.autoCloseBlockedReason = data.autoCloseBlockedReason || "MISSING_ENTRY_EXEC_PRICES";
+            data.autoCloseBlockedReason = data.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
           }
+          // Also verify TP/SL are valid if present
+          if (data.autoCloseEnabled) {
+            const vtp = Number.isFinite(data.takeProfit) && data.takeProfit > 0;
+            const vsl = Number.isFinite(data.riskExitLimit) && data.riskExitLimit > 0;
+            if (!vtp || !vsl) {
+              data.autoCloseEnabled = false;
+              data.autoCloseBlockedReason = data.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
+            }
+          }
+        }
+        // Spread warning: advisory only — block auto-close but don't reject the ticket
+        if (data.autoCloseEnabled && typeof data.entrySpreadPct === "number" && data.entrySpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
+          data.autoCloseEnabled = false;
+          data.autoCloseBlockedReason = data.autoCloseBlockedReason || "SPREAD_TOO_WIDE";
         }
         // Admission gates for auto-close: liquidity
         if (data.autoCloseEnabled && typeof data.entryBid === "number" && typeof data.entryBidSize === "number") {
@@ -1771,6 +1829,447 @@ if (url.pathname === "/trade") {
       res.end(`ticket detail error: ${err.message}`);
       return;
     }
+  }
+
+  // ── POST /api/paper-runner — Execute ONE paper-trading lifecycle ──────
+  // Scans real markets, picks one candidate, opens one paper trade, starts monitoring.
+  // Uses the SAME code paths as normal autoSave + auto-monitor.
+  if (url.pathname === "/api/paper-runner" && req.method === "POST") {
+    const runId = `run_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+    const log = (phase, data) => PaperRunnerLog.create({ runId, phase, data }).catch(() => {});
+
+    try {
+      // 1) Run a real scan to get fresh market data
+      const scanStarted = new Date();
+      const result = await fetchPolymarkets();
+      const rawMarkets = result.markets;
+      const filtered = rawMarkets
+        .filter((item) =>
+          item.acceptingOrders === true &&
+          item.active === true &&
+          item.closed === false &&
+          item.bestBid !== null &&
+          item.bestAsk !== null &&
+          item.spread !== null
+        )
+        .map(normalizeMarket)
+        .sort((a, b) => {
+          const aScore = Math.log(a.volume24hr + 1) * 100 + Math.log(a.liquidity + 1) * 50 - a.spread * 1000;
+          const bScore = Math.log(b.volume24hr + 1) * 100 + Math.log(b.liquidity + 1) * 50 - b.spread * 1000;
+          return bScore - aScore;
+        });
+
+      const saveLimit = Math.min(filtered.length, config.SAVED_PER_SCAN);
+      const toUpsert = filtered.slice(0, saveLimit);
+      const tempScanId = scanStarted.toISOString();
+      await upsertSnapshots(toUpsert, tempScanId);
+
+      // 2) Build ideas using signal engine (same path as /trade page + autoSave)
+      const ideasResult = await buildIdeas({ ...scanStatus, lastScanId: tempScanId }, {});
+      const tradeCandidates = ideasResult.tradeCandidates || [];
+
+      // 3) Find the FIRST viable EXECUTE candidate with valid CLOB data
+      let picked = null;
+      let pickReason = null;
+      let pickIndex = -1;
+
+      const maxCandidatesToEval = config.PAPER_RUNNER_MAX_CANDIDATES;
+      for (let i = 0; i < Math.min(tradeCandidates.length, maxCandidatesToEval); i++) {
+        const item = tradeCandidates[i];
+        try {
+          const dir = inferDirection(item);
+          if (dir.action === "WATCH") continue;
+          const entryNum = inferEntry(item, dir.action);
+          if (entryNum === null) continue;
+          const sizeNum = inferSize(item);
+          if (sizeNum === null || sizeNum < 5) continue;
+
+          // Require a CLOB token ID
+          const tokenId = dir.action === "BUY YES"
+            ? ((item.yesTokenId || "").trim() || null)
+            : ((item.noTokenId || "").trim() || null);
+          if (!tokenId) continue;
+
+          // Require valid conditionId for monitoring
+          const rawConditionId = (item.conditionId || "").trim() || null;
+          if (!rawConditionId || !rawConditionId.startsWith("0x")) continue;
+
+          // Fetch real CLOB book
+          const book = await fetchClobBook(tokenId);
+          if (!book || book.bestBid === null || book.bestAsk === null) continue;
+          if (book.topBidSize === null) continue;
+
+          const entryBidNum = book.bestBid;
+          const entryAskNum = book.bestAsk;
+
+          // Safety: valid executable bid/ask must be > 0
+          if (!(entryBidNum > 0) || !(entryAskNum > 0)) continue;
+
+          // Compute TP/SL from real CLOB bid (sell-to-close basis)
+          const exits = inferExit(entryAskNum, entryBidNum);
+          if (exits.tp === null || exits.stop === null) continue;
+
+          picked = {
+            item, dir, entryNum: entryAskNum, sizeNum,
+            tpNum: exits.tp, stopNum: exits.stop,
+            entryBidNum, entryAskNum,
+            tokenId, rawConditionId, book,
+          };
+          pickIndex = i;
+          pickReason = `Rank #${i + 1} of ${tradeCandidates.length}: ` +
+            `${dir.action}, ask=$${entryAskNum.toFixed(4)}, bid=$${entryBidNum.toFixed(4)}, ` +
+            `liq=$${Math.round(item.liquidity)}, vol24=$${Math.round(item.volume24hr)}`;
+          break;
+        } catch (_) { continue; }
+      }
+
+      if (!picked) {
+        await log("ERROR", {
+          reason: "NO_VIABLE_CANDIDATE",
+          candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
+          totalCandidates: tradeCandidates.length,
+          totalFetched: rawMarkets.length,
+        });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: false, runId,
+          error: "No viable candidate found",
+          candidatesScanned: Math.min(tradeCandidates.length, maxCandidatesToEval),
+          totalCandidates: tradeCandidates.length,
+        }));
+        return;
+      }
+
+      const { item, dir, entryNum, sizeNum, tpNum, stopNum, entryBidNum, entryAskNum, tokenId, rawConditionId, book } = picked;
+
+      // 4) Log CANDIDATE_SELECTED
+      await log("CANDIDATE_SELECTED", {
+        pickIndex, pickReason,
+        question: safeQuestion(item),
+        conditionId: rawConditionId,
+        marketSlug: item.marketSlug || null,
+        action: dir.action,
+        tokenId,
+        liquidity: item.liquidity,
+        volume24hr: item.volume24hr,
+        latestYes: item.latestYes,
+        reasonCodes: item.reasonCodes || [],
+      });
+
+      // 5) Log ENTRY_SNAPSHOT (raw CLOB book data at entry time)
+      await log("ENTRY_SNAPSHOT", {
+        tokenId,
+        bestBid: book.bestBid,
+        bestAsk: book.bestAsk,
+        topBidSize: book.topBidSize,
+        topAskSize: book.topAskSize,
+        entryAsk: entryAskNum,
+        entryBid: entryBidNum,
+      });
+
+      // 6) Create the paper ticket — using the SAME TradeTicket.create path
+      const marketId = rawConditionId || item.marketSlug || safeQuestion(item);
+      const actionEnum = dir.action === "BUY YES" ? "BUY_YES" : "BUY_NO";
+      const midNum = (entryAskNum + entryBidNum) / 2;
+      const spreadAbs = entryAskNum - entryBidNum;
+      const spreadPct = midNum > 0 ? spreadAbs / midNum : null;
+
+      const shares = sizeNum / entryAskNum;
+      const pnlTpPct = (tpNum - entryAskNum) / entryAskNum * 100;
+      const pnlStopPct = (stopNum - entryAskNum) / entryAskNum * 100;
+      const pnlTpUsd = sizeNum * (tpNum - entryAskNum) / entryAskNum;
+      const pnlStopUsd = sizeNum * (stopNum - entryAskNum) / entryAskNum;
+
+      const ticketData = {
+        scanId: tempScanId,
+        source: "TRADE_PAGE",
+        marketId,
+        conditionId: rawConditionId,
+        marketSlug: (item.marketSlug || "").trim() || null,
+        yesTokenId: (item.yesTokenId || "").trim() || null,
+        noTokenId: (item.noTokenId || "").trim() || null,
+        eventSlug: item.eventSlug || null,
+        eventTitle: item.eventTitle || null,
+        groupItemTitle: item.groupItemTitle || null,
+        marketUrl: polymarketUrl(item) || null,
+        question: safeQuestion(item),
+        tradeability: "EXECUTE",
+        action: actionEnum,
+        reasonCodes: item.reasonCodes || [],
+        whyNow: whyNowSummary(item),
+        planTbd: false,
+        entryLimit: entryAskNum,
+        takeProfit: tpNum,
+        riskExitLimit: stopNum,
+        maxSizeUsd: sizeNum,
+        pnlTpUsd: Math.round(pnlTpUsd * 100) / 100,
+        pnlTpPct: Math.round(pnlTpPct * 10) / 1000,
+        pnlExitUsd: Math.round(pnlStopUsd * 100) / 100,
+        pnlExitPct: Math.round(pnlStopPct * 10) / 1000,
+        endDate: item.endDate || null,
+        entryBid: entryBidNum,
+        entryAsk: entryAskNum,
+        entryMid: Math.round(midNum * 10000) / 10000,
+        entrySpreadAbs: Math.round(spreadAbs * 10000) / 10000,
+        entrySpreadPct: spreadPct !== null ? Math.round(spreadPct * 10000) / 10000 : null,
+        entryBidSize: book.topBidSize,
+        entryAskSize: book.topAskSize,
+        entryExecutionBasis: "ASK",
+        triggerReferenceBasis: "BID",
+        autoCloseEnabled: true,
+        autoCloseBlockedReason: null,
+        status: "OPEN",
+        isSimulated: true,
+      };
+
+      // Use a unique dedupeKey for the runner (includes runId to avoid collisions)
+      ticketData.dedupeKey = crypto.createHash("sha1")
+        .update(`paper-runner|${runId}|${marketId}|${actionEnum}|${entryAskNum}`)
+        .digest("hex");
+
+      const ticket = await TradeTicket.create(ticketData);
+
+      // 7) Log PAPER_FILL
+      await log("PAPER_FILL", {
+        ticketId: ticket._id,
+        entryFillPrice: entryAskNum,
+        shares: Math.round(shares * 100) / 100,
+        maxSizeUsd: sizeNum,
+        takeProfit: tpNum,
+        riskExitLimit: stopNum,
+        triggerBasis: "BID",
+        entryBasis: "ASK",
+      });
+
+      // Update the log docs with the ticketId
+      await PaperRunnerLog.updateMany(
+        { runId, ticketId: null },
+        { $set: { ticketId: ticket._id } }
+      ).catch(() => {});
+
+      console.log(JSON.stringify({
+        msg: "paper-runner-opened",
+        runId,
+        ticketId: String(ticket._id),
+        question: safeQuestion(item),
+        entryAsk: entryAskNum,
+        entryBid: entryBidNum,
+        tp: tpNum,
+        sl: stopNum,
+        shares: Math.round(shares * 100) / 100,
+        maxSizeUsd: sizeNum,
+        ts: new Date().toISOString(),
+      }));
+
+      res.writeHead(201, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        ok: true,
+        runId,
+        ticketId: String(ticket._id),
+        question: safeQuestion(item),
+        pickReason,
+        entry: {
+          fillPrice: entryAskNum,
+          bid: entryBidNum,
+          ask: entryAskNum,
+          shares: Math.round(shares * 100) / 100,
+          maxSizeUsd: sizeNum,
+        },
+        exits: { takeProfit: tpNum, riskExitLimit: stopNum },
+        monitor: "Ticket is OPEN with autoCloseEnabled=true. The existing auto-monitor will monitor and close at TP/SL using CLOB bid.",
+      }));
+    } catch (err) {
+      await log("ERROR", { error: err.message, stack: err.stack });
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, runId, error: err.message }));
+    }
+    return;
+  }
+
+  // ── GET /api/paper-runner/status/:runId — Audit trail for a runner ────
+  const runStatusMatch = url.pathname.match(/^\/api\/paper-runner\/status\/(.+)$/);
+  if (runStatusMatch && req.method === "GET") {
+    try {
+      const runId = decodeURIComponent(runStatusMatch[1]);
+      const logs = await PaperRunnerLog.find({ runId }).sort({ ts: 1 }).lean();
+      if (logs.length === 0) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Run not found" }));
+        return;
+      }
+      // Find the ticket if it exists
+      const fillLog = logs.find(l => l.phase === "PAPER_FILL");
+      let ticket = null;
+      if (fillLog && fillLog.ticketId) {
+        ticket = await TradeTicket.findById(fillLog.ticketId).lean();
+      }
+      // Gather close attempts if ticket exists
+      let closeAttempts = [];
+      if (ticket) {
+        closeAttempts = await CloseAttempt.find({ ticketId: ticket._id }).sort({ createdAt: -1 }).lean();
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ runId, logs, ticket, closeAttempts }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // ── GET /api/paper-runner/runs — List recent paper-runner runs ────────
+  if (url.pathname === "/api/paper-runner/runs" && req.method === "GET") {
+    try {
+      // Get distinct runIds, most recent first
+      const runs = await PaperRunnerLog.aggregate([
+        { $group: {
+          _id: "$runId",
+          firstTs: { $min: "$ts" },
+          lastTs: { $max: "$ts" },
+          phases: { $push: "$phase" },
+          ticketId: { $first: "$ticketId" },
+          count: { $sum: 1 },
+        }},
+        { $sort: { firstTs: -1 } },
+        { $limit: 50 },
+      ]);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ runs }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // ── GET /paper-runner — Operator page ─────────────────────────────────
+  if (url.pathname === "/paper-runner") {
+    try {
+      // Get recent runs
+      const runs = await PaperRunnerLog.aggregate([
+        { $group: {
+          _id: "$runId",
+          firstTs: { $min: "$ts" },
+          lastTs: { $max: "$ts" },
+          phases: { $push: "$phase" },
+          ticketId: { $first: "$ticketId" },
+          count: { $sum: 1 },
+        }},
+        { $sort: { firstTs: -1 } },
+        { $limit: 20 },
+      ]);
+
+      // For each run with a ticket, get the ticket status
+      const ticketIds = runs.filter(r => r.ticketId).map(r => r.ticketId);
+      const tickets = ticketIds.length > 0
+        ? await TradeTicket.find({ _id: { $in: ticketIds } }).lean()
+        : [];
+      const ticketMap = {};
+      for (const t of tickets) ticketMap[String(t._id)] = t;
+
+      // Build operator page HTML
+      let runsHtml = "";
+      if (runs.length === 0) {
+        runsHtml = `<p style="color:#888;margin:24px 0">No paper-runner executions yet. Use the button above to start one.</p>`;
+      } else {
+        for (const run of runs) {
+          const tid = run.ticketId ? String(run.ticketId) : null;
+          const t = tid ? ticketMap[tid] : null;
+          const statusCls = t ? (t.status === "CLOSED" ? "pill-closed" : t.status === "OPEN" ? "pill-open" : "pill-watch") : "pill-watch";
+          const statusLabel = t ? t.status : "NO_TICKET";
+          const pnl = t && t.realizedPnlUsd !== null && t.realizedPnlUsd !== undefined
+            ? `$${t.realizedPnlUsd >= 0 ? "+" : ""}${t.realizedPnlUsd.toFixed(2)} (${((t.realizedPnlPct || 0) * 100).toFixed(1)}%)`
+            : "—";
+          const question = t ? (t.question || "—").slice(0, 80) : "—";
+          const phases = run.phases.join(" → ");
+          const ts = new Date(run.firstTs).toLocaleString();
+
+          runsHtml += `
+          <div style="border:1px solid #333;border-radius:8px;padding:16px;margin-bottom:12px;background:#1a1a2e">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-weight:600;color:#e0e0e0">${question}</span>
+              <span class="${statusCls}" style="padding:2px 10px;border-radius:12px;font-size:13px">${statusLabel}</span>
+            </div>
+            <div style="font-size:13px;color:#aaa;margin-bottom:4px">
+              <b>Run:</b> ${run._id}<br>
+              <b>Started:</b> ${ts}<br>
+              <b>Phases:</b> ${phases}<br>
+              ${t ? `<b>Entry:</b> $${(t.entryAsk || t.entryLimit || 0).toFixed(4)} (ask) | <b>Bid at entry:</b> $${(t.entryBid || 0).toFixed(4)}<br>` : ""}
+              ${t ? `<b>TP:</b> $${(t.takeProfit || 0).toFixed(4)} | <b>SL:</b> $${(t.riskExitLimit || 0).toFixed(4)}<br>` : ""}
+              ${t ? `<b>Shares:</b> ${t.maxSizeUsd && t.entryLimit ? (t.maxSizeUsd / t.entryLimit).toFixed(2) : "—"} | <b>Size:</b> $${(t.maxSizeUsd || 0).toFixed(2)}<br>` : ""}
+              ${t && t.lastObservedPrice ? `<b>Last observed bid:</b> $${t.lastObservedPrice.toFixed(4)}<br>` : ""}
+              ${t && t.closePrice !== null && t.closePrice !== undefined ? `<b>Close price:</b> $${t.closePrice.toFixed(4)} | <b>Reason:</b> ${t.closeReason || "—"}<br>` : ""}
+              <b>PnL:</b> ${pnl}
+            </div>
+            ${tid ? `<a href="/tickets/${tid}" style="color:#4ea8de;font-size:13px">View ticket →</a> | ` : ""}
+            <a href="/api/paper-runner/status/${encodeURIComponent(run._id)}" style="color:#4ea8de;font-size:13px" target="_blank">Full audit trail (JSON) →</a>
+          </div>`;
+        }
+      }
+
+      const body = `
+      <div style="max-width:800px;margin:0 auto;padding:24px">
+        <h1 style="color:#e0e0e0;margin-bottom:8px">🧪 Paper Trading Runner</h1>
+        <p style="color:#aaa;margin-bottom:20px">
+          Execute one complete paper-trading lifecycle using real Polymarket data.<br>
+          Scans real markets → picks one candidate → opens one paper trade → auto-monitor closes at TP/SL.
+        </p>
+        <div style="margin-bottom:24px">
+          <button id="runBtn" onclick="runPaperTrader()" style="padding:12px 24px;background:#4ea8de;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;font-weight:600">
+            ▶ Run Paper Trader (1 trade)
+          </button>
+          <span id="runStatus" style="margin-left:12px;color:#aaa;font-size:14px"></span>
+        </div>
+        <div id="runResult" style="margin-bottom:24px"></div>
+        <h2 style="color:#e0e0e0;margin-bottom:12px">Recent Runs</h2>
+        ${runsHtml}
+      </div>
+      <script>
+      async function runPaperTrader() {
+        const btn = document.getElementById("runBtn");
+        const status = document.getElementById("runStatus");
+        const result = document.getElementById("runResult");
+        btn.disabled = true;
+        status.textContent = "Running scan + opening trade...";
+        result.innerHTML = "";
+        try {
+          const res = await fetch("/api/paper-runner", { method: "POST" });
+          const data = await res.json();
+          if (data.ok) {
+            status.textContent = "✅ Trade opened!";
+            result.innerHTML = '<div style="border:1px solid #2a9d2a;border-radius:8px;padding:16px;background:#1a2e1a;margin-top:12px">' +
+              '<b style="color:#4ade80">Trade Opened Successfully</b><br>' +
+              '<b>Ticket:</b> <a href="/tickets/' + data.ticketId + '" style="color:#4ea8de">' + data.ticketId + '</a><br>' +
+              '<b>Market:</b> ' + (data.question || '—') + '<br>' +
+              '<b>Reason:</b> ' + (data.pickReason || '—') + '<br>' +
+              '<b>Entry (ask):</b> $' + (data.entry.fillPrice || 0).toFixed(4) + '<br>' +
+              '<b>Bid at entry:</b> $' + (data.entry.bid || 0).toFixed(4) + '<br>' +
+              '<b>Shares:</b> ' + (data.entry.shares || 0) + '<br>' +
+              '<b>TP:</b> $' + (data.exits.takeProfit || 0).toFixed(4) + ' | <b>SL:</b> $' + (data.exits.riskExitLimit || 0).toFixed(4) + '<br>' +
+              '<b>Run ID:</b> ' + data.runId + '<br>' +
+              '<p style="color:#aaa;margin-top:8px">' + data.monitor + '</p>' +
+              '</div>';
+          } else {
+            status.textContent = "⚠️ No trade opened";
+            result.innerHTML = '<div style="border:1px solid #a00;border-radius:8px;padding:16px;background:#2e1a1a;margin-top:12px">' +
+              '<b style="color:#f87171">No Viable Candidate</b><br>' +
+              '<span style="color:#aaa">' + (data.error || 'Unknown error') + '</span><br>' +
+              '<b>Candidates scanned:</b> ' + (data.candidatesScanned || 0) +
+              '</div>';
+          }
+        } catch (err) {
+          status.textContent = "❌ Error: " + err.message;
+        }
+        btn.disabled = false;
+      }
+      </script>`;
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(pageShell("Paper Runner", "/paper-runner", body));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(`paper-runner error: ${err.message}`);
+    }
+    return;
   }
 
   // ── GET /api/system/danger-zone/counts ──────────────────────────────
