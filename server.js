@@ -319,11 +319,13 @@ async function autoSaveExecuteTickets(scanId) {
     console.warn(JSON.stringify({ msg: "autoSave: idempotency guard error", scanId, err: err.message }));
     autoSaveTelemetry.lastAutoSave = { scanId, result: "ERROR", createdCount: 0, skipReasons: null, ts: new Date().toISOString() };
     autoSaveTelemetry.lastAutoSaveError = "idempotency guard error: " + err.message;
+    await AutoSaveLog.create({ scanId, result: "ERROR", error: "idempotency guard error: " + err.message }).catch(() => {});
     return;
   }
   if (!guardResult) {
     console.log(JSON.stringify({ msg: "autoSave: already processed this scanId, skipping", scanId }));
     // Don't overwrite telemetry — previous run for this scanId already wrote it
+    await AutoSaveLog.create({ scanId, result: "SKIPPED", error: "already processed" }).catch(() => {});
     return;
   }
 
@@ -334,12 +336,14 @@ async function autoSaveExecuteTickets(scanId) {
     console.warn(JSON.stringify({ msg: "autoSave: cannot read settings", err: err.message }));
     autoSaveTelemetry.lastAutoSave = { scanId, result: "ERROR", createdCount: 0, skipReasons: null, ts: new Date().toISOString() };
     autoSaveTelemetry.lastAutoSaveError = "cannot read settings: " + err.message;
+    await AutoSaveLog.create({ scanId, result: "ERROR", error: "cannot read settings: " + err.message }).catch(() => {});
     return;
   }
   if (!settings.autoSaveExecuteEnabled) {
     console.log(JSON.stringify({ msg: "autoSave: autoSaveExecuteEnabled is OFF, skipping", scanId }));
     autoSaveTelemetry.lastAutoSave = { scanId, result: "DISABLED", createdCount: 0, skipReasons: null, ts: new Date().toISOString() };
     autoSaveTelemetry.lastAutoSaveError = null;
+    await AutoSaveLog.create({ scanId, result: "DISABLED" }).catch(() => {});
     return;
   }
 
@@ -351,6 +355,7 @@ async function autoSaveExecuteTickets(scanId) {
     console.warn(JSON.stringify({ msg: "autoSave: buildIdeas failed", err: err.message }));
     autoSaveTelemetry.lastAutoSave = { scanId, result: "ERROR", createdCount: 0, skipReasons: null, ts: new Date().toISOString() };
     autoSaveTelemetry.lastAutoSaveError = "buildIdeas failed: " + err.message;
+    await AutoSaveLog.create({ scanId, result: "ERROR", error: "buildIdeas failed: " + err.message }).catch(() => {});
     return;
   }
 
@@ -358,6 +363,7 @@ async function autoSaveExecuteTickets(scanId) {
     console.log(JSON.stringify({ msg: "autoSave: buildIdeas returned 0 tradeCandidates", scanId }));
     autoSaveTelemetry.lastAutoSave = { scanId, result: "NO_VIABLE_CANDIDATE", createdCount: 0, skipReasons: { no_trade_candidates: true }, ts: new Date().toISOString() };
     autoSaveTelemetry.lastAutoSaveError = null;
+    await AutoSaveLog.create({ scanId, result: "ERROR", error: "NO_VIABLE_CANDIDATE", skipReasons: { no_trade_candidates: true } }).catch(() => {});
     return;
   }
 

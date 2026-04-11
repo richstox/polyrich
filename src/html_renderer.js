@@ -1731,9 +1731,9 @@ function formatOutcomeAction(rawLabel, rawAction, outcomes) {
 }
 
 /** Render a single trade card for the /trade page. */
-function renderTradeCard(item) {
+function renderTradeCard(item, sizingSettings) {
   // Use unified evaluation for consistent EXECUTE/WATCH decision
-  const evalResult = evaluateCandidateForExecution(item, {});
+  const evalResult = evaluateCandidateForExecution(item, sizingSettings || {});
   let action = evalResult.status === "EXECUTE" ? evalResult.direction.action : "WATCH";
   let actionCls = evalResult.status === "EXECUTE" ? evalResult.direction.actionCls : "pill-watch";
   let whyWatch = evalResult.whyWatch;
@@ -2013,6 +2013,18 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
         `✅ Last Auto‑Save: <b>CREATED</b> ticket` +
         (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
         `</div>`;
+    } else if (r.result === "DISABLED") {
+      const ts = r.createdAt ? new Date(r.createdAt).toISOString().slice(11, 19) + "Z" : "";
+      autoSaveResultHtml = `<div style="background:rgba(107,114,128,.12);border:1px solid rgba(107,114,128,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#9ca3af;">` +
+        `⏸️ Last Auto‑Save: <b>DISABLED</b> (scanId: ${escHtml(r.scanId || "")})` +
+        (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
+        `</div>`;
+    } else if (r.result === "ERROR") {
+      const ts = r.createdAt ? new Date(r.createdAt).toISOString().slice(11, 19) + "Z" : "";
+      autoSaveResultHtml = `<div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#fca5a5;">` +
+        `❌ Last Auto‑Save: <b>ERROR</b> — ${escHtml(r.error || "unknown")} (scanId: ${escHtml(r.scanId || "")})` +
+        (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
+        `</div>`;
     }
   }
 
@@ -2109,11 +2121,17 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
     : "";
 
   // Split cards into EXECUTE vs WATCH at render time using unified evaluation
+  // Use user sizing settings from systemSettings for consistency with auto-save
+  const serverSizingSettings = systemSettings ? {
+    bankrollUsd: (typeof systemSettings.bankrollUsd === "number" && systemSettings.bankrollUsd > 0) ? systemSettings.bankrollUsd : null,
+    riskPct: (typeof systemSettings.riskPct === "number" && systemSettings.riskPct > 0) ? systemSettings.riskPct : null,
+    maxTradeCapUsd: (typeof systemSettings.maxTradeCapUsd === "number" && systemSettings.maxTradeCapUsd > 0) ? systemSettings.maxTradeCapUsd : null,
+  } : {};
   const executeCards = [];
   const watchCards = [];
   for (const item of cards) {
     try {
-      const evalResult = evaluateCandidateForExecution(item, {});
+      const evalResult = evaluateCandidateForExecution(item, serverSizingSettings);
       if (evalResult.status === "EXECUTE") {
         executeCards.push(item);
       } else {
@@ -2130,14 +2148,14 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
   const execHtml = execSlice.length === 0
     ? '<p style="color:#6b7280;font-size:0.92rem;padding:12px 0;">No executable trades right now. Check WATCH list or run a new scan.</p>'
     : `<div class="trade-grid">${execSlice.map((item) => {
-        try { return renderTradeCard(item); }
+        try { return renderTradeCard(item, serverSizingSettings); }
         catch (_) { return `<div class="trade-card"><p style="color:#ef4444;">Render error: ${escHtml((item && item.marketSlug) || "unknown")}</p></div>`; }
       }).join("")}</div>`;
 
   const watchHtml = watchSlice.length === 0
     ? '<p style="color:#6b7280;font-size:0.92rem;padding:12px 0;">No watch items this scan.</p>'
     : `<div class="trade-grid">${watchSlice.map((item) => {
-        try { return renderTradeCard(item); }
+        try { return renderTradeCard(item, serverSizingSettings); }
         catch (_) { return `<div class="trade-card"><p style="color:#ef4444;">Render error: ${escHtml((item && item.marketSlug) || "unknown")}</p></div>`; }
       }).join("")}</div>`;
 
