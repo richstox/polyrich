@@ -2163,8 +2163,11 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
           } else {
             maxSizeRaw = Math.min(capUsd, hMax);
           }
-          // Strict 2% volume rule: no bump to exchange minimum.
-          // If heuristic sizing < $5, the card becomes WATCH (below).
+          // Bump to exchange minimum ($5) when heuristic sizing is conservative
+          // but user's cap allows it — matches server-side autoSave bump logic.
+          if (maxSizeRaw < MIN_ORDER && capUsd >= MIN_ORDER) {
+            maxSizeRaw = MIN_ORDER;
+          }
           var maxSizeDisplay = Math.round(maxSizeRaw * 100) / 100;
 
           // Min $5 gating — downgrade to WATCH per-card (uses raw, not rounded)
