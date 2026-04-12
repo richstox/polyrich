@@ -4234,11 +4234,18 @@ function makePassingBuyYesCandidate(overrides) {
 console.log("\nSTRATEGY_MODE config");
 {
   const config = require("../src/config");
-  // Default STRATEGY_MODE should be "OUTCOME" (env not set in test)
+  // Default STRATEGY_MODE should be "OUTCOME" when STRATEGY_MODE env is not set.
+  // In the test environment, the env var is typically unset, so we expect "OUTCOME".
+  // If STRATEGY_MODE is explicitly set to MICRO_LEGACY, that's also valid.
   assert(config.STRATEGY_MODE === "OUTCOME" || config.STRATEGY_MODE === "MICRO_LEGACY",
     `STRATEGY_MODE is a valid value (got "${config.STRATEGY_MODE}")`);
   assert(typeof config.STRATEGY_MODE === "string",
     `STRATEGY_MODE is a string (got ${typeof config.STRATEGY_MODE})`);
+  // When env is not set, default should be OUTCOME
+  if (!process.env.STRATEGY_MODE) {
+    assert(config.STRATEGY_MODE === "OUTCOME",
+      `STRATEGY_MODE defaults to OUTCOME when env unset (got "${config.STRATEGY_MODE}")`);
+  }
 }
 
 // ---------------------------------------------------------------------------

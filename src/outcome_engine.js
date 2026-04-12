@@ -200,7 +200,7 @@ async function persistThesisSnapshots(scanId, theses, opts = {}) {
 
   const docs = toStore.map((t) => ({
     scanId,
-    marketId: t.item.question || "",  // fallback — marketId from enrichItem
+    marketId: t.item.marketSlug || t.item.conditionId || t.item.question || "",
     conditionId: t.item.conditionId || null,
     marketSlug: t.item.marketSlug || null,
     eventSlug: t.item.eventSlug || null,
