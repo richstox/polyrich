@@ -4109,6 +4109,72 @@ function makePassingBuyYesCandidate(overrides) {
 }
 
 // ---------------------------------------------------------------------------
+// renderStatusBar / renderTradePage: Auto‑Save scoped to page scanId
+// ---------------------------------------------------------------------------
+{
+  const { renderStatusBar, renderTradePage } = require("../src/html_renderer");
+
+  // Minimal scanStatus / systemSettings stubs
+  const baseScanStatus = { lastScanAt: null, nextScanAt: null, lastScanId: "scan-AAA",
+    lastEventsFetched: 0, lastMarketsFlattened: 0, lastInterestingCount: 0 };
+  const baseSysSettings = { autoSaveExecuteEnabled: true, defaultAutoCloseEnabled: false };
+
+  // 1. renderStatusBar shows "Auto‑Save for this scan" (NO_VIABLE_CANDIDATE)
+  {
+    const asr = { scanId: "scan-AAA", result: "ERROR", error: "NO_VIABLE_CANDIDATE",
+      skipReasons: { skipped_spread: 2 }, createdAt: new Date().toISOString() };
+    const html = renderStatusBar(baseScanStatus, 1, false, baseSysSettings, asr);
+    assert(html.includes("Auto\u2011Save for this scan"), "renderStatusBar NO_VIABLE shows 'Auto‑Save for this scan'");
+    assert(!html.includes("Last Auto\u2011Save:"), "renderStatusBar NO_VIABLE does NOT say 'Last Auto‑Save:'");
+  }
+
+  // 2. renderStatusBar shows "Auto‑Save for this scan" (CREATED)
+  {
+    const asr = { scanId: "scan-AAA", result: "CREATED", createdAt: new Date().toISOString() };
+    const html = renderStatusBar(baseScanStatus, 1, false, baseSysSettings, asr);
+    assert(html.includes("Auto\u2011Save for this scan"), "renderStatusBar CREATED shows 'Auto‑Save for this scan'");
+  }
+
+  // 3. renderStatusBar shows "Auto‑Save for this scan" (DISABLED)
+  {
+    const asr = { scanId: "scan-AAA", result: "DISABLED", createdAt: new Date().toISOString() };
+    const html = renderStatusBar(baseScanStatus, 1, false, baseSysSettings, asr);
+    assert(html.includes("Auto\u2011Save for this scan"), "renderStatusBar DISABLED shows 'Auto‑Save for this scan'");
+  }
+
+  // 4. renderStatusBar shows "Auto‑Save for this scan" (generic ERROR)
+  {
+    const asr = { scanId: "scan-AAA", result: "ERROR", error: "SOME_ERROR", createdAt: new Date().toISOString() };
+    const html = renderStatusBar(baseScanStatus, 1, false, baseSysSettings, asr);
+    assert(html.includes("Auto\u2011Save for this scan"), "renderStatusBar ERROR shows 'Auto‑Save for this scan'");
+  }
+
+  // 5. renderTradePage does NOT contain scanId mismatch warning
+  {
+    const asr = { scanId: "scan-BBB", result: "CREATED", createdAt: new Date().toISOString() };
+    const html = renderTradePage(baseScanStatus, [], false, baseSysSettings, asr);
+    assert(!html.includes("ScanId mismatch"), "renderTradePage does NOT show scanId mismatch warning");
+  }
+
+  // 6. renderTradePage with null lastAutoSaveResult does not crash
+  {
+    const html = renderTradePage(baseScanStatus, [], false, baseSysSettings, null);
+    assert(html.includes("scan-AAA"), "renderTradePage with null autoSaveResult still shows scanId");
+    assert(!html.includes("ScanId mismatch"), "renderTradePage null autoSave: no mismatch warning");
+  }
+
+  // 7. pageScanId falls back to first item's scanId when scanStatus.lastScanId is null
+  {
+    const ss = { ...baseScanStatus, lastScanId: null };
+    const items = [{ scanId: "scan-ITEM", marketSlug: "test-market", question: "Test?",
+      lastTradePrice: 0.5, bestBid: 0.48, bestAsk: 0.52, yesTokenId: "tok", noTokenId: "ntk",
+      volume24hr: 1000, liquidity: 5000, spreadPct: 5, bidSizeUsd: 100, priceMomentum1h: 0.01 }];
+    const html = renderTradePage(ss, items, false, baseSysSettings, null);
+    assert(html.includes("scan-ITEM"), "renderTradePage fallback pageScanId from first item");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // attemptAutoClose: HARD GUARD — no close at $0.00 unless MARKET_SETTLED
 // (async tests — summary printed at the end of this block)
 // ---------------------------------------------------------------------------
