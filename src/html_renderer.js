@@ -140,9 +140,19 @@ function computeTradeability(item) {
     reasonCodes.push("TOO_FAR_FROM_EXPIRY");
     reasonDetails.TOO_FAR_FROM_EXPIRY = { hoursLeft: item.hoursLeft, maxHours: 240 };
   }
-  if (item.spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
+  // Spread gate: prefer mid-based spread from orderbook when available.
+  // The enrichItem spreadPct formula divides by min(yesPrice, 1-yesPrice),
+  // which inflates spread for low-price markets.  The server-side CLOB
+  // recheck uses mid-based spread — align the policy gate with that.
+  const hasBothSides = item.bestBidNum > 0 && item.bestAskNum > 0;
+  let effectiveSpreadPct = item.spreadPct;
+  if (hasBothSides) {
+    const mid = (item.bestBidNum + item.bestAskNum) / 2;
+    if (mid > 0) effectiveSpreadPct = (item.bestAskNum - item.bestBidNum) / mid;
+  }
+  if (effectiveSpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
     reasonCodes.push("SPREAD_TOO_WIDE");
-    reasonDetails.SPREAD_TOO_WIDE = { spreadPct: item.spreadPct, maxSpreadPct: config.MAX_ENTRY_SPREAD_PCT };
+    reasonDetails.SPREAD_TOO_WIDE = { spreadPct: effectiveSpreadPct, enrichedSpreadPct: item.spreadPct, maxSpreadPct: config.MAX_ENTRY_SPREAD_PCT, source: hasBothSides ? "mid-based" : "enriched" };
   }
   if (item.liquidity < 500) {
     reasonCodes.push("LIQUIDITY_TOO_LOW");
@@ -1360,8 +1370,10 @@ function inferDirection(item) {
     } else if (item.hoursLeft !== null && item.hoursLeft > 240) {
       whyWatch = "Too far from expiry (>10 days)";
       nextStep = "Wait for market to approach expiry window";
-    } else if (item.spreadPct > config.MAX_ENTRY_SPREAD_PCT) {
-      whyWatch = `Spread too wide (${(item.spreadPct * 100).toFixed(1)}%)`;
+    } else if (trade.reasonCodes.includes("SPREAD_TOO_WIDE")) {
+      const spreadDetail = trade.reasonDetails.SPREAD_TOO_WIDE || {};
+      const displaySpread = spreadDetail.spreadPct || item.spreadPct;
+      whyWatch = `Spread too wide (${(displaySpread * 100).toFixed(1)}%)`;
       nextStep = `Need spread \u2264 ${(config.MAX_ENTRY_SPREAD_PCT * 100).toFixed(0)}%`;
     } else if (item.liquidity < 500) {
       whyWatch = `Low liquidity ($${Math.round(item.liquidity)})`;
@@ -1731,9 +1743,9 @@ function formatOutcomeAction(rawLabel, rawAction, outcomes) {
 }
 
 /** Render a single trade card for the /trade page. */
-function renderTradeCard(item) {
+function renderTradeCard(item, sizingSettings) {
   // Use unified evaluation for consistent EXECUTE/WATCH decision
-  const evalResult = evaluateCandidateForExecution(item, {});
+  const evalResult = evaluateCandidateForExecution(item, sizingSettings || {});
   let action = evalResult.status === "EXECUTE" ? evalResult.direction.action : "WATCH";
   let actionCls = evalResult.status === "EXECUTE" ? evalResult.direction.actionCls : "pill-watch";
   let whyWatch = evalResult.whyWatch;
@@ -2013,6 +2025,18 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
         `✅ Last Auto‑Save: <b>CREATED</b> ticket` +
         (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
         `</div>`;
+    } else if (r.result === "DISABLED") {
+      const ts = r.createdAt ? new Date(r.createdAt).toISOString().slice(11, 19) + "Z" : "";
+      autoSaveResultHtml = `<div style="background:rgba(107,114,128,.12);border:1px solid rgba(107,114,128,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#9ca3af;">` +
+        `⏸️ Last Auto‑Save: <b>DISABLED</b> (scanId: ${escHtml(r.scanId || "")})` +
+        (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
+        `</div>`;
+    } else if (r.result === "ERROR") {
+      const ts = r.createdAt ? new Date(r.createdAt).toISOString().slice(11, 19) + "Z" : "";
+      autoSaveResultHtml = `<div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#fca5a5;">` +
+        `❌ Last Auto‑Save: <b>ERROR</b> — ${escHtml(r.error || "unknown")} (scanId: ${escHtml(r.scanId || "")})` +
+        (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
+        `</div>`;
     }
   }
 
@@ -2109,11 +2133,17 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
     : "";
 
   // Split cards into EXECUTE vs WATCH at render time using unified evaluation
+  // Use user sizing settings from systemSettings for consistency with auto-save
+  const serverSizingSettings = systemSettings ? {
+    bankrollUsd: (typeof systemSettings.bankrollUsd === "number" && systemSettings.bankrollUsd > 0) ? systemSettings.bankrollUsd : null,
+    riskPct: (typeof systemSettings.riskPct === "number" && systemSettings.riskPct > 0) ? systemSettings.riskPct : null,
+    maxTradeCapUsd: (typeof systemSettings.maxTradeCapUsd === "number" && systemSettings.maxTradeCapUsd > 0) ? systemSettings.maxTradeCapUsd : null,
+  } : {};
   const executeCards = [];
   const watchCards = [];
   for (const item of cards) {
     try {
-      const evalResult = evaluateCandidateForExecution(item, {});
+      const evalResult = evaluateCandidateForExecution(item, serverSizingSettings);
       if (evalResult.status === "EXECUTE") {
         executeCards.push(item);
       } else {
@@ -2130,14 +2160,14 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
   const execHtml = execSlice.length === 0
     ? '<p style="color:#6b7280;font-size:0.92rem;padding:12px 0;">No executable trades right now. Check WATCH list or run a new scan.</p>'
     : `<div class="trade-grid">${execSlice.map((item) => {
-        try { return renderTradeCard(item); }
+        try { return renderTradeCard(item, serverSizingSettings); }
         catch (_) { return `<div class="trade-card"><p style="color:#ef4444;">Render error: ${escHtml((item && item.marketSlug) || "unknown")}</p></div>`; }
       }).join("")}</div>`;
 
   const watchHtml = watchSlice.length === 0
     ? '<p style="color:#6b7280;font-size:0.92rem;padding:12px 0;">No watch items this scan.</p>'
     : `<div class="trade-grid">${watchSlice.map((item) => {
-        try { return renderTradeCard(item); }
+        try { return renderTradeCard(item, serverSizingSettings); }
         catch (_) { return `<div class="trade-card"><p style="color:#ef4444;">Render error: ${escHtml((item && item.marketSlug) || "unknown")}</p></div>`; }
       }).join("")}</div>`;
 

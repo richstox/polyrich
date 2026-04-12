@@ -3779,8 +3779,8 @@ console.log("\nfinal selection: mispricing quota");
     { hoursLeft: 500, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40, bestAskNum: 0.46, bestBidNum: 0.44 },
     // 2. NO_MOVEMENT
     { hoursLeft: 48, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, absMove: 0.001, volatility: 0.001, delta1: -0.02, latestYes: 0.40, bestAskNum: 0.46, bestBidNum: 0.44 },
-    // 3. TOO_FAR_FROM_EXPIRY + SPREAD_TOO_WIDE
-    { hoursLeft: 500, spreadPct: 0.50, liquidity: 1000, volume24hr: 100, absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40, bestAskNum: 0.46, bestBidNum: 0.44 },
+    // 3. TOO_FAR_FROM_EXPIRY + SPREAD_TOO_WIDE (wide CLOB spread: bid=0.30, ask=0.50 → mid-spread=37.5%)
+    { hoursLeft: 500, spreadPct: 0.50, liquidity: 1000, volume24hr: 100, absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40, bestAskNum: 0.50, bestBidNum: 0.30 },
   ];
 
   const watchReasonCounts = {};
@@ -3803,6 +3803,309 @@ console.log("\nfinal selection: mispricing quota");
   assert(watchReasonCounts.SPREAD_TOO_WIDE === 1, "SPREAD_TOO_WIDE count=1: " + watchReasonCounts.SPREAD_TOO_WIDE);
   assert(topWatchExamples.length === 3, "topWatchExamples has 3 entries");
   assert(topWatchExamples[0].reasonCodes.includes("TOO_FAR_FROM_EXPIRY"), "first example includes TOO_FAR_FROM_EXPIRY");
+}
+
+// ---------------------------------------------------------------------------
+// computeTradeability: mid-based spread from orderbook
+// ---------------------------------------------------------------------------
+console.log("\ncomputeTradeability mid-based spread");
+{
+  const { computeTradeability } = require("../src/html_renderer");
+
+  // Low-price market: enriched spreadPct=0.182 > 0.15 but mid-based=(0.23-0.21)/0.22=0.091 < 0.15
+  const lowPriceItem = {
+    hoursLeft: 48, spreadPct: 0.182, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0.21, bestAskNum: 0.23, _filtered: false,
+  };
+  const t1 = computeTradeability(lowPriceItem);
+  assert(t1.label === "Tradeable today", "Low-price market with tight CLOB spread → Tradeable (was: " + t1.label + ")");
+  assert(!t1.reasonCodes.includes("SPREAD_TOO_WIDE"), "No SPREAD_TOO_WIDE for tight mid-based spread");
+  console.log("  ✓  latestYes=0.22, enrichedSpread=0.182, midSpread=0.091 → Tradeable today");
+
+  // Same enriched spread but NO orderbook → falls back to enriched spreadPct → SPREAD_TOO_WIDE
+  const noBookItem = {
+    hoursLeft: 48, spreadPct: 0.182, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0, bestAskNum: 0, _filtered: false,
+  };
+  const t2 = computeTradeability(noBookItem);
+  assert(t2.reasonCodes.includes("SPREAD_TOO_WIDE"), "No orderbook → enriched spread → SPREAD_TOO_WIDE");
+  console.log("  ✓  No orderbook, enrichedSpread=0.182 → SPREAD_TOO_WIDE");
+
+  // Wide CLOB spread (bid=0.30, ask=0.50 → mid=0.40, spread=50%) → SPREAD_TOO_WIDE
+  const wideClobItem = {
+    hoursLeft: 48, spreadPct: 0.50, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0.30, bestAskNum: 0.50, _filtered: false,
+  };
+  const t3 = computeTradeability(wideClobItem);
+  assert(t3.reasonCodes.includes("SPREAD_TOO_WIDE"), "Wide CLOB spread → SPREAD_TOO_WIDE");
+  const detail = t3.reasonDetails.SPREAD_TOO_WIDE;
+  assert(detail.source === "mid-based", "source should be mid-based: " + detail.source);
+  assert(Math.abs(detail.spreadPct - 0.50) < 0.01, "spreadPct ~0.50: " + detail.spreadPct);
+  console.log("  ✓  Wide CLOB spread 50% → SPREAD_TOO_WIDE, source=mid-based");
+
+  // Edge: bestBidNum present but bestAskNum=0 → falls back to enriched
+  const partialBookItem = {
+    hoursLeft: 48, spreadPct: 0.20, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0.30, bestAskNum: 0, _filtered: false,
+  };
+  const t4 = computeTradeability(partialBookItem);
+  assert(t4.reasonCodes.includes("SPREAD_TOO_WIDE"), "Partial orderbook → enriched fallback → SPREAD_TOO_WIDE");
+  const detail4 = t4.reasonDetails.SPREAD_TOO_WIDE;
+  assert(detail4.source === "enriched", "source should be enriched: " + detail4.source);
+  console.log("  ✓  Partial orderbook → enriched fallback, source=enriched");
+
+  // latestYes=0.25 with tight CLOB: enriched=0.16 > 0.15, mid=(0.26-0.24)/0.25=0.08 → PASS
+  const borderlineItem = {
+    hoursLeft: 48, spreadPct: 0.16, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0.24, bestAskNum: 0.26, _filtered: false,
+  };
+  const t5 = computeTradeability(borderlineItem);
+  assert(t5.label === "Tradeable today", "Borderline enriched=0.16 but mid=0.08 → Tradeable (was: " + t5.label + ")");
+  console.log("  ✓  Borderline: enriched=0.16 > 0.15, but mid-based=0.08 → Tradeable");
+}
+
+// ---------------------------------------------------------------------------
+// inferDirection: mid-based spread unblocks BUY YES for low-price markets
+// ---------------------------------------------------------------------------
+console.log("\ninferDirection mid-based spread unblock");
+{
+  const { inferDirection } = require("../src/html_renderer");
+
+  // Low-price BUY YES candidate: enriched spread=0.182 > 0.15, CLOB mid=0.091 < 0.15
+  const item = {
+    hoursLeft: 48, spreadPct: 0.182, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0.21, bestAskNum: 0.23, _filtered: false,
+    absMove: 0.010, volatility: 0.008, delta1: -0.010,
+    latestYes: 0.22, mispricing: false, momentum: true, breakout: false,
+  };
+  const dir = inferDirection(item);
+  assert(dir.action === "BUY YES", "Low-price BUY YES now passes (was WATCH): " + dir.action);
+  console.log("  ✓  latestYes=0.22, enriched=0.182, mid=0.091 → BUY YES (no longer blocked)");
+
+  // Verify it would have been WATCH with old formula (no bestBidNum/bestAskNum)
+  const itemNoBook = Object.assign({}, item, { bestBidNum: 0, bestAskNum: 0 });
+  const dirNoBook = inferDirection(itemNoBook);
+  assert(dirNoBook.action === "WATCH", "Without orderbook → still WATCH: " + dirNoBook.action);
+  console.log("  ✓  Same without orderbook → WATCH (enriched spread still blocks)");
+}
+
+// ---------------------------------------------------------------------------
+// traceAutoSaveBuyYesDecisions: per-candidate first-failing-gate trace
+// ---------------------------------------------------------------------------
+console.log("\ntraceAutoSaveBuyYesDecisions");
+
+const { traceAutoSaveBuyYesDecisions } = require("../src/autosave_trace");
+
+// Helper: make a candidate that passes all policy gates (BUY YES EXECUTE)
+function makePassingBuyYesCandidate(overrides) {
+  return Object.assign({
+    question: "Will X happen?",
+    marketSlug: "will-x-happen",
+    conditionId: "0xabc123",
+    yesTokenId: "tok_yes_123",
+    noTokenId: "tok_no_456",
+    eventSlug: "x-event",
+    latestYes: 0.35,
+    bestAskNum: 0.36,
+    bestBidNum: 0.33,
+    spreadPct: 0.05,
+    liquidity: 10000,
+    volume24hr: 5000,
+    hoursLeft: 24,
+    absMove: 0.01,
+    volatility: 0.008,
+    delta1: -0.015,
+    mispricing: false,
+    momentum: false,
+    breakout: false,
+    _filtered: false,
+  }, overrides || {});
+}
+
+// Test 1: Passing candidate → decision=PASS, firstFailGate=PASS
+{
+  const candidates = [makePassingBuyYesCandidate()];
+  const noopClob = async () => ({ bestBid: 0.33, bestAsk: 0.36, topBidSize: 200, topAskSize: 150 });
+  const noopDedupe = async () => false;
+
+  // Use sync wrapper since we can't use top-level await
+  traceAutoSaveBuyYesDecisions(candidates, {}, {
+    fetchClobBookFn: noopClob,
+    checkDedupeFn: noopDedupe,
+  }).then((traces) => {
+    assert(traces.length === 1, `Trace: passing candidate → 1 trace record (got ${traces.length})`);
+    assert(traces[0].decision === "PASS", `Trace: passing candidate → decision=PASS (got ${traces[0].decision})`);
+    assert(traces[0].firstFailGate === "PASS", `Trace: passing candidate → firstFailGate=PASS (got ${traces[0].firstFailGate})`);
+    assert(traces[0].action === "BUY_YES", `Trace: passing candidate → action=BUY_YES (got ${traces[0].action})`);
+    assert(traces[0].gateCategory === "PASS", `Trace: passing candidate → gateCategory=PASS (got ${traces[0].gateCategory})`);
+  });
+}
+
+// Test 2: BUY NO candidate → firstFailGate=NO_NO_SIDE_PRICING (policy gate)
+{
+  const candidates = [makePassingBuyYesCandidate({
+    latestYes: 0.65,  // > 0.5 → BUY NO for mispricing
+    delta1: 0.015,    // > threshold + latestYes > 0.5 → BUY NO
+  })];
+  traceAutoSaveBuyYesDecisions(candidates, {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: BUY NO → 1 trace");
+    assert(traces[0].firstFailGate === "NO_NO_SIDE_PRICING", `Trace: BUY NO → firstFailGate=NO_NO_SIDE_PRICING (got ${traces[0].firstFailGate})`);
+    assert(traces[0].decision === "FAIL", `Trace: BUY NO → decision=FAIL (got ${traces[0].decision})`);
+    assert(traces[0].gateCategory === "POLICY", `Trace: BUY NO → gateCategory=POLICY (got ${traces[0].gateCategory})`);
+  });
+}
+
+// Test 3: Spread too wide → firstFailGate=SPREAD_TOO_WIDE
+// Use bid/ask that produce mid-based spread > 15%: bid=0.30, ask=0.42 → (0.42-0.30)/0.36=33%
+{
+  const candidates = [makePassingBuyYesCandidate({ spreadPct: 0.40, bestBidNum: 0.30, bestAskNum: 0.42 })];
+  traceAutoSaveBuyYesDecisions(candidates, {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: wide spread → 1 trace");
+    assert(traces[0].firstFailGate === "SPREAD_TOO_WIDE", `Trace: wide spread → firstFailGate=SPREAD_TOO_WIDE (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "POLICY", `Trace: wide spread → gateCategory=POLICY`);
+  });
+}
+
+// Test 4: Missing tokenId → firstFailGate=MISSING_TOKEN_ID
+{
+  const candidates = [makePassingBuyYesCandidate({ yesTokenId: null })];
+  const noopClob = async () => ({ bestBid: 0.33, bestAsk: 0.36, topBidSize: 200, topAskSize: 150 });
+  traceAutoSaveBuyYesDecisions(candidates, {}, { fetchClobBookFn: noopClob }).then((traces) => {
+    assert(traces.length === 1, "Trace: no tokenId → 1 trace");
+    assert(traces[0].firstFailGate === "MISSING_TOKEN_ID", `Trace: no tokenId → firstFailGate=MISSING_TOKEN_ID (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "DATA_INTEGRITY", `Trace: no tokenId → gateCategory=DATA_INTEGRITY`);
+  });
+}
+
+// Test 5: CLOB spread recheck fails → firstFailGate=CLOB_SPREAD_RECHECK
+{
+  const candidates = [makePassingBuyYesCandidate()];
+  // CLOB returns wide spread: bid=0.20, ask=0.36 → spread = (0.36-0.20)/0.28 = 57%
+  const wideClobBook = async () => ({ bestBid: 0.20, bestAsk: null, topBidSize: 200, topAskSize: 150 });
+  traceAutoSaveBuyYesDecisions(candidates, {}, { fetchClobBookFn: wideClobBook }).then((traces) => {
+    assert(traces.length === 1, "Trace: CLOB wide spread → 1 trace");
+    assert(traces[0].firstFailGate === "CLOB_SPREAD_RECHECK", `Trace: CLOB wide spread → firstFailGate=CLOB_SPREAD_RECHECK (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "SERVER_EXECUTION", `Trace: CLOB wide spread → gateCategory=SERVER_EXECUTION`);
+  });
+}
+
+// Test 6: Bid below SL → firstFailGate=BID_BELOW_SL
+{
+  const candidates = [makePassingBuyYesCandidate({ bestBidNum: 0.33, bestAskNum: 0.36 })];
+  // entry=0.36, SL = entry - max(K_SL*vol, MIN_SL_DISTANCE) = 0.36 - max(1.5*0.008, 0.03) = 0.36 - 0.03 = 0.33
+  // CLOB returns bid=0.32 (below SL=0.33) but ask=0.37 so spread = (0.37-0.32)/0.345 ≈ 14.5% < 15%
+  const lowBidClob = async () => ({ bestBid: 0.32, bestAsk: 0.37, topBidSize: 200, topAskSize: 150 });
+  traceAutoSaveBuyYesDecisions(candidates, {}, { fetchClobBookFn: lowBidClob }).then((traces) => {
+    assert(traces.length === 1, "Trace: bid below SL → 1 trace");
+    assert(traces[0].firstFailGate === "BID_BELOW_SL", `Trace: bid below SL → firstFailGate=BID_BELOW_SL (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "SERVER_EXECUTION", `Trace: bid below SL → gateCategory=SERVER_EXECUTION`);
+  });
+}
+
+// Test 7: Dedupe hit → firstFailGate=DEDUPE_HIT
+{
+  const candidates = [makePassingBuyYesCandidate()];
+  const noopClob = async () => ({ bestBid: 0.33, bestAsk: 0.36, topBidSize: 200, topAskSize: 150 });
+  const alwaysDuplicate = async () => true;
+  traceAutoSaveBuyYesDecisions(candidates, {}, {
+    fetchClobBookFn: noopClob,
+    checkDedupeFn: alwaysDuplicate,
+  }).then((traces) => {
+    assert(traces.length === 1, "Trace: dedupe hit → 1 trace");
+    assert(traces[0].firstFailGate === "DEDUPE_HIT", `Trace: dedupe hit → firstFailGate=DEDUPE_HIT (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "DEDUPE", `Trace: dedupe hit → gateCategory=DEDUPE`);
+  });
+}
+
+// Test 8: Error in CLOB fetch → firstFailGate=CLOB_FETCH_ERROR (errors not swallowed)
+{
+  const candidates = [makePassingBuyYesCandidate()];
+  const errorClob = async () => { throw new Error("CLOB_TIMEOUT"); };
+  traceAutoSaveBuyYesDecisions(candidates, {}, { fetchClobBookFn: errorClob }).then((traces) => {
+    assert(traces.length === 1, "Trace: CLOB error → 1 trace");
+    assert(traces[0].firstFailGate === "CLOB_FETCH_ERROR", `Trace: CLOB error → firstFailGate=CLOB_FETCH_ERROR (got ${traces[0].firstFailGate})`);
+    assert(traces[0].decision === "ERROR", `Trace: CLOB error → decision=ERROR (got ${traces[0].decision})`);
+    assert(traces[0].reasonCode === "CLOB_TIMEOUT", `Trace: CLOB error → reasonCode includes error msg (got ${traces[0].reasonCode})`);
+  });
+}
+
+// Test 9: Sizing gate → SIZE_NULL when risk budget is tiny (below $1 floor)
+{
+  const candidates = [makePassingBuyYesCandidate()];
+  const sizingSettings = { bankrollUsd: 100, riskPct: 0.001, maxTradeCapUsd: 50 };
+  // riskBudget = 100 * 0.001 = $0.10 → below $1 raw floor → inferSize returns null → SIZE_NULL
+  traceAutoSaveBuyYesDecisions(candidates, sizingSettings, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: tiny risk → 1 trace");
+    assert(traces[0].firstFailGate === "SIZE_NULL", `Trace: tiny risk → firstFailGate=SIZE_NULL (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "POLICY", `Trace: tiny risk → gateCategory=POLICY`);
+    assert(traces[0].action === "BUY_YES", `Trace: tiny risk → action=BUY_YES`);
+  });
+}
+
+// Test 10: Direction unclear → DIRECTION_UNCLEAR
+{
+  const candidates = [makePassingBuyYesCandidate({
+    delta1: 0, mispricing: false, momentum: false, breakout: false,
+  })];
+  traceAutoSaveBuyYesDecisions(candidates, {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: direction unclear → 1 trace");
+    assert(traces[0].firstFailGate === "DIRECTION_UNCLEAR", `Trace: direction unclear → firstFailGate=DIRECTION_UNCLEAR (got ${traces[0].firstFailGate})`);
+  });
+}
+
+// Test 11: Multiple candidates — deterministic per-candidate trace
+{
+  const candidates = [
+    makePassingBuyYesCandidate({ marketSlug: "market-a" }),                     // should PASS
+    makePassingBuyYesCandidate({ marketSlug: "market-b", spreadPct: 0.40, bestBidNum: 0.30, bestAskNum: 0.42 }),   // SPREAD_TOO_WIDE (mid-based: 33%)
+    makePassingBuyYesCandidate({ marketSlug: "market-c", yesTokenId: null }),   // MISSING_TOKEN_ID
+  ];
+  const noopClob = async () => ({ bestBid: 0.33, bestAsk: 0.36, topBidSize: 200, topAskSize: 150 });
+  const noopDedupe = async () => false;
+  traceAutoSaveBuyYesDecisions(candidates, {}, {
+    fetchClobBookFn: noopClob, checkDedupeFn: noopDedupe,
+  }).then((traces) => {
+    assert(traces.length === 3, `Trace: 3 candidates → 3 traces (got ${traces.length})`);
+    const a = traces.find(t => t.marketSlug === "market-a");
+    const b = traces.find(t => t.marketSlug === "market-b");
+    const c = traces.find(t => t.marketSlug === "market-c");
+    assert(a && a.firstFailGate === "PASS", `market-a → PASS (got ${a && a.firstFailGate})`);
+    assert(b && b.firstFailGate === "SPREAD_TOO_WIDE", `market-b → SPREAD_TOO_WIDE (got ${b && b.firstFailGate})`);
+    assert(c && c.firstFailGate === "MISSING_TOKEN_ID", `market-c → MISSING_TOKEN_ID (got ${c && c.firstFailGate})`);
+  });
+}
+
+// Test 12: Error in evaluateCandidateForExecution → EVAL_ERROR (not swallowed)
+{
+  // Create a candidate with a property that will cause evaluateCandidateForExecution to throw
+  // by making computeTradeability access a property on undefined
+  const badCandidate = null; // Will throw TypeError
+  traceAutoSaveBuyYesDecisions([badCandidate], {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: bad candidate → 1 trace");
+    assert(traces[0].firstFailGate === "EVAL_ERROR", `Trace: bad candidate → firstFailGate=EVAL_ERROR (got ${traces[0].firstFailGate})`);
+    assert(traces[0].decision === "ERROR", `Trace: bad candidate → decision=ERROR (got ${traces[0].decision})`);
+    assert(traces[0].gateCategory === "ERROR", `Trace: bad candidate → gateCategory=ERROR`);
+  });
+}
+
+// Test 13: No movement → NO_MOVEMENT
+{
+  const candidates = [makePassingBuyYesCandidate({ absMove: 0, volatility: 0 })];
+  traceAutoSaveBuyYesDecisions(candidates, {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: no movement → 1 trace");
+    assert(traces[0].firstFailGate === "NO_MOVEMENT", `Trace: no movement → firstFailGate=NO_MOVEMENT (got ${traces[0].firstFailGate})`);
+  });
+}
+
+// Test 14: Low liquidity → LIQUIDITY_TOO_LOW
+{
+  const candidates = [makePassingBuyYesCandidate({ liquidity: 100 })];
+  traceAutoSaveBuyYesDecisions(candidates, {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: low liquidity → 1 trace");
+    // computeTradeability detects low liquidity → "Watch" → inferDirection returns WATCH
+    // The firstFailGate should be LIQUIDITY_TOO_LOW (from computeTradeability reasonCodes)
+    assert(traces[0].firstFailGate === "LIQUIDITY_TOO_LOW", `Trace: low liq → firstFailGate=LIQUIDITY_TOO_LOW (got ${traces[0].firstFailGate})`);
+  });
 }
 
 // ---------------------------------------------------------------------------

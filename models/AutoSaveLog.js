@@ -9,7 +9,7 @@ const autoSaveLogSchema = new mongoose.Schema(
     marketId: { type: String },
     action: { type: String },
     dedupeKey: { type: String },
-    result: { type: String, enum: ["CREATED", "DUPLICATE", "ERROR"], required: true },
+    result: { type: String, enum: ["CREATED", "DUPLICATE", "ERROR", "DISABLED", "SKIPPED"], required: true },
     error: { type: String, default: null },
     skipReasons: { type: mongoose.Schema.Types.Mixed, default: null },
     candidateDetails: { type: [mongoose.Schema.Types.Mixed], default: null },
