@@ -4175,6 +4175,94 @@ function makePassingBuyYesCandidate(overrides) {
 }
 
 // ---------------------------------------------------------------------------
+// extractExecutableYesTopOfBook — correct YES top-of-book from unsorted CLOB data
+// ---------------------------------------------------------------------------
+{
+  console.log("\nextractExecutableYesTopOfBook");
+  const { extractExecutableYesTopOfBook } = require("../src/auto_monitor");
+
+  // Test with exact sample book JSON from the bug report
+  const sampleBook = {"bids":[{"price":"0.01","size":"18139.35"},{"price":"0.02","size":"4800"},{"price":"0.03","size":"12.88"},{"price":"0.05","size":"60"},{"price":"0.06","size":"608"},{"price":"0.08","size":"200"},{"price":"0.09","size":"33.33"},{"price":"0.1","size":"5.2"},{"price":"0.11","size":"53.4"},{"price":"0.12","size":"49.99"},{"price":"0.13","size":"45"},{"price":"0.18","size":"58828"},{"price":"0.21","size":"47690"},{"price":"0.22","size":"62.49"},{"price":"0.23","size":"73.46"},{"price":"0.24","size":"38240"},{"price":"0.27","size":"29874"},{"price":"0.3","size":"22260"},{"price":"0.31","size":"150"},{"price":"0.33","size":"15176"},{"price":"0.34","size":"49945.57"},{"price":"0.36","size":"8656"},{"price":"0.37","size":"39353.77"},{"price":"0.38","size":"3923.11"},{"price":"0.39","size":"195156.75"},{"price":"0.4","size":"171696.98"},{"price":"0.41","size":"1295"}],"asks":[{"price":"0.99","size":"36145.39"},{"price":"0.98","size":"8305"},{"price":"0.97","size":"80"},{"price":"0.96","size":"7.03"},{"price":"0.95","size":"6350"},{"price":"0.93","size":"40"},{"price":"0.92","size":"378.19"},{"price":"0.9","size":"30"},{"price":"0.89","size":"5.13"},{"price":"0.86","size":"531"},{"price":"0.85","size":"9.66"},{"price":"0.84","size":"9.21"},{"price":"0.83","size":"87.48"},{"price":"0.81","size":"247"},{"price":"0.76","size":"152"},{"price":"0.71","size":"86"},{"price":"0.7","size":"9.66"},{"price":"0.68","size":"18.43"},{"price":"0.67","size":"35.74"},{"price":"0.66","size":"47446.11"},{"price":"0.63","size":"40052"},{"price":"0.6","size":"33214"},{"price":"0.57","size":"26572"},{"price":"0.56","size":"78908.69"},{"price":"0.54","size":"20220"},{"price":"0.53","size":"81"},{"price":"0.51","size":"14028"},{"price":"0.48","size":"7978"},{"price":"0.47","size":"88928.91"},{"price":"0.46","size":"31"},{"price":"0.45","size":"5803.11"},{"price":"0.44","size":"44959.77"},{"price":"0.43","size":"23942.33"},{"price":"0.42","size":"4674.45"}],"last_trade_price":"0.410"};
+
+  const result = extractExecutableYesTopOfBook(sampleBook);
+
+  assert(result.bestBidYes === 0.41, `bestBidYes = ${result.bestBidYes} (expected 0.41)`);
+  assert(result.bestAskYes === 0.42, `bestAskYes = ${result.bestAskYes} (expected 0.42)`);
+  const spreadPct = (result.bestAskYes - result.bestBidYes) / ((result.bestAskYes + result.bestBidYes) / 2);
+  assertClose(spreadPct, 0.0241, "spreadPct ≈ 0.0241", 0.001);
+  assert(result.topBidSize === 1295, `topBidSize = ${result.topBidSize} (expected 1295)`);
+  assert(result.topAskSize === 4674.45, `topAskSize = ${result.topAskSize} (expected 4674.45)`);
+  assert(result.filterReason === "COMPLEMENT_FILTERED", `filterReason = ${result.filterReason} (expected COMPLEMENT_FILTERED)`);
+
+  // Trace fields
+  assert(result.trace.rawMaxBid === 0.41, `trace.rawMaxBid = ${result.trace.rawMaxBid}`);
+  assert(result.trace.rawMinBid === 0.01, `trace.rawMinBid = ${result.trace.rawMinBid}`);
+  assert(result.trace.rawMinAsk === 0.42, `trace.rawMinAsk = ${result.trace.rawMinAsk}`);
+  assert(result.trace.rawMaxAsk === 0.99, `trace.rawMaxAsk = ${result.trace.rawMaxAsk}`);
+  assert(result.trace.chosenBestBidYes === 0.41, `trace.chosenBestBidYes = ${result.trace.chosenBestBidYes}`);
+  assert(result.trace.chosenBestAskYes === 0.42, `trace.chosenBestAskYes = ${result.trace.chosenBestAskYes}`);
+  assertClose(result.trace.lastTradePrice, 0.41, "trace.lastTradePrice = 0.41");
+
+  // Edge case: empty bids
+  const emptyBids = extractExecutableYesTopOfBook({ bids: [], asks: [{ price: "0.50", size: "10" }] });
+  assert(emptyBids.bestBidYes === null, "empty bids → bestBidYes = null");
+  assert(emptyBids.filterReason === "NO_VALID_BIDS", `empty bids → filterReason = ${emptyBids.filterReason}`);
+
+  // Edge case: empty asks
+  const emptyAsks = extractExecutableYesTopOfBook({ bids: [{ price: "0.50", size: "10" }], asks: [] });
+  assert(emptyAsks.bestBidYes === 0.50, "empty asks → bestBidYes = 0.50");
+  assert(emptyAsks.bestAskYes === null, "empty asks → bestAskYes = null");
+  assert(emptyAsks.filterReason === "NO_EXECUTABLE_ASK", `empty asks → filterReason = ${emptyAsks.filterReason}`);
+
+  // Edge case: all asks at or below best bid (crossed book)
+  const crossedBook = extractExecutableYesTopOfBook({
+    bids: [{ price: "0.50", size: "10" }],
+    asks: [{ price: "0.50", size: "5" }, { price: "0.49", size: "5" }],
+  });
+  assert(crossedBook.bestAskYes === null, "crossed book → bestAskYes = null");
+  assert(crossedBook.filterReason === "NO_EXECUTABLE_ASK", `crossed book → filterReason = ${crossedBook.filterReason}`);
+
+  // Edge case: only complement-like asks (no sane ask near bid)
+  const onlyComplement = extractExecutableYesTopOfBook({
+    bids: [{ price: "0.10", size: "100" }],
+    asks: [{ price: "0.95", size: "500" }, { price: "0.98", size: "200" }],
+  });
+  assert(onlyComplement.bestBidYes === 0.10, "only complement asks → bestBidYes = 0.10");
+  assert(onlyComplement.bestAskYes === 0.95, "only complement asks → bestAskYes = 0.95 (no sane ask, uses all)");
+  assert(onlyComplement.filterReason === null, `only complement asks → filterReason = ${onlyComplement.filterReason} (null, no filtering applied)`);
+
+  // Edge case: sorted book (already correct order)
+  const sortedBook = extractExecutableYesTopOfBook({
+    bids: [{ price: "0.50", size: "100" }, { price: "0.49", size: "200" }],
+    asks: [{ price: "0.51", size: "100" }, { price: "0.52", size: "200" }],
+  });
+  assert(sortedBook.bestBidYes === 0.50, "sorted book → bestBidYes = 0.50");
+  assert(sortedBook.bestAskYes === 0.51, "sorted book → bestAskYes = 0.51");
+
+  // Edge case: invalid price values (NaN, 0, 1.0)
+  const invalidPrices = extractExecutableYesTopOfBook({
+    bids: [{ price: "abc", size: "10" }, { price: "0.00", size: "10" }, { price: "0.30", size: "50" }],
+    asks: [{ price: "1.00", size: "10" }, { price: "0.35", size: "20" }],
+  });
+  assert(invalidPrices.bestBidYes === 0.30, "invalid prices filtered → bestBidYes = 0.30");
+  assert(invalidPrices.bestAskYes === 0.35, "invalid prices filtered → bestAskYes = 0.35");
+
+  // Edge case: null / undefined book arrays
+  const nullBook = extractExecutableYesTopOfBook({});
+  assert(nullBook.bestBidYes === null, "null arrays → bestBidYes = null");
+  assert(nullBook.filterReason === "NO_VALID_BIDS", `null arrays → filterReason = ${nullBook.filterReason}`);
+
+  // Edge case: tight spread with single complement ask mixed in
+  const mixedAsk = extractExecutableYesTopOfBook({
+    bids: [{ price: "0.60", size: "100" }],
+    asks: [{ price: "0.99", size: "1000" }, { price: "0.61", size: "50" }],
+  });
+  assert(mixedAsk.bestBidYes === 0.60, "mixed asks → bestBidYes = 0.60");
+  assert(mixedAsk.bestAskYes === 0.61, "mixed asks → bestAskYes = 0.61 (complement 0.99 filtered)");
+  assert(mixedAsk.filterReason === "COMPLEMENT_FILTERED", `mixed asks → filterReason = ${mixedAsk.filterReason}`);
+}
+
+// ---------------------------------------------------------------------------
 // attemptAutoClose: HARD GUARD — no close at $0.00 unless MARKET_SETTLED
 // (async tests — summary printed at the end of this block)
 // ---------------------------------------------------------------------------
