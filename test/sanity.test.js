@@ -3779,8 +3779,8 @@ console.log("\nfinal selection: mispricing quota");
     { hoursLeft: 500, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40, bestAskNum: 0.46, bestBidNum: 0.44 },
     // 2. NO_MOVEMENT
     { hoursLeft: 48, spreadPct: 0.05, liquidity: 1000, volume24hr: 100, absMove: 0.001, volatility: 0.001, delta1: -0.02, latestYes: 0.40, bestAskNum: 0.46, bestBidNum: 0.44 },
-    // 3. TOO_FAR_FROM_EXPIRY + SPREAD_TOO_WIDE
-    { hoursLeft: 500, spreadPct: 0.50, liquidity: 1000, volume24hr: 100, absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40, bestAskNum: 0.46, bestBidNum: 0.44 },
+    // 3. TOO_FAR_FROM_EXPIRY + SPREAD_TOO_WIDE (wide CLOB spread: bid=0.30, ask=0.50 → mid-spread=37.5%)
+    { hoursLeft: 500, spreadPct: 0.50, liquidity: 1000, volume24hr: 100, absMove: 0.01, volatility: 0.01, delta1: -0.02, latestYes: 0.40, bestAskNum: 0.50, bestBidNum: 0.30 },
   ];
 
   const watchReasonCounts = {};
@@ -3803,6 +3803,90 @@ console.log("\nfinal selection: mispricing quota");
   assert(watchReasonCounts.SPREAD_TOO_WIDE === 1, "SPREAD_TOO_WIDE count=1: " + watchReasonCounts.SPREAD_TOO_WIDE);
   assert(topWatchExamples.length === 3, "topWatchExamples has 3 entries");
   assert(topWatchExamples[0].reasonCodes.includes("TOO_FAR_FROM_EXPIRY"), "first example includes TOO_FAR_FROM_EXPIRY");
+}
+
+// ---------------------------------------------------------------------------
+// computeTradeability: mid-based spread from orderbook
+// ---------------------------------------------------------------------------
+console.log("\ncomputeTradeability mid-based spread");
+{
+  const { computeTradeability } = require("../src/html_renderer");
+
+  // Low-price market: enriched spreadPct=0.182 > 0.15 but mid-based=(0.23-0.21)/0.22=0.091 < 0.15
+  const lowPriceItem = {
+    hoursLeft: 48, spreadPct: 0.182, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0.21, bestAskNum: 0.23, _filtered: false,
+  };
+  const t1 = computeTradeability(lowPriceItem);
+  assert(t1.label === "Tradeable today", "Low-price market with tight CLOB spread → Tradeable (was: " + t1.label + ")");
+  assert(!t1.reasonCodes.includes("SPREAD_TOO_WIDE"), "No SPREAD_TOO_WIDE for tight mid-based spread");
+  console.log("  ✓  latestYes=0.22, enrichedSpread=0.182, midSpread=0.091 → Tradeable today");
+
+  // Same enriched spread but NO orderbook → falls back to enriched spreadPct → SPREAD_TOO_WIDE
+  const noBookItem = {
+    hoursLeft: 48, spreadPct: 0.182, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0, bestAskNum: 0, _filtered: false,
+  };
+  const t2 = computeTradeability(noBookItem);
+  assert(t2.reasonCodes.includes("SPREAD_TOO_WIDE"), "No orderbook → enriched spread → SPREAD_TOO_WIDE");
+  console.log("  ✓  No orderbook, enrichedSpread=0.182 → SPREAD_TOO_WIDE");
+
+  // Wide CLOB spread (bid=0.30, ask=0.50 → mid=0.40, spread=50%) → SPREAD_TOO_WIDE
+  const wideClobItem = {
+    hoursLeft: 48, spreadPct: 0.50, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0.30, bestAskNum: 0.50, _filtered: false,
+  };
+  const t3 = computeTradeability(wideClobItem);
+  assert(t3.reasonCodes.includes("SPREAD_TOO_WIDE"), "Wide CLOB spread → SPREAD_TOO_WIDE");
+  const detail = t3.reasonDetails.SPREAD_TOO_WIDE;
+  assert(detail.source === "mid-based", "source should be mid-based: " + detail.source);
+  assert(Math.abs(detail.spreadPct - 0.50) < 0.01, "spreadPct ~0.50: " + detail.spreadPct);
+  console.log("  ✓  Wide CLOB spread 50% → SPREAD_TOO_WIDE, source=mid-based");
+
+  // Edge: bestBidNum present but bestAskNum=0 → falls back to enriched
+  const partialBookItem = {
+    hoursLeft: 48, spreadPct: 0.20, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0.30, bestAskNum: 0, _filtered: false,
+  };
+  const t4 = computeTradeability(partialBookItem);
+  assert(t4.reasonCodes.includes("SPREAD_TOO_WIDE"), "Partial orderbook → enriched fallback → SPREAD_TOO_WIDE");
+  const detail4 = t4.reasonDetails.SPREAD_TOO_WIDE;
+  assert(detail4.source === "enriched", "source should be enriched: " + detail4.source);
+  console.log("  ✓  Partial orderbook → enriched fallback, source=enriched");
+
+  // latestYes=0.25 with tight CLOB: enriched=0.16 > 0.15, mid=(0.26-0.24)/0.25=0.08 → PASS
+  const borderlineItem = {
+    hoursLeft: 48, spreadPct: 0.16, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0.24, bestAskNum: 0.26, _filtered: false,
+  };
+  const t5 = computeTradeability(borderlineItem);
+  assert(t5.label === "Tradeable today", "Borderline enriched=0.16 but mid=0.08 → Tradeable (was: " + t5.label + ")");
+  console.log("  ✓  Borderline: enriched=0.16 > 0.15, but mid-based=0.08 → Tradeable");
+}
+
+// ---------------------------------------------------------------------------
+// inferDirection: mid-based spread unblocks BUY YES for low-price markets
+// ---------------------------------------------------------------------------
+console.log("\ninferDirection mid-based spread unblock");
+{
+  const { inferDirection } = require("../src/html_renderer");
+
+  // Low-price BUY YES candidate: enriched spread=0.182 > 0.15, CLOB mid=0.091 < 0.15
+  const item = {
+    hoursLeft: 48, spreadPct: 0.182, liquidity: 10000, volume24hr: 5000,
+    bestBidNum: 0.21, bestAskNum: 0.23, _filtered: false,
+    absMove: 0.010, volatility: 0.008, delta1: -0.010,
+    latestYes: 0.22, mispricing: false, momentum: true, breakout: false,
+  };
+  const dir = inferDirection(item);
+  assert(dir.action === "BUY YES", "Low-price BUY YES now passes (was WATCH): " + dir.action);
+  console.log("  ✓  latestYes=0.22, enriched=0.182, mid=0.091 → BUY YES (no longer blocked)");
+
+  // Verify it would have been WATCH with old formula (no bestBidNum/bestAskNum)
+  const itemNoBook = Object.assign({}, item, { bestBidNum: 0, bestAskNum: 0 });
+  const dirNoBook = inferDirection(itemNoBook);
+  assert(dirNoBook.action === "WATCH", "Without orderbook → still WATCH: " + dirNoBook.action);
+  console.log("  ✓  Same without orderbook → WATCH (enriched spread still blocks)");
 }
 
 // ---------------------------------------------------------------------------
@@ -3872,8 +3956,9 @@ function makePassingBuyYesCandidate(overrides) {
 }
 
 // Test 3: Spread too wide → firstFailGate=SPREAD_TOO_WIDE
+// Use bid/ask that produce mid-based spread > 15%: bid=0.30, ask=0.42 → (0.42-0.30)/0.36=33%
 {
-  const candidates = [makePassingBuyYesCandidate({ spreadPct: 0.20 })];
+  const candidates = [makePassingBuyYesCandidate({ spreadPct: 0.40, bestBidNum: 0.30, bestAskNum: 0.42 })];
   traceAutoSaveBuyYesDecisions(candidates, {}, {}).then((traces) => {
     assert(traces.length === 1, "Trace: wide spread → 1 trace");
     assert(traces[0].firstFailGate === "SPREAD_TOO_WIDE", `Trace: wide spread → firstFailGate=SPREAD_TOO_WIDE (got ${traces[0].firstFailGate})`);
@@ -3972,7 +4057,7 @@ function makePassingBuyYesCandidate(overrides) {
 {
   const candidates = [
     makePassingBuyYesCandidate({ marketSlug: "market-a" }),                     // should PASS
-    makePassingBuyYesCandidate({ marketSlug: "market-b", spreadPct: 0.20 }),   // SPREAD_TOO_WIDE
+    makePassingBuyYesCandidate({ marketSlug: "market-b", spreadPct: 0.40, bestBidNum: 0.30, bestAskNum: 0.42 }),   // SPREAD_TOO_WIDE (mid-based: 33%)
     makePassingBuyYesCandidate({ marketSlug: "market-c", yesTokenId: null }),   // MISSING_TOKEN_ID
   ];
   const noopClob = async () => ({ bestBid: 0.33, bestAsk: 0.36, topBidSize: 200, topAskSize: 150 });
