@@ -58,6 +58,7 @@ const PaperRunnerLog = require("./models/PaperRunnerLog");
 const AutoSaveDecisionLog = require("./models/AutoSaveDecisionLog");
 const { traceAutoSaveBuyYesDecisions } = require("./src/autosave_trace");
 const DANGER_ZONE_VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN", "RESET_TRADES", "FACTORY_RESET"];
+const REPLAY_SCAN_SUFFIX = "_replay";
 
 // ---------------------------------------------------------------------------
 // Node version check — warn-only, never crash
@@ -1657,7 +1658,7 @@ if (url.pathname === "/trade") {
         // Persist with replay scanId
         if (traceRecords.length > 0) {
           await AutoSaveDecisionLog.insertMany(
-            traceRecords.map((r) => ({ ...r, scanId: targetScanId + "_replay" })),
+            traceRecords.map((r) => ({ ...r, scanId: targetScanId + REPLAY_SCAN_SUFFIX })),
             { ordered: false }
           ).catch(() => {});
         }

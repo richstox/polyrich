@@ -32,6 +32,7 @@
  */
 
 const config = require("./config");
+const crypto = require("crypto");
 const {
   evaluateCandidateForExecution,
   inferDirection,
@@ -339,7 +340,6 @@ async function traceAutoSaveBuyYesDecisions(candidates, sizingSettings, opts) {
     }
 
     // Gate 17: DEDUPE_HIT (hard skip)
-    const crypto = require("crypto");
     function canon(v) {
       if (v === null || v === undefined) return "null";
       if (typeof v === "number") return Number(v).toString();
