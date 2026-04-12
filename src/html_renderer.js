@@ -523,6 +523,8 @@ function renderHealthUi(healthData) {
         <p><span style="color:#6b7280;">MongoDB:</span> <strong>${healthData.mongoConnected ? "connected" : "disconnected"}</strong></p>
         <p><span style="color:#6b7280;">Last scan:</span> <strong>${utcSpan(healthData.lastScanAt, "never")}</strong></p>
         <p><span style="color:#6b7280;">Scan running:</span> <strong>${healthData.scanRunning ? "yes" : "no"}</strong></p>
+        <p><span style="color:#6b7280;">Strategy mode:</span> <strong style="font-family:monospace;">${escHtml(healthData.strategyMode || "—")}</strong></p>
+        <p><span style="color:#6b7280;">Micro-legacy:</span> <strong>${healthData.isMicroLegacyEnabled ? "yes" : "no"}</strong></p>
         <p><span style="color:#6b7280;">Timestamp:</span> <strong>${utcSpan(healthData.ts)}</strong></p>
       </div>
     </div>

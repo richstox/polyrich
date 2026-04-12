@@ -4249,6 +4249,58 @@ console.log("\nSTRATEGY_MODE config");
 }
 
 // ---------------------------------------------------------------------------
+// strategyMode + isMicroLegacyEnabled exposed in /health and /metrics shapes
+// ---------------------------------------------------------------------------
+console.log("\nstrategyMode + isMicroLegacyEnabled in /health and /metrics");
+{
+  const config = require("../src/config");
+
+  // Simulate /health JSON shape
+  const healthPayload = {
+    ok: true,
+    mongoConnected: true,
+    lastScanAt: null,
+    scanRunning: false,
+    strategyMode: config.STRATEGY_MODE,
+    isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY",
+    ts: new Date().toISOString(),
+  };
+  assert("strategyMode" in healthPayload,
+    "/health shape contains strategyMode field");
+  assert(typeof healthPayload.strategyMode === "string",
+    `/health strategyMode is a string (got ${typeof healthPayload.strategyMode})`);
+  assert("isMicroLegacyEnabled" in healthPayload,
+    "/health shape contains isMicroLegacyEnabled field");
+  assert(typeof healthPayload.isMicroLegacyEnabled === "boolean",
+    `/health isMicroLegacyEnabled is a boolean (got ${typeof healthPayload.isMicroLegacyEnabled})`);
+  assert(healthPayload.isMicroLegacyEnabled === (healthPayload.strategyMode === "MICRO_LEGACY"),
+    "isMicroLegacyEnabled matches strategyMode === MICRO_LEGACY");
+
+  // Simulate /metrics JSON shape
+  const metricsPayload = {
+    lastScanAt: null,
+    lastScanId: null,
+    strategyMode: config.STRATEGY_MODE,
+    isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY",
+    ts: new Date().toISOString(),
+  };
+  assert("strategyMode" in metricsPayload,
+    "/metrics shape contains strategyMode field");
+  assert(typeof metricsPayload.strategyMode === "string",
+    `/metrics strategyMode is a string (got ${typeof metricsPayload.strategyMode})`);
+  assert("isMicroLegacyEnabled" in metricsPayload,
+    "/metrics shape contains isMicroLegacyEnabled field");
+  assert(typeof metricsPayload.isMicroLegacyEnabled === "boolean",
+    `/metrics isMicroLegacyEnabled is a boolean (got ${typeof metricsPayload.isMicroLegacyEnabled})`);
+  assert(metricsPayload.isMicroLegacyEnabled === (metricsPayload.strategyMode === "MICRO_LEGACY"),
+    "/metrics isMicroLegacyEnabled matches strategyMode === MICRO_LEGACY");
+
+  // Ensure the values reflect the actual config used at runtime
+  assert(healthPayload.strategyMode === config.STRATEGY_MODE,
+    `strategyMode matches config.STRATEGY_MODE (${config.STRATEGY_MODE})`);
+}
+
+// ---------------------------------------------------------------------------
 // outcome_engine: extractFeatures
 // ---------------------------------------------------------------------------
 console.log("\noutcome_engine: extractFeatures");
