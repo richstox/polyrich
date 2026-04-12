@@ -3806,6 +3806,224 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
+// traceAutoSaveBuyYesDecisions: per-candidate first-failing-gate trace
+// ---------------------------------------------------------------------------
+console.log("\ntraceAutoSaveBuyYesDecisions");
+
+const { traceAutoSaveBuyYesDecisions } = require("../src/autosave_trace");
+
+// Helper: make a candidate that passes all policy gates (BUY YES EXECUTE)
+function makePassingBuyYesCandidate(overrides) {
+  return Object.assign({
+    question: "Will X happen?",
+    marketSlug: "will-x-happen",
+    conditionId: "0xabc123",
+    yesTokenId: "tok_yes_123",
+    noTokenId: "tok_no_456",
+    eventSlug: "x-event",
+    latestYes: 0.35,
+    bestAskNum: 0.36,
+    bestBidNum: 0.33,
+    spreadPct: 0.05,
+    liquidity: 10000,
+    volume24hr: 5000,
+    hoursLeft: 24,
+    absMove: 0.01,
+    volatility: 0.008,
+    delta1: -0.015,
+    mispricing: false,
+    momentum: false,
+    breakout: false,
+    _filtered: false,
+  }, overrides || {});
+}
+
+// Test 1: Passing candidate → decision=PASS, firstFailGate=PASS
+{
+  const candidates = [makePassingBuyYesCandidate()];
+  const noopClob = async () => ({ bestBid: 0.33, bestAsk: 0.36, topBidSize: 200, topAskSize: 150 });
+  const noopDedupe = async () => false;
+
+  // Use sync wrapper since we can't use top-level await
+  traceAutoSaveBuyYesDecisions(candidates, {}, {
+    fetchClobBookFn: noopClob,
+    checkDedupeFn: noopDedupe,
+  }).then((traces) => {
+    assert(traces.length === 1, `Trace: passing candidate → 1 trace record (got ${traces.length})`);
+    assert(traces[0].decision === "PASS", `Trace: passing candidate → decision=PASS (got ${traces[0].decision})`);
+    assert(traces[0].firstFailGate === "PASS", `Trace: passing candidate → firstFailGate=PASS (got ${traces[0].firstFailGate})`);
+    assert(traces[0].action === "BUY_YES", `Trace: passing candidate → action=BUY_YES (got ${traces[0].action})`);
+    assert(traces[0].gateCategory === "PASS", `Trace: passing candidate → gateCategory=PASS (got ${traces[0].gateCategory})`);
+  });
+}
+
+// Test 2: BUY NO candidate → firstFailGate=NO_NO_SIDE_PRICING (policy gate)
+{
+  const candidates = [makePassingBuyYesCandidate({
+    latestYes: 0.65,  // > 0.5 → BUY NO for mispricing
+    delta1: 0.015,    // > threshold + latestYes > 0.5 → BUY NO
+  })];
+  traceAutoSaveBuyYesDecisions(candidates, {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: BUY NO → 1 trace");
+    assert(traces[0].firstFailGate === "NO_NO_SIDE_PRICING", `Trace: BUY NO → firstFailGate=NO_NO_SIDE_PRICING (got ${traces[0].firstFailGate})`);
+    assert(traces[0].decision === "FAIL", `Trace: BUY NO → decision=FAIL (got ${traces[0].decision})`);
+    assert(traces[0].gateCategory === "POLICY", `Trace: BUY NO → gateCategory=POLICY (got ${traces[0].gateCategory})`);
+  });
+}
+
+// Test 3: Spread too wide → firstFailGate=SPREAD_TOO_WIDE
+{
+  const candidates = [makePassingBuyYesCandidate({ spreadPct: 0.20 })];
+  traceAutoSaveBuyYesDecisions(candidates, {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: wide spread → 1 trace");
+    assert(traces[0].firstFailGate === "SPREAD_TOO_WIDE", `Trace: wide spread → firstFailGate=SPREAD_TOO_WIDE (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "POLICY", `Trace: wide spread → gateCategory=POLICY`);
+  });
+}
+
+// Test 4: Missing tokenId → firstFailGate=MISSING_TOKEN_ID
+{
+  const candidates = [makePassingBuyYesCandidate({ yesTokenId: null })];
+  const noopClob = async () => ({ bestBid: 0.33, bestAsk: 0.36, topBidSize: 200, topAskSize: 150 });
+  traceAutoSaveBuyYesDecisions(candidates, {}, { fetchClobBookFn: noopClob }).then((traces) => {
+    assert(traces.length === 1, "Trace: no tokenId → 1 trace");
+    assert(traces[0].firstFailGate === "MISSING_TOKEN_ID", `Trace: no tokenId → firstFailGate=MISSING_TOKEN_ID (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "DATA_INTEGRITY", `Trace: no tokenId → gateCategory=DATA_INTEGRITY`);
+  });
+}
+
+// Test 5: CLOB spread recheck fails → firstFailGate=CLOB_SPREAD_RECHECK
+{
+  const candidates = [makePassingBuyYesCandidate()];
+  // CLOB returns wide spread: bid=0.20, ask=0.36 → spread = (0.36-0.20)/0.28 = 57%
+  const wideClobBook = async () => ({ bestBid: 0.20, bestAsk: null, topBidSize: 200, topAskSize: 150 });
+  traceAutoSaveBuyYesDecisions(candidates, {}, { fetchClobBookFn: wideClobBook }).then((traces) => {
+    assert(traces.length === 1, "Trace: CLOB wide spread → 1 trace");
+    assert(traces[0].firstFailGate === "CLOB_SPREAD_RECHECK", `Trace: CLOB wide spread → firstFailGate=CLOB_SPREAD_RECHECK (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "SERVER_EXECUTION", `Trace: CLOB wide spread → gateCategory=SERVER_EXECUTION`);
+  });
+}
+
+// Test 6: Bid below SL → firstFailGate=BID_BELOW_SL
+{
+  const candidates = [makePassingBuyYesCandidate({ bestBidNum: 0.33, bestAskNum: 0.36 })];
+  // entry=0.36, SL = entry - max(K_SL*vol, MIN_SL_DISTANCE) = 0.36 - max(1.5*0.008, 0.03) = 0.36 - 0.03 = 0.33
+  // CLOB returns bid=0.32 (below SL=0.33) but ask=0.37 so spread = (0.37-0.32)/0.345 ≈ 14.5% < 15%
+  const lowBidClob = async () => ({ bestBid: 0.32, bestAsk: 0.37, topBidSize: 200, topAskSize: 150 });
+  traceAutoSaveBuyYesDecisions(candidates, {}, { fetchClobBookFn: lowBidClob }).then((traces) => {
+    assert(traces.length === 1, "Trace: bid below SL → 1 trace");
+    assert(traces[0].firstFailGate === "BID_BELOW_SL", `Trace: bid below SL → firstFailGate=BID_BELOW_SL (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "SERVER_EXECUTION", `Trace: bid below SL → gateCategory=SERVER_EXECUTION`);
+  });
+}
+
+// Test 7: Dedupe hit → firstFailGate=DEDUPE_HIT
+{
+  const candidates = [makePassingBuyYesCandidate()];
+  const noopClob = async () => ({ bestBid: 0.33, bestAsk: 0.36, topBidSize: 200, topAskSize: 150 });
+  const alwaysDuplicate = async () => true;
+  traceAutoSaveBuyYesDecisions(candidates, {}, {
+    fetchClobBookFn: noopClob,
+    checkDedupeFn: alwaysDuplicate,
+  }).then((traces) => {
+    assert(traces.length === 1, "Trace: dedupe hit → 1 trace");
+    assert(traces[0].firstFailGate === "DEDUPE_HIT", `Trace: dedupe hit → firstFailGate=DEDUPE_HIT (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "DEDUPE", `Trace: dedupe hit → gateCategory=DEDUPE`);
+  });
+}
+
+// Test 8: Error in CLOB fetch → firstFailGate=CLOB_FETCH_ERROR (errors not swallowed)
+{
+  const candidates = [makePassingBuyYesCandidate()];
+  const errorClob = async () => { throw new Error("CLOB_TIMEOUT"); };
+  traceAutoSaveBuyYesDecisions(candidates, {}, { fetchClobBookFn: errorClob }).then((traces) => {
+    assert(traces.length === 1, "Trace: CLOB error → 1 trace");
+    assert(traces[0].firstFailGate === "CLOB_FETCH_ERROR", `Trace: CLOB error → firstFailGate=CLOB_FETCH_ERROR (got ${traces[0].firstFailGate})`);
+    assert(traces[0].decision === "ERROR", `Trace: CLOB error → decision=ERROR (got ${traces[0].decision})`);
+    assert(traces[0].reasonCode === "CLOB_TIMEOUT", `Trace: CLOB error → reasonCode includes error msg (got ${traces[0].reasonCode})`);
+  });
+}
+
+// Test 9: Sizing gate → SIZE_NULL when risk budget is tiny (below $1 floor)
+{
+  const candidates = [makePassingBuyYesCandidate()];
+  const sizingSettings = { bankrollUsd: 100, riskPct: 0.001, maxTradeCapUsd: 50 };
+  // riskBudget = 100 * 0.001 = $0.10 → below $1 raw floor → inferSize returns null → SIZE_NULL
+  traceAutoSaveBuyYesDecisions(candidates, sizingSettings, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: tiny risk → 1 trace");
+    assert(traces[0].firstFailGate === "SIZE_NULL", `Trace: tiny risk → firstFailGate=SIZE_NULL (got ${traces[0].firstFailGate})`);
+    assert(traces[0].gateCategory === "POLICY", `Trace: tiny risk → gateCategory=POLICY`);
+    assert(traces[0].action === "BUY_YES", `Trace: tiny risk → action=BUY_YES`);
+  });
+}
+
+// Test 10: Direction unclear → DIRECTION_UNCLEAR
+{
+  const candidates = [makePassingBuyYesCandidate({
+    delta1: 0, mispricing: false, momentum: false, breakout: false,
+  })];
+  traceAutoSaveBuyYesDecisions(candidates, {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: direction unclear → 1 trace");
+    assert(traces[0].firstFailGate === "DIRECTION_UNCLEAR", `Trace: direction unclear → firstFailGate=DIRECTION_UNCLEAR (got ${traces[0].firstFailGate})`);
+  });
+}
+
+// Test 11: Multiple candidates — deterministic per-candidate trace
+{
+  const candidates = [
+    makePassingBuyYesCandidate({ marketSlug: "market-a" }),                     // should PASS
+    makePassingBuyYesCandidate({ marketSlug: "market-b", spreadPct: 0.20 }),   // SPREAD_TOO_WIDE
+    makePassingBuyYesCandidate({ marketSlug: "market-c", yesTokenId: null }),   // MISSING_TOKEN_ID
+  ];
+  const noopClob = async () => ({ bestBid: 0.33, bestAsk: 0.36, topBidSize: 200, topAskSize: 150 });
+  const noopDedupe = async () => false;
+  traceAutoSaveBuyYesDecisions(candidates, {}, {
+    fetchClobBookFn: noopClob, checkDedupeFn: noopDedupe,
+  }).then((traces) => {
+    assert(traces.length === 3, `Trace: 3 candidates → 3 traces (got ${traces.length})`);
+    const a = traces.find(t => t.marketSlug === "market-a");
+    const b = traces.find(t => t.marketSlug === "market-b");
+    const c = traces.find(t => t.marketSlug === "market-c");
+    assert(a && a.firstFailGate === "PASS", `market-a → PASS (got ${a && a.firstFailGate})`);
+    assert(b && b.firstFailGate === "SPREAD_TOO_WIDE", `market-b → SPREAD_TOO_WIDE (got ${b && b.firstFailGate})`);
+    assert(c && c.firstFailGate === "MISSING_TOKEN_ID", `market-c → MISSING_TOKEN_ID (got ${c && c.firstFailGate})`);
+  });
+}
+
+// Test 12: Error in evaluateCandidateForExecution → EVAL_ERROR (not swallowed)
+{
+  // Create a candidate with a property that will cause evaluateCandidateForExecution to throw
+  // by making computeTradeability access a property on undefined
+  const badCandidate = null; // Will throw TypeError
+  traceAutoSaveBuyYesDecisions([badCandidate], {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: bad candidate → 1 trace");
+    assert(traces[0].firstFailGate === "EVAL_ERROR", `Trace: bad candidate → firstFailGate=EVAL_ERROR (got ${traces[0].firstFailGate})`);
+    assert(traces[0].decision === "ERROR", `Trace: bad candidate → decision=ERROR (got ${traces[0].decision})`);
+    assert(traces[0].gateCategory === "ERROR", `Trace: bad candidate → gateCategory=ERROR`);
+  });
+}
+
+// Test 13: No movement → NO_MOVEMENT
+{
+  const candidates = [makePassingBuyYesCandidate({ absMove: 0, volatility: 0 })];
+  traceAutoSaveBuyYesDecisions(candidates, {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: no movement → 1 trace");
+    assert(traces[0].firstFailGate === "NO_MOVEMENT", `Trace: no movement → firstFailGate=NO_MOVEMENT (got ${traces[0].firstFailGate})`);
+  });
+}
+
+// Test 14: Low liquidity → LIQUIDITY_TOO_LOW
+{
+  const candidates = [makePassingBuyYesCandidate({ liquidity: 100 })];
+  traceAutoSaveBuyYesDecisions(candidates, {}, {}).then((traces) => {
+    assert(traces.length === 1, "Trace: low liquidity → 1 trace");
+    // computeTradeability detects low liquidity → "Watch" → inferDirection returns WATCH
+    // The firstFailGate should be LIQUIDITY_TOO_LOW (from computeTradeability reasonCodes)
+    assert(traces[0].firstFailGate === "LIQUIDITY_TOO_LOW", `Trace: low liq → firstFailGate=LIQUIDITY_TOO_LOW (got ${traces[0].firstFailGate})`);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // attemptAutoClose: HARD GUARD — no close at $0.00 unless MARKET_SETTLED
 // (async tests — summary printed at the end of this block)
 // ---------------------------------------------------------------------------

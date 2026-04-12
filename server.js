@@ -55,6 +55,8 @@ const { startMonitorLoop, getMonitorStatus, fetchClobBook } = require("./src/aut
 
 const MonitorLease = require("./models/MonitorLease");
 const PaperRunnerLog = require("./models/PaperRunnerLog");
+const AutoSaveDecisionLog = require("./models/AutoSaveDecisionLog");
+const { traceAutoSaveBuyYesDecisions } = require("./src/autosave_trace");
 const DANGER_ZONE_VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN", "RESET_TRADES", "FACTORY_RESET"];
 
 // ---------------------------------------------------------------------------
@@ -431,6 +433,41 @@ async function autoSaveExecuteTickets(scanId) {
         entryBidNum: evalResult.entryBidNum,
       });
     } catch (_) { skipReasons.skipped_error++; }
+  }
+
+  // --- BUY YES decision trace: per-candidate first-failing-gate analysis ---
+  try {
+    const traceRecords = await traceAutoSaveBuyYesDecisions(cards, sizingSettings, {
+      fetchClobBookFn: fetchClobBook,
+      checkDedupeFn: async (dedupeKey) => {
+        const existing = await TradeTicket.findOne({
+          dedupeKey,
+          status: { $in: ["OPEN", "CLOSING"] },
+        }).lean();
+        return !!existing;
+      },
+      maxCandidates: cards.length,
+    });
+    if (traceRecords.length > 0) {
+      await AutoSaveDecisionLog.insertMany(
+        traceRecords.map((r) => ({ ...r, scanId })),
+        { ordered: false }
+      ).catch((err) => {
+        console.warn(JSON.stringify({ msg: "autoSave: trace persist partial error", scanId, err: err.message }));
+      });
+    }
+    const buyYesCount = traceRecords.filter((r) => r.action === "BUY_YES").length;
+    const passCount = traceRecords.filter((r) => r.decision === "PASS").length;
+    console.log(JSON.stringify({
+      msg: "autoSave-trace",
+      scanId,
+      totalTraced: traceRecords.length,
+      buyYesCount,
+      passCount,
+      ts: new Date().toISOString(),
+    }));
+  } catch (traceErr) {
+    console.warn(JSON.stringify({ msg: "autoSave: trace error (non-fatal)", scanId, err: traceErr.message }));
   }
 
   const limit = config.AUTO_SAVE_EXECUTE_LIMIT;
@@ -1468,6 +1505,90 @@ if (url.pathname === "/trade") {
     return;
   }
 
+  // ── GET /api/system/autosave-trace ──────────────────────────────────
+  // Per-candidate BUY YES decision trace for a specific scanId.
+  // Returns: counts by firstFailGate + top failed candidates with details.
+  // Query params:
+  //   scanId  — required (or uses most recent scanId from scanStatus)
+  //   limit   — max failed candidates to return (default 10, max 50)
+  if (url.pathname === "/api/system/autosave-trace" && req.method === "GET") {
+    try {
+      const scanIdParam = url.searchParams.get("scanId") || scanStatus.lastScanId;
+      if (!scanIdParam) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "No scanId provided and no lastScanId available" }));
+        return;
+      }
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "10", 10) || 10, 50);
+
+      const [gateCounts, totalRecords, buyYesRecords, passRecords, failedRecords] = await Promise.all([
+        AutoSaveDecisionLog.aggregate([
+          { $match: { scanId: scanIdParam } },
+          { $group: { _id: "$firstFailGate", count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+        ]),
+        AutoSaveDecisionLog.countDocuments({ scanId: scanIdParam }),
+        AutoSaveDecisionLog.countDocuments({ scanId: scanIdParam, action: "BUY_YES" }),
+        AutoSaveDecisionLog.countDocuments({ scanId: scanIdParam, decision: "PASS" }),
+        AutoSaveDecisionLog.find({ scanId: scanIdParam, decision: { $ne: "PASS" } })
+          .sort({ createdAt: -1 })
+          .limit(limit)
+          .lean(),
+      ]);
+
+      // Classify root cause
+      const gateCountMap = {};
+      for (const g of gateCounts) gateCountMap[g._id] = g.count;
+
+      let rootCause = "UNKNOWN";
+      const policyGates = ["EXCLUDED", "TOO_FAR_FROM_EXPIRY", "SPREAD_TOO_WIDE", "LIQUIDITY_TOO_LOW",
+        "VOL_TOO_LOW", "TOO_CLOSE_TO_EXPIRY", "DIRECTION_UNCLEAR", "NO_MOVEMENT",
+        "NO_NO_SIDE_PRICING", "NO_YES_SIDE_PRICING", "NO_ENTRY_PRICING",
+        "SIZE_NULL", "SIZE_TOO_SMALL", "NO_EXIT_LEVELS", "NOT_BUY_YES",
+        "skipped_watch", "skipped_no_entry", "skipped_no_size", "skipped_size_too_small", "skipped_exits_null"];
+      const dataGates = ["MISSING_CONDITION_ID", "MISSING_TOKEN_ID"];
+      const serverGates = ["CLOB_FETCH_NULL", "CLOB_FETCH_ERROR", "NO_EXECUTABLE_BID", "CLOB_SPREAD_RECHECK", "BID_BELOW_SL", "INSUFFICIENT_BID_SIZE"];
+      const dedupeGates = ["DEDUPE_HIT", "DEDUPE_ERROR"];
+      const errorGates = ["EVAL_ERROR", "SKIP_ERROR"];
+
+      let policyCount = 0, dataCount = 0, serverCount = 0, dedupeCount = 0, errorCount = 0;
+      for (const [gate, cnt] of Object.entries(gateCountMap)) {
+        if (gate === "PASS") continue;
+        if (policyGates.includes(gate)) policyCount += cnt;
+        else if (dataGates.includes(gate)) dataCount += cnt;
+        else if (serverGates.includes(gate)) serverCount += cnt;
+        else if (dedupeGates.includes(gate)) dedupeCount += cnt;
+        else if (errorGates.includes(gate)) errorCount += cnt;
+      }
+
+      const totalFailed = policyCount + dataCount + serverCount + dedupeCount + errorCount;
+      if (totalFailed === 0 && passRecords > 0) rootCause = "ALL_PASSING";
+      else if (totalFailed === 0) rootCause = "NO_CANDIDATES";
+      else if (policyCount >= totalFailed * 0.6) rootCause = "A_OVER_FILTERING_POLICY";
+      else if (serverCount >= totalFailed * 0.6) rootCause = "C_SERVER_EXECUTION_GATE";
+      else if (dataCount >= totalFailed * 0.6) rootCause = "D_DATA_INTEGRITY";
+      else if (dedupeCount >= totalFailed * 0.6) rootCause = "E_DEDUPE";
+      else if (errorCount >= totalFailed * 0.6) rootCause = "D_SILENT_SKIPPING_BUG";
+      else rootCause = "MIXED";
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        scanId: scanIdParam,
+        totalCandidatesTraced: totalRecords,
+        buyYesCandidates: buyYesRecords,
+        passedAllGates: passRecords,
+        gateCounts: gateCountMap,
+        rootCauseClassification: rootCause,
+        rootCauseBreakdown: { policy: policyCount, dataIntegrity: dataCount, serverExecution: serverCount, dedupe: dedupeCount, error: errorCount },
+        topFailedCandidates: failedRecords,
+      }, null, 2));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
   // ── POST /api/tickets/autoclose ────────────────────────────────────
   if (url.pathname === "/api/tickets/autoclose" && req.method === "POST") {
     let body = "";
@@ -2454,7 +2575,7 @@ if (url.pathname === "/trade") {
   // ── GET /api/system/danger-zone/counts ──────────────────────────────
   if (url.pathname === "/api/system/danger-zone/counts" && req.method === "GET") {
     try {
-      const [allTickets, closedTickets, openClosingTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches, monitorLeases] = await Promise.all([
+      const [allTickets, closedTickets, openClosingTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches, monitorLeases, decisionLogs] = await Promise.all([
         TradeTicket.countDocuments({}),
         TradeTicket.countDocuments({ status: "CLOSED" }),
         TradeTicket.countDocuments({ status: { $in: ["OPEN", "CLOSING"] } }),
@@ -2465,6 +2586,7 @@ if (url.pathname === "/trade") {
         ShownCandidate.estimatedDocumentCount(),
         TagCache.estimatedDocumentCount(),
         MonitorLease.estimatedDocumentCount(),
+        AutoSaveDecisionLog.estimatedDocumentCount(),
       ]);
       const closedTicketIds = await TradeTicket.find({ status: "CLOSED" }).select("_id").lean();
       const closedCloseAttempts = closedTicketIds.length > 0
@@ -2476,7 +2598,7 @@ if (url.pathname === "/trade") {
         DELETE_CLOSED: { tickets: closedTickets, closeAttempts: closedCloseAttempts },
         DELETE_OPEN: { tickets: openClosingTickets },
         RESET_TRADES: { tickets: allTickets, closeAttempts },
-        FACTORY_RESET: { tickets: allTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches, monitorLeases },
+        FACTORY_RESET: { tickets: allTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches, monitorLeases, decisionLogs },
       }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
@@ -2539,7 +2661,7 @@ if (url.pathname === "/trade") {
           deleted.tickets = ticketResult.deletedCount;
           deleted.closeAttempts = closeAttemptResult.deletedCount;
         } else if (action === "FACTORY_RESET") {
-          const [ticketResult, closeAttemptResult, autoSaveResult, snapshotResult, scanResult, shownResult, tagResult, leaseResult] = await Promise.all([
+          const [ticketResult, closeAttemptResult, autoSaveResult, snapshotResult, scanResult, shownResult, tagResult, leaseResult, decisionLogResult] = await Promise.all([
             TradeTicket.deleteMany({}),
             CloseAttempt.deleteMany({}),
             AutoSaveLog.deleteMany({}),
@@ -2548,6 +2670,7 @@ if (url.pathname === "/trade") {
             ShownCandidate.deleteMany({}),
             TagCache.deleteMany({}),
             MonitorLease.deleteMany({}),
+            AutoSaveDecisionLog.deleteMany({}),
           ]);
           // Reset the lastAutoSaveScanId so next scan can auto-save
           await SystemSetting.updateOne({ _id: "system" }, { $set: { lastAutoSaveScanId: null } });
@@ -2562,6 +2685,7 @@ if (url.pathname === "/trade") {
           deleted.shownCandidates = shownResult.deletedCount;
           deleted.tagCaches = tagResult.deletedCount;
           deleted.monitorLeases = leaseResult.deletedCount;
+          deleted.decisionLogs = decisionLogResult.deletedCount;
         }
 
         res.writeHead(200, { "Content-Type": "application/json" });
