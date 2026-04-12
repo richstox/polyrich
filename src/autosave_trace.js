@@ -285,8 +285,8 @@ async function traceAutoSaveBuyYesDecisions(candidates, sizingSettings, opts) {
 
     // Gate 14: CLOB_SPREAD_RECHECK (hard skip — no ticket created)
     const entryAskNum = entryNum;
-    const midNum = (hasValidBid && entryAskNum) ? (entryAskNum + entryBidNum) / 2 : null;
-    const spreadAbs = (hasValidBid && entryAskNum) ? (entryAskNum - entryBidNum) : null;
+    const midNum = (hasValidBid && hasValidAsk) ? (entryAskNum + entryBidNum) / 2 : null;
+    const spreadAbs = (hasValidBid && hasValidAsk) ? (entryAskNum - entryBidNum) : null;
     const spreadPct = (midNum && midNum > 0 && spreadAbs !== null) ? spreadAbs / midNum : null;
 
     if (spreadPct !== null && spreadPct > config.MAX_ENTRY_SPREAD_PCT) {

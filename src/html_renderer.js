@@ -144,14 +144,15 @@ function computeTradeability(item) {
   // The enrichItem spreadPct formula divides by min(yesPrice, 1-yesPrice),
   // which inflates spread for low-price markets.  The server-side CLOB
   // recheck uses mid-based spread — align the policy gate with that.
+  const hasBothSides = item.bestBidNum > 0 && item.bestAskNum > 0;
   let effectiveSpreadPct = item.spreadPct;
-  if (item.bestBidNum > 0 && item.bestAskNum > 0) {
+  if (hasBothSides) {
     const mid = (item.bestBidNum + item.bestAskNum) / 2;
     if (mid > 0) effectiveSpreadPct = (item.bestAskNum - item.bestBidNum) / mid;
   }
   if (effectiveSpreadPct > config.MAX_ENTRY_SPREAD_PCT) {
     reasonCodes.push("SPREAD_TOO_WIDE");
-    reasonDetails.SPREAD_TOO_WIDE = { spreadPct: effectiveSpreadPct, enrichedSpreadPct: item.spreadPct, maxSpreadPct: config.MAX_ENTRY_SPREAD_PCT, source: (item.bestBidNum > 0 && item.bestAskNum > 0) ? "mid-based" : "enriched" };
+    reasonDetails.SPREAD_TOO_WIDE = { spreadPct: effectiveSpreadPct, enrichedSpreadPct: item.spreadPct, maxSpreadPct: config.MAX_ENTRY_SPREAD_PCT, source: hasBothSides ? "mid-based" : "enriched" };
   }
   if (item.liquidity < 500) {
     reasonCodes.push("LIQUIDITY_TOO_LOW");
