@@ -112,4 +112,14 @@ module.exports = {
 
   // Paper-runner: max candidates to evaluate before giving up
   PAPER_RUNNER_MAX_CANDIDATES: parseInt(process.env.PAPER_RUNNER_MAX_CANDIDATES || "20", 10),
+
+  // ---------------------------------------------------------------------------
+  // Strategy mode — controls which product path is active
+  // ---------------------------------------------------------------------------
+  // OUTCOME  (default) — thesis-driven: extract features, score mispricing,
+  //                       render WATCH / ENTER / AVOID, store auditable rationale.
+  //                       All micro-trading auto-save/auto-close is disabled.
+  // MICRO_LEGACY       — re-enables the micro-trading flow (auto-save EXECUTE,
+  //                       TP/SL-driven auto-close, admission gates).
+  STRATEGY_MODE: process.env.STRATEGY_MODE || "OUTCOME",
 };

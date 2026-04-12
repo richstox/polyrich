@@ -4229,6 +4229,303 @@ function makePassingBuyYesCandidate(overrides) {
 }
 
 // ---------------------------------------------------------------------------
+// STRATEGY_MODE config tests
+// ---------------------------------------------------------------------------
+console.log("\nSTRATEGY_MODE config");
+{
+  const config = require("../src/config");
+  // Default STRATEGY_MODE should be "OUTCOME" when STRATEGY_MODE env is not set.
+  // In the test environment, the env var is typically unset, so we expect "OUTCOME".
+  // If STRATEGY_MODE is explicitly set to MICRO_LEGACY, that's also valid.
+  assert(config.STRATEGY_MODE === "OUTCOME" || config.STRATEGY_MODE === "MICRO_LEGACY",
+    `STRATEGY_MODE is a valid value (got "${config.STRATEGY_MODE}")`);
+  assert(typeof config.STRATEGY_MODE === "string",
+    `STRATEGY_MODE is a string (got ${typeof config.STRATEGY_MODE})`);
+  // When env is not set, default should be OUTCOME
+  if (!process.env.STRATEGY_MODE) {
+    assert(config.STRATEGY_MODE === "OUTCOME",
+      `STRATEGY_MODE defaults to OUTCOME when env unset (got "${config.STRATEGY_MODE}")`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// outcome_engine: extractFeatures
+// ---------------------------------------------------------------------------
+console.log("\noutcome_engine: extractFeatures");
+{
+  const { extractFeatures } = require("../src/outcome_engine");
+  const item = {
+    signalType: "momentum",
+    signalScore2: 250,
+    mispricingTerm: 42,
+    spreadPct: 0.05,
+    liquidity: 5000,
+    volume24hr: 1200,
+    volatility: 0.015,
+    absMove: 0.008,
+    hoursLeft: 24,
+    latestYes: 0.65,
+    bestBidNum: 0.63,
+    bestAskNum: 0.67,
+    mispricing: false,
+    momentum: true,
+    breakout: false,
+    reversal: false,
+  };
+  const f = extractFeatures(item);
+  assert(f.signalType === "momentum", "extractFeatures: signalType=momentum");
+  assert(f.signalScore === 250, "extractFeatures: signalScore=250");
+  assert(f.mispricingScore === 42, "extractFeatures: mispricingScore=42");
+  assert(f.spreadPct === 0.05, "extractFeatures: spreadPct=0.05");
+  assert(f.liquidity === 5000, "extractFeatures: liquidity=5000");
+  assert(f.volume24hr === 1200, "extractFeatures: volume24hr=1200");
+  assert(f.volatility === 0.015, "extractFeatures: volatility=0.015");
+  assert(f.absMove === 0.008, "extractFeatures: absMove=0.008");
+  assert(f.hoursLeft === 24, "extractFeatures: hoursLeft=24");
+  assert(f.latestYes === 0.65, "extractFeatures: latestYes=0.65");
+  assert(f.bestBidNum === 0.63, "extractFeatures: bestBidNum=0.63");
+  assert(f.bestAskNum === 0.67, "extractFeatures: bestAskNum=0.67");
+  assert(f.mispricing === false, "extractFeatures: mispricing=false");
+  assert(f.momentum === true, "extractFeatures: momentum=true");
+  assert(f.breakout === false, "extractFeatures: breakout=false");
+  assert(f.reversal === false, "extractFeatures: reversal=false");
+}
+
+// ---------------------------------------------------------------------------
+// outcome_engine: extractFeatures (null/missing fields)
+// ---------------------------------------------------------------------------
+console.log("\noutcome_engine: extractFeatures with missing fields");
+{
+  const { extractFeatures } = require("../src/outcome_engine");
+  const empty = {};
+  const f = extractFeatures(empty);
+  assert(f.signalType === null, "extractFeatures(empty): signalType=null");
+  assert(f.signalScore === null, "extractFeatures(empty): signalScore=null");
+  assert(f.mispricingScore === 0, "extractFeatures(empty): mispricingScore=0");
+  assert(f.hoursLeft === null, "extractFeatures(empty): hoursLeft=null");
+  assert(f.mispricing === false, "extractFeatures(empty): mispricing=false");
+}
+
+// ---------------------------------------------------------------------------
+// outcome_engine: scoreVerdict — AVOID cases
+// ---------------------------------------------------------------------------
+console.log("\noutcome_engine: scoreVerdict AVOID");
+{
+  const { scoreVerdict, AVOID_SPREAD_PCT, AVOID_MAX_EXTREME, AVOID_MIN_EXTREME } = require("../src/outcome_engine");
+
+  // Expired market
+  const expired = { hoursLeft: -1, bestBidNum: 0.5, bestAskNum: 0.55, latestYes: 0.5, spreadPct: 0.05 };
+  const r1 = scoreVerdict(expired);
+  assert(r1.verdict === "AVOID", "AVOID: expired market (hoursLeft=-1)");
+  assert(r1.reason.includes("expired"), `AVOID reason mentions expired (got "${r1.reason}")`);
+
+  // Filtered
+  const filtered = { _filtered: true, hoursLeft: 24, bestBidNum: 0.5, bestAskNum: 0.55, latestYes: 0.5, spreadPct: 0.05 };
+  const r2 = scoreVerdict(filtered);
+  assert(r2.verdict === "AVOID", "AVOID: _filtered=true");
+  assert(r2.reason.includes("guardrails"), `AVOID reason mentions guardrails (got "${r2.reason}")`);
+
+  // Extreme price high
+  const extremeHigh = { hoursLeft: 24, bestBidNum: 0.5, bestAskNum: 0.55, latestYes: 0.99, spreadPct: 0.05 };
+  const r3 = scoreVerdict(extremeHigh);
+  assert(r3.verdict === "AVOID", "AVOID: extreme price (0.99)");
+
+  // Extreme price low
+  const extremeLow = { hoursLeft: 24, bestBidNum: 0.5, bestAskNum: 0.55, latestYes: 0.01, spreadPct: 0.05 };
+  const r4 = scoreVerdict(extremeLow);
+  assert(r4.verdict === "AVOID", "AVOID: extreme price (0.01)");
+
+  // Wide spread
+  const wideSpread = { hoursLeft: 24, bestBidNum: 0.5, bestAskNum: 0.55, latestYes: 0.5, spreadPct: 0.30 };
+  const r5 = scoreVerdict(wideSpread);
+  assert(r5.verdict === "AVOID", "AVOID: wide spread (0.30)");
+  assert(r5.reason.includes("spread"), `AVOID reason mentions spread (got "${r5.reason}")`);
+
+  // No orderbook
+  const noBook = { hoursLeft: 24, bestBidNum: 0, bestAskNum: 0.55, latestYes: 0.5, spreadPct: 0.05 };
+  const r6 = scoreVerdict(noBook);
+  assert(r6.verdict === "AVOID", "AVOID: no bid (bestBidNum=0)");
+
+  const noAsk = { hoursLeft: 24, bestBidNum: 0.5, bestAskNum: 0, latestYes: 0.5, spreadPct: 0.05 };
+  const r7 = scoreVerdict(noAsk);
+  assert(r7.verdict === "AVOID", "AVOID: no ask (bestAskNum=0)");
+}
+
+// ---------------------------------------------------------------------------
+// outcome_engine: scoreVerdict — ENTER case
+// ---------------------------------------------------------------------------
+console.log("\noutcome_engine: scoreVerdict ENTER");
+{
+  const { scoreVerdict, ENTER_MIN_SIGNAL_SCORE } = require("../src/outcome_engine");
+
+  const enterItem = {
+    hoursLeft: 24,
+    bestBidNum: 0.63,
+    bestAskNum: 0.67,
+    latestYes: 0.65,
+    spreadPct: 0.05,
+    signalScore2: 300,
+    mispricing: true,
+    momentum: true,
+    breakout: false,
+    reversal: false,
+    signalType: "mispricing",
+    mispricingTerm: 100,
+    volatility: 0.02,
+    absMove: 0.01,
+    liquidity: 10000,
+    volume24hr: 5000,
+    reasonCodes: ["mispricing", "momentum"],
+  };
+  const r = scoreVerdict(enterItem);
+  assert(r.verdict === "ENTER", `ENTER: signal score ${enterItem.signalScore2} ≥ threshold (got ${r.verdict})`);
+  assert(r.reason.includes("mispricing"), `ENTER reason mentions mispricing (got "${r.reason}")`);
+  assert(r.reason.includes("signal score"), `ENTER reason mentions signal score (got "${r.reason}")`);
+}
+
+// ---------------------------------------------------------------------------
+// outcome_engine: scoreVerdict — WATCH case
+// ---------------------------------------------------------------------------
+console.log("\noutcome_engine: scoreVerdict WATCH");
+{
+  const { scoreVerdict, ENTER_MIN_SIGNAL_SCORE } = require("../src/outcome_engine");
+
+  // Good market but low signal score → WATCH
+  const watchItem = {
+    hoursLeft: 24,
+    bestBidNum: 0.63,
+    bestAskNum: 0.67,
+    latestYes: 0.65,
+    spreadPct: 0.05,
+    signalScore2: 50,  // below ENTER threshold
+    mispricing: false,
+    momentum: false,
+    breakout: false,
+    reversal: false,
+    signalType: "momentum",
+    volatility: 0.01,
+    absMove: 0.002,
+    liquidity: 1000,
+    volume24hr: 500,
+  };
+  const r = scoreVerdict(watchItem);
+  assert(r.verdict === "WATCH", `WATCH: low signal score (got ${r.verdict})`);
+  assert(r.reason.length > 0, "WATCH: rationale is non-empty");
+}
+
+// ---------------------------------------------------------------------------
+// outcome_engine: scoreVerdict — WATCH (has signal but score too low)
+// ---------------------------------------------------------------------------
+console.log("\noutcome_engine: scoreVerdict WATCH (signal but low score)");
+{
+  const { scoreVerdict, ENTER_MIN_SIGNAL_SCORE } = require("../src/outcome_engine");
+
+  const lowScoreSignal = {
+    hoursLeft: 48,
+    bestBidNum: 0.50,
+    bestAskNum: 0.55,
+    latestYes: 0.52,
+    spreadPct: 0.08,
+    signalScore2: ENTER_MIN_SIGNAL_SCORE - 1,
+    mispricing: false,
+    momentum: true,
+    breakout: false,
+    reversal: false,
+  };
+  const r = scoreVerdict(lowScoreSignal);
+  assert(r.verdict === "WATCH", `WATCH: momentum signal but score=${lowScoreSignal.signalScore2} < ${ENTER_MIN_SIGNAL_SCORE}`);
+}
+
+// ---------------------------------------------------------------------------
+// outcome_engine: evaluateTheses batch
+// ---------------------------------------------------------------------------
+console.log("\noutcome_engine: evaluateTheses");
+{
+  const { evaluateTheses } = require("../src/outcome_engine");
+
+  const items = [
+    // ENTER candidate
+    {
+      hoursLeft: 24, bestBidNum: 0.63, bestAskNum: 0.67, latestYes: 0.65,
+      spreadPct: 0.05, signalScore2: 300, mispricing: true, momentum: true,
+      breakout: false, reversal: false, question: "Will X happen?",
+      marketSlug: "will-x-happen", reasonCodes: ["mispricing"],
+    },
+    // WATCH candidate
+    {
+      hoursLeft: 24, bestBidNum: 0.40, bestAskNum: 0.45, latestYes: 0.42,
+      spreadPct: 0.08, signalScore2: 80, mispricing: false, momentum: false,
+      breakout: false, reversal: false, question: "Will Y happen?",
+      marketSlug: "will-y-happen", reasonCodes: [],
+    },
+    // AVOID candidate (expired)
+    {
+      hoursLeft: -5, bestBidNum: 0.50, bestAskNum: 0.55, latestYes: 0.52,
+      spreadPct: 0.05, signalScore2: 200, mispricing: true, momentum: true,
+      breakout: false, reversal: false, question: "Will Z happen?",
+      marketSlug: "will-z-happen", reasonCodes: [],
+    },
+  ];
+
+  const results = evaluateTheses(items);
+  assert(results.length === 3, `evaluateTheses: returns 3 results (got ${results.length})`);
+  assert(results[0].verdict === "ENTER", `evaluateTheses[0]: ENTER (got ${results[0].verdict})`);
+  assert(results[1].verdict === "WATCH", `evaluateTheses[1]: WATCH (got ${results[1].verdict})`);
+  assert(results[2].verdict === "AVOID", `evaluateTheses[2]: AVOID (got ${results[2].verdict})`);
+  assert(typeof results[0].rationale === "string" && results[0].rationale.length > 0,
+    "evaluateTheses[0]: has non-empty rationale");
+  assert(typeof results[0].features === "object" && results[0].features !== null,
+    "evaluateTheses[0]: has features object");
+}
+
+// ---------------------------------------------------------------------------
+// outcome_engine: scoreVerdict edge — hoursLeft=null (no deadline)
+// ---------------------------------------------------------------------------
+console.log("\noutcome_engine: scoreVerdict edge cases");
+{
+  const { scoreVerdict } = require("../src/outcome_engine");
+
+  // null hoursLeft should not trigger AVOID-expired
+  const noDeadline = {
+    hoursLeft: null, bestBidNum: 0.50, bestAskNum: 0.55, latestYes: 0.52,
+    spreadPct: 0.05, signalScore2: 200, mispricing: true, momentum: true,
+    breakout: false, reversal: false,
+  };
+  const r1 = scoreVerdict(noDeadline);
+  assert(r1.verdict !== "AVOID" || !r1.reason.includes("expired"),
+    "scoreVerdict: null hoursLeft does not trigger expired AVOID");
+
+  // hoursLeft=0 should trigger AVOID
+  const zeroHours = {
+    hoursLeft: 0, bestBidNum: 0.50, bestAskNum: 0.55, latestYes: 0.52,
+    spreadPct: 0.05, signalScore2: 200, mispricing: true, momentum: true,
+    breakout: false, reversal: false,
+  };
+  const r2 = scoreVerdict(zeroHours);
+  assert(r2.verdict === "AVOID", "scoreVerdict: hoursLeft=0 → AVOID");
+
+  // Boundary: latestYes exactly at AVOID_MAX_EXTREME (0.97)
+  const exactBoundary = {
+    hoursLeft: 24, bestBidNum: 0.50, bestAskNum: 0.55, latestYes: 0.97,
+    spreadPct: 0.05, signalScore2: 200, mispricing: true, momentum: true,
+    breakout: false, reversal: false,
+  };
+  const r3 = scoreVerdict(exactBoundary);
+  // 0.97 === AVOID_MAX_EXTREME → should NOT avoid (> not >=)
+  assert(r3.verdict !== "AVOID" || !r3.reason.includes("Extreme"),
+    "scoreVerdict: latestYes=0.97 (boundary) does not trigger extreme AVOID");
+
+  // latestYes just above threshold → AVOID
+  const justAbove = {
+    hoursLeft: 24, bestBidNum: 0.50, bestAskNum: 0.55, latestYes: 0.98,
+    spreadPct: 0.05, signalScore2: 200, mispricing: true, momentum: true,
+    breakout: false, reversal: false,
+  };
+  const r4 = scoreVerdict(justAbove);
+  assert(r4.verdict === "AVOID", "scoreVerdict: latestYes=0.98 → AVOID (extreme)");
+}
+
+// ---------------------------------------------------------------------------
 // attemptAutoClose: HARD GUARD — no close at $0.00 unless MARKET_SETTLED
 // (async tests — summary printed at the end of this block)
 // ---------------------------------------------------------------------------
