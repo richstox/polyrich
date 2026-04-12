@@ -58,7 +58,9 @@ const ThesisSnapshot = require("./models/ThesisSnapshot");
 const MonitorLease = require("./models/MonitorLease");
 const PaperRunnerLog = require("./models/PaperRunnerLog");
 const AutoSaveDecisionLog = require("./models/AutoSaveDecisionLog");
+const AuditLog = require("./models/AuditLog");
 const { traceAutoSaveBuyYesDecisions } = require("./src/autosave_trace");
+const { setCachedSettings, getEffectiveStrategyMode, isAppPaused } = require("./src/runtime_config");
 const DANGER_ZONE_VALID_ACTIONS = ["RESET_ALL", "DELETE_CLOSED", "DELETE_OPEN", "RESET_TRADES", "FACTORY_RESET"];
 const REPLAY_SCAN_SUFFIX = "_replay";
 
@@ -162,8 +164,13 @@ let scanStatus = {
 // Mutex to prevent overlapping scans
 let scanRunning = false;
 
-// Pre-computed strategy helpers (avoids duplicated expressions across endpoints)
-const isMicroLegacyEnabled = config.STRATEGY_MODE === "MICRO_LEGACY";
+// Dynamic strategy-mode helper (reads from runtime config cache)
+function isMicroLegacyEnabled() {
+  return getEffectiveStrategyMode().mode === "MICRO_LEGACY";
+}
+function effectiveStrategyMode() {
+  return getEffectiveStrategyMode().mode;
+}
 
 // In-memory auto-save telemetry (populated by autoSaveExecuteTickets, read by /metrics)
 let autoSaveTelemetry = {
@@ -287,7 +294,7 @@ async function runScan() {
     }
 
     // ── OUTCOME mode: evaluate theses and persist snapshots ────────────
-    if (config.STRATEGY_MODE === "OUTCOME") {
+    if (effectiveStrategyMode() === "OUTCOME") {
       try {
         const ideasResult = await buildIdeas(scanStatus, {});
         const allItems = (ideasResult && ideasResult.tradeCandidates) || [];
@@ -336,8 +343,8 @@ async function runScan() {
 async function autoSaveExecuteTickets(scanId) {
   // ── Strategy mode gate ──────────────────────────────────────────────
   // Auto-save EXECUTE is only active in MICRO_LEGACY mode.
-  if (config.STRATEGY_MODE !== "MICRO_LEGACY") {
-    console.log(JSON.stringify({ msg: "autoSave: skipped (STRATEGY_MODE is not MICRO_LEGACY)", scanId, strategyMode: config.STRATEGY_MODE }));
+  if (effectiveStrategyMode() !== "MICRO_LEGACY") {
+    console.log(JSON.stringify({ msg: "autoSave: skipped (STRATEGY_MODE is not MICRO_LEGACY)", scanId, strategyMode: effectiveStrategyMode() }));
     autoSaveTelemetry.lastAutoSave = { scanId, result: "STRATEGY_DISABLED", createdCount: 0, skipReasons: null, ts: new Date().toISOString() };
     autoSaveTelemetry.lastAutoSaveError = null;
     await AutoSaveLog.create({ scanId, result: "STRATEGY_DISABLED" }).catch(() => {});
@@ -811,6 +818,19 @@ async function scanLoop() {
   }
 
   while (true) {
+    // ── Refresh runtime config cache from DB ───────────────────────────
+    try {
+      const settings = await SystemSetting.getSettings();
+      setCachedSettings(settings);
+    } catch (_) {}
+
+    // ── App paused guard ───────────────────────────────────────────────
+    if (isAppPaused()) {
+      console.log(JSON.stringify({ msg: "scanLoop: skipped (app paused)", ts: new Date().toISOString() }));
+      await new Promise((r) => setTimeout(r, config.SCAN_INTERVAL_MS));
+      continue;
+    }
+
     try {
       await runScan();
     } catch (_) {
@@ -992,13 +1012,17 @@ if (url.pathname === "/trade") {
   // ── /system ────────────────────────────────────────────────────────────
   if (url.pathname === "/system") {
     const mongoOk = mongoose.connection.readyState === 1;
+    const { mode: smEff, source: smSource } = getEffectiveStrategyMode();
     const healthData = {
       ok: mongoOk,
       mongoConnected: mongoOk,
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
       scanRunning,
-      strategyMode: config.STRATEGY_MODE,
-      isMicroLegacyEnabled,
+      strategyMode: smEff,
+      strategyModeEffective: smEff,
+      strategyModeSource: smSource,
+      isMicroLegacyEnabled: smEff === "MICRO_LEGACY",
+      appPaused: isAppPaused(),
       ts: new Date().toISOString(),
     };
 
@@ -1065,7 +1089,9 @@ if (url.pathname === "/trade") {
     const envKillSwitches = {
       autoModeEnv: config.AUTO_MODE_ENABLED,
       paperCloseEnv: config.AUTO_MODE_PAPER_CLOSE,
-      strategyMode: config.STRATEGY_MODE,
+      strategyMode: smEff,
+      strategyModeSource: smSource,
+      appPaused: isAppPaused(),
     };
 
     // Extract persisted debug snapshot from system settings
@@ -1080,13 +1106,17 @@ if (url.pathname === "/trade") {
   // ── /health ────────────────────────────────────────────────────────────
   if (url.pathname === "/health") {
     const mongoOk = mongoose.connection.readyState === 1;
+    const { mode: hMode, source: hSource } = getEffectiveStrategyMode();
     const status = {
       ok: mongoOk,
       mongoConnected: mongoOk,
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
       scanRunning,
-      strategyMode: config.STRATEGY_MODE,
-      isMicroLegacyEnabled,
+      strategyMode: hMode,
+      strategyModeEffective: hMode,
+      strategyModeSource: hSource,
+      isMicroLegacyEnabled: hMode === "MICRO_LEGACY",
+      appPaused: isAppPaused(),
       ts: new Date().toISOString(),
     };
     res.writeHead(mongoOk ? 200 : 503, { "Content-Type": "application/json" });
@@ -1146,8 +1176,11 @@ if (url.pathname === "/trade") {
       autoSavedToday,
       lastAutoSave: autoSaveTelemetry.lastAutoSave,
       lastAutoSaveError: autoSaveTelemetry.lastAutoSaveError,
-      strategyMode: config.STRATEGY_MODE,
-      isMicroLegacyEnabled,
+      strategyMode: getEffectiveStrategyMode().mode,
+      strategyModeEffective: getEffectiveStrategyMode().mode,
+      strategyModeSource: getEffectiveStrategyMode().source,
+      isMicroLegacyEnabled: getEffectiveStrategyMode().mode === "MICRO_LEGACY",
+      appPaused: isAppPaused(),
       ts: new Date().toISOString(),
     };
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -1157,6 +1190,11 @@ if (url.pathname === "/trade") {
 
   // ── /scan ──────────────────────────────────────────────────────────────
   if (url.pathname === "/scan") {
+    if (isAppPaused()) {
+      res.writeHead(423, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "APP_PAUSED" }));
+      return;
+    }
     let candidates = [];
     let scanError = null;
     try {
@@ -1383,13 +1421,17 @@ if (url.pathname === "/trade") {
   // ── /health-ui ──────────────────────────────────────────────────────────
   if (url.pathname === "/health-ui") {
     const mongoOk = mongoose.connection.readyState === 1;
+    const { mode: huMode, source: huSource } = getEffectiveStrategyMode();
     const healthData = {
       ok: mongoOk,
       mongoConnected: mongoOk,
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
       scanRunning,
-      strategyMode: config.STRATEGY_MODE,
-      isMicroLegacyEnabled,
+      strategyMode: huMode,
+      strategyModeEffective: huMode,
+      strategyModeSource: huSource,
+      isMicroLegacyEnabled: huMode === "MICRO_LEGACY",
+      appPaused: isAppPaused(),
       ts: new Date().toISOString(),
     };
     const body = renderHealthUi(healthData);
@@ -1478,6 +1520,72 @@ if (url.pathname === "/trade") {
         );
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(doc));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // ── POST /api/system/strategy-mode ──────────────────────────────────
+  if (url.pathname === "/api/system/strategy-mode" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", async () => {
+      try {
+        const data = JSON.parse(body);
+        const mode = data.mode;
+        if (mode !== null && mode !== "OUTCOME" && mode !== "MICRO_LEGACY") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: 'mode must be "OUTCOME", "MICRO_LEGACY", or null' }));
+          return;
+        }
+        const prev = await SystemSetting.getSettings();
+        const oldValue = prev.strategyModeOverride || null;
+        const doc = await SystemSetting.findOneAndUpdate(
+          { _id: "system" },
+          { $set: { strategyModeOverride: mode } },
+          { upsert: true, new: true, lean: true }
+        );
+        setCachedSettings(doc);
+        // Audit log
+        AuditLog.create({ setting: "strategyModeOverride", oldValue, newValue: mode, actor: data.actor || null }).catch(() => {});
+        const eff = getEffectiveStrategyMode(doc);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, strategyModeOverride: mode, strategyModeEffective: eff.mode, strategyModeSource: eff.source }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // ── POST /api/system/pause ──────────────────────────────────────────
+  if (url.pathname === "/api/system/pause" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", async () => {
+      try {
+        const data = JSON.parse(body);
+        if (typeof data.paused !== "boolean") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "paused must be a boolean" }));
+          return;
+        }
+        const prev = await SystemSetting.getSettings();
+        const oldValue = prev.appPaused || false;
+        const doc = await SystemSetting.findOneAndUpdate(
+          { _id: "system" },
+          { $set: { appPaused: data.paused } },
+          { upsert: true, new: true, lean: true }
+        );
+        setCachedSettings(doc);
+        // Audit log
+        AuditLog.create({ setting: "appPaused", oldValue, newValue: data.paused, actor: data.actor || null }).catch(() => {});
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, appPaused: data.paused }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: err.message }));
@@ -1757,9 +1865,9 @@ if (url.pathname === "/trade") {
 
   // ── POST /api/tickets/autoclose ────────────────────────────────────
   if (url.pathname === "/api/tickets/autoclose" && req.method === "POST") {
-    if (config.STRATEGY_MODE !== "MICRO_LEGACY") {
+    if (effectiveStrategyMode() !== "MICRO_LEGACY") {
       res.writeHead(422, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "AUTOCLOSE_DISABLED", strategyMode: config.STRATEGY_MODE }));
+      res.end(JSON.stringify({ error: "AUTOCLOSE_DISABLED", strategyMode: effectiveStrategyMode() }));
       return;
     }
     let body = "";
@@ -1805,9 +1913,9 @@ if (url.pathname === "/trade") {
 
   // ── POST /api/tickets/autoclose-all ─────────────────────────────────
   if (url.pathname === "/api/tickets/autoclose-all" && req.method === "POST") {
-    if (config.STRATEGY_MODE !== "MICRO_LEGACY") {
+    if (effectiveStrategyMode() !== "MICRO_LEGACY") {
       res.writeHead(422, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "AUTOCLOSE_DISABLED", strategyMode: config.STRATEGY_MODE }));
+      res.end(JSON.stringify({ error: "AUTOCLOSE_DISABLED", strategyMode: effectiveStrategyMode() }));
       return;
     }
     let body = "";
@@ -1950,9 +2058,9 @@ if (url.pathname === "/trade") {
         if (data.noTokenId) data.noTokenId = String(data.noTokenId).trim() || null;
         // ── Strategy mode gate: EXECUTE tickets require MICRO_LEGACY ──
         if (data.tradeability === "EXECUTE" && data.action && data.action !== "WATCH" &&
-            config.STRATEGY_MODE !== "MICRO_LEGACY") {
+            effectiveStrategyMode() !== "MICRO_LEGACY") {
           res.writeHead(422, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "EXECUTE_DISABLED", strategyMode: config.STRATEGY_MODE,
+          res.end(JSON.stringify({ error: "EXECUTE_DISABLED", strategyMode: effectiveStrategyMode(),
             detail: "EXECUTE tickets require STRATEGY_MODE=MICRO_LEGACY" }));
           return;
         }
@@ -2089,7 +2197,7 @@ if (url.pathname === "/trade") {
       if (scanId) query.scanId = scanId;
       const snapshots = await ThesisSnapshot.find(query).sort({ createdAt: -1 }).limit(limit).lean();
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ strategyMode: config.STRATEGY_MODE, count: snapshots.length, snapshots }));
+      res.end(JSON.stringify({ strategyMode: effectiveStrategyMode(), count: snapshots.length, snapshots }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: err.message }));
@@ -2296,6 +2404,11 @@ if (url.pathname === "/trade") {
   // paper trade, and starts monitoring.  CLOB book is fetched live per-candidate
   // for accurate executable pricing.
   if (url.pathname === "/api/paper-runner" && req.method === "POST") {
+    if (isAppPaused()) {
+      res.writeHead(423, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "APP_PAUSED" }));
+      return;
+    }
     const runId = `run_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     const log = (phase, data) => PaperRunnerLog.create({ runId, phase, data }).catch(() => {});
 
@@ -2931,7 +3044,7 @@ if (url.pathname === "/trade") {
 // ---------------------------------------------------------------------------
 const port = config.PORT;
 server.listen(port, () => {
-  console.log(JSON.stringify({ msg: "server started", port, strategyMode: config.STRATEGY_MODE, isMicroLegacyEnabled, ts: new Date().toISOString() }));
+  console.log(JSON.stringify({ msg: "server started", port, strategyMode: effectiveStrategyMode(), isMicroLegacyEnabled: isMicroLegacyEnabled(), ts: new Date().toISOString() }));
   scanLoop();
   startMonitorLoop();
 });

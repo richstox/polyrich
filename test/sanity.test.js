@@ -4578,6 +4578,67 @@ console.log("\noutcome_engine: scoreVerdict edge cases");
 }
 
 // ---------------------------------------------------------------------------
+// Runtime config: getEffectiveStrategyMode, isAppPaused
+// ---------------------------------------------------------------------------
+console.log("\nruntime_config: getEffectiveStrategyMode");
+{
+  const { getEffectiveStrategyMode, isAppPaused, setCachedSettings, VALID_MODES } = require("../src/runtime_config");
+
+  // 1) No cached settings, env default → should return OUTCOME (env default since config.STRATEGY_MODE is OUTCOME or default)
+  setCachedSettings(null);
+  const r1 = getEffectiveStrategyMode(null);
+  assert(r1.source === "env_default", `No cache, no settings → source=env_default (got ${r1.source})`);
+  assert(typeof r1.mode === "string" && VALID_MODES.has(r1.mode), `No cache → mode is valid (got ${r1.mode})`);
+
+  // 2) Settings with strategyModeOverride = "MICRO_LEGACY"
+  const r2 = getEffectiveStrategyMode({ strategyModeOverride: "MICRO_LEGACY" });
+  assert(r2.mode === "MICRO_LEGACY", `Override=MICRO_LEGACY → mode=MICRO_LEGACY (got ${r2.mode})`);
+  assert(r2.source === "mongo_override", `Override=MICRO_LEGACY → source=mongo_override (got ${r2.source})`);
+
+  // 3) Settings with strategyModeOverride = "OUTCOME"
+  const r3 = getEffectiveStrategyMode({ strategyModeOverride: "OUTCOME" });
+  assert(r3.mode === "OUTCOME", `Override=OUTCOME → mode=OUTCOME (got ${r3.mode})`);
+  assert(r3.source === "mongo_override", `Override=OUTCOME → source=mongo_override (got ${r3.source})`);
+
+  // 4) Settings with strategyModeOverride = null → falls through to env/default
+  const r4 = getEffectiveStrategyMode({ strategyModeOverride: null });
+  assert(r4.source === "env_default", `Override=null → source=env_default (got ${r4.source})`);
+
+  // 5) Settings with invalid override → falls through to env/default
+  const r5 = getEffectiveStrategyMode({ strategyModeOverride: "INVALID" });
+  assert(r5.source === "env_default", `Override=INVALID → source=env_default (got ${r5.source})`);
+
+  // 6) setCachedSettings + getEffectiveStrategyMode with no args reads from cache
+  setCachedSettings({ strategyModeOverride: "MICRO_LEGACY" });
+  const r6 = getEffectiveStrategyMode();
+  assert(r6.mode === "MICRO_LEGACY", `Cached override=MICRO_LEGACY → mode=MICRO_LEGACY (got ${r6.mode})`);
+  assert(r6.source === "mongo_override", `Cached override=MICRO_LEGACY → source=mongo_override (got ${r6.source})`);
+
+  // 7) Clear cache → fallback
+  setCachedSettings(null);
+  const r7 = getEffectiveStrategyMode();
+  assert(r7.source === "env_default", `Cleared cache → source=env_default (got ${r7.source})`);
+
+  // 8) isAppPaused — false by default
+  assert(isAppPaused(null) === false, "isAppPaused(null) === false");
+  assert(isAppPaused({}) === false, "isAppPaused({}) === false");
+  assert(isAppPaused({ appPaused: false }) === false, "isAppPaused(false) === false");
+  assert(isAppPaused({ appPaused: true }) === true, "isAppPaused(true) === true");
+
+  // 9) isAppPaused from cache
+  setCachedSettings({ appPaused: true });
+  assert(isAppPaused() === true, "isAppPaused() from cache === true");
+  setCachedSettings({ appPaused: false });
+  assert(isAppPaused() === false, "isAppPaused() from cache === false");
+  setCachedSettings(null);
+
+  // 10) VALID_MODES contains expected values
+  assert(VALID_MODES.has("OUTCOME"), "VALID_MODES has OUTCOME");
+  assert(VALID_MODES.has("MICRO_LEGACY"), "VALID_MODES has MICRO_LEGACY");
+  assert(!VALID_MODES.has("INVALID"), "VALID_MODES does not have INVALID");
+}
+
+// ---------------------------------------------------------------------------
 // attemptAutoClose: HARD GUARD — no close at $0.00 unless MARKET_SETTLED
 // (async tests — summary printed at the end of this block)
 // ---------------------------------------------------------------------------
