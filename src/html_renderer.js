@@ -3089,11 +3089,11 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
           <div style="margin-bottom:8px;font-size:0.85rem;color:#e2e8f0;font-weight:600;">Strategy Mode Override</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.85rem;color:#e2e8f0;">
-              <input type="radio" name="strategyMode" value="OUTCOME" ${currentStrategyMode === "OUTCOME" && strategyModeSource === "mongo_override" ? "checked" : (!strategyOverride && (currentStrategyMode === "OUTCOME") ? "" : "")}>
+              <input type="radio" name="strategyMode" value="OUTCOME" ${strategyOverride === "OUTCOME" ? "checked" : ""}>
               OUTCOME
             </label>
             <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.85rem;color:#e2e8f0;">
-              <input type="radio" name="strategyMode" value="MICRO_LEGACY" ${currentStrategyMode === "MICRO_LEGACY" && strategyModeSource === "mongo_override" ? "checked" : ""}>
+              <input type="radio" name="strategyMode" value="MICRO_LEGACY" ${strategyOverride === "MICRO_LEGACY" ? "checked" : ""}>
               MICRO_LEGACY
             </label>
             <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.85rem;color:#94a3b8;">

@@ -1549,7 +1549,7 @@ if (url.pathname === "/trade") {
           { upsert: true, new: true, lean: true }
         );
         setCachedSettings(doc);
-        // Audit log
+        // Audit log (fire-and-forget; failure is non-critical)
         AuditLog.create({ setting: "strategyModeOverride", oldValue, newValue: mode, actor: data.actor || null }).catch(() => {});
         const eff = getEffectiveStrategyMode(doc);
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -1582,7 +1582,7 @@ if (url.pathname === "/trade") {
           { upsert: true, new: true, lean: true }
         );
         setCachedSettings(doc);
-        // Audit log
+        // Audit log (fire-and-forget; failure is non-critical)
         AuditLog.create({ setting: "appPaused", oldValue, newValue: data.paused, actor: data.actor || null }).catch(() => {});
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, appPaused: data.paused }));
