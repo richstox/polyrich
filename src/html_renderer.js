@@ -3944,11 +3944,9 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
       ? `<span style="display:inline-block;padding:1px 5px;border-radius:3px;background:${t.status === "ERROR" ? "#7f1d1d" : "#854d0e"};color:${t.status === "ERROR" ? "#fecaca" : "#fef3c7"};font-size:0.68rem;font-weight:600;">${escHtml(t.status)}</span>`
       : "";
 
-    // Auto-close indicator
+    // Auto-close indicator — always ON for EXECUTE tickets
     const acIndicator = isExec
-      ? (t.autoCloseEnabled
-        ? '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;background:rgba(34,197,94,.15);color:#22c55e;" title="Auto-close ON">\u{1F916} ON</span>'
-        : '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;background:rgba(100,116,139,.15);color:#94a3b8;" title="Auto-close OFF">\u{1F916} OFF</span>')
+      ? '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.72rem;font-weight:600;background:rgba(34,197,94,.15);color:#22c55e;" title="Auto-close ON">\u{1F916} ON</span>'
       : "";
 
     const reasonBadges = reasonBadgesHtml(t);
@@ -4019,7 +4017,6 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
       </div>
       <div style="margin-bottom:10px;text-align:right;padding:0 4px;">
         <button id="tk-autoclose-all-btn" style="background:#166534;color:#fff;border:none;padding:5px 14px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;margin-right:6px;" data-value="true" title="Enable AutoClose for all open tickets">Enable All AutoClose</button>
-        <button id="tk-autoclose-none-btn" style="background:#7f1d1d;color:#fff;border:none;padding:5px 14px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;" data-value="false" title="Disable AutoClose for all open tickets">Disable All AutoClose</button>
       </div>
       <div id="tk-open-list">${openListHtml}</div>
       ${archiveCardHtml}
@@ -4054,9 +4051,7 @@ function renderTicketsPage(tickets, highlightId, filterCtx) {
         };
       }
       var enableAllBtn = document.getElementById("tk-autoclose-all-btn");
-      var disableAllBtn = document.getElementById("tk-autoclose-none-btn");
       if (enableAllBtn) enableAllBtn.addEventListener("click", handleBulkAutoClose(true));
-      if (disableAllBtn) disableAllBtn.addEventListener("click", handleBulkAutoClose(false));
 
       // --- Sort toggle ---
       function sortContainer(containerId, sortKey, ascending) {

@@ -514,14 +514,17 @@ async function autoSaveExecuteTickets(scanId) {
     // marketId stays as primary required field (prefer conditionId, fall back to slug)
     const marketId = rawConditionId || rawMarketSlug || item.question;
 
-    // Strict identity gate: block auto-close if no valid conditionId
+    // Strict identity gate: skip ticket if no valid conditionId (cannot auto-close)
     const hasCanonicalId = rawConditionId && rawConditionId.startsWith("0x");
-    let effectiveAutoClose = defaultAutoClose;
-    let autoCloseBlockedReason = null;
     if (!hasCanonicalId) {
-      effectiveAutoClose = false;
-      autoCloseBlockedReason = "no_conditionId";
+      console.log(JSON.stringify({
+        msg: "autoSave-no-conditionId-skip",
+        marketId, conditionId: rawConditionId,
+        ts: new Date().toISOString(),
+      }));
+      continue; // skip — cannot auto-close without canonical conditionId
     }
+    let autoCloseBlockedReason = null;
 
     // --- Fetch CLOB book for real bid/ask sizes ---
     const tokenId = actionEnum === "BUY_YES" ? ((item.yesTokenId || "").trim() || null)
@@ -562,16 +565,22 @@ async function autoSaveExecuteTickets(scanId) {
     //  2. entryAsk: finite > 0 (entry price)
     //  3. entryBidSize: finite > 0 (liquidity exists at that bid level)
     //  4. TP and SL: finite > 0
-    // If ANY is missing → block auto-close with NO_EXECUTABLE_BID.
+    // If ANY is missing → skip ticket entirely (cannot auto-close).
     const hasValidBid  = Number.isFinite(entryBidNum) && entryBidNum > 0;
     const hasValidAsk  = Number.isFinite(entryNum) && entryNum > 0;
     const hasValidSize = Number.isFinite(bidSizeRaw) && bidSizeRaw > 0;
     const hasValidTP   = Number.isFinite(tpNum) && tpNum > 0;
     const hasValidSL   = Number.isFinite(stopNum) && stopNum > 0;
 
-    if (effectiveAutoClose && !(hasValidBid && hasValidAsk && hasValidSize && hasValidTP && hasValidSL)) {
-      effectiveAutoClose = false;
-      autoCloseBlockedReason = autoCloseBlockedReason || "NO_EXECUTABLE_BID";
+    if (!(hasValidBid && hasValidAsk && hasValidSize && hasValidTP && hasValidSL)) {
+      console.log(JSON.stringify({
+        msg: "autoSave-no-executable-bid-skip",
+        marketId,
+        bid: entryBidNum, ask: entryNum, bidSize: bidSizeRaw,
+        tp: tpNum, sl: stopNum,
+        ts: new Date().toISOString(),
+      }));
+      continue; // skip — cannot auto-close without executable bid
     }
 
     // --- Entry microstructure snapshot ---
@@ -609,12 +618,16 @@ async function autoSaveExecuteTickets(scanId) {
     // --- Admission gates: liquidity ---
     // Liquidity gate: close-side = bid (selling shares). Check notional at top bid.
     // Threshold scales with position size: max(flat floor, sizeNum × ratio)
-    if (effectiveAutoClose && hasValidBid && bidSizeRaw !== null) {
+    if (hasValidBid && bidSizeRaw !== null) {
       const bidNotionalUsd = entryBidNum * bidSizeRaw;
       const minBidRequired = Math.max(config.MIN_BID_SIZE_USD, sizeNum * config.MIN_BID_NOTIONAL_RATIO);
       if (bidNotionalUsd < minBidRequired) {
-        effectiveAutoClose = false;
-        autoCloseBlockedReason = autoCloseBlockedReason || "INSUFFICIENT_BID_SIZE";
+        console.log(JSON.stringify({
+          msg: "autoSave-insufficient-bid-size-skip",
+          marketId, bidNotionalUsd, minBidRequired,
+          ts: new Date().toISOString(),
+        }));
+        continue; // skip — insufficient liquidity to auto-close
       }
     }
 
@@ -664,8 +677,8 @@ async function autoSaveExecuteTickets(scanId) {
       entryAskSize: askSizeRaw,
       entryExecutionBasis: "ASK",
       triggerReferenceBasis: "BID",
-      autoCloseEnabled: effectiveAutoClose,
-      autoCloseBlockedReason,
+      autoCloseEnabled: true,
+      autoCloseBlockedReason: null,
     };
 
     // Cross-scan dedupe key (excludes scanId)
@@ -1707,6 +1720,12 @@ if (url.pathname === "/trade") {
           res.end(JSON.stringify({ error: "Provide ticketId and autoCloseEnabled (boolean)" }));
           return;
         }
+        // Only allow enabling autoclose, not disabling
+        if (!data.autoCloseEnabled) {
+          res.writeHead(422, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Cannot disable autoclose. All tickets must have auto-closing enabled." }));
+          return;
+        }
         if (!mongoose.Types.ObjectId.isValid(data.ticketId)) {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Invalid ticketId format" }));
@@ -1742,6 +1761,12 @@ if (url.pathname === "/trade") {
         if (typeof data.autoCloseEnabled !== "boolean") {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Provide autoCloseEnabled (boolean)" }));
+          return;
+        }
+        // Only allow enabling autoclose, not disabling
+        if (!data.autoCloseEnabled) {
+          res.writeHead(422, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Cannot disable autoclose. All tickets must have auto-closing enabled." }));
           return;
         }
         const result = await TradeTicket.updateMany(
@@ -1867,12 +1892,17 @@ if (url.pathname === "/trade") {
         if (data.yesTokenId) data.yesTokenId = String(data.yesTokenId).trim() || null;
         if (data.noTokenId) data.noTokenId = String(data.noTokenId).trim() || null;
         // Strict auto-close gate: require valid conditionId for monitoring
-        if (data.autoCloseEnabled) {
+        if (data.tradeability === "EXECUTE" && data.action && data.action !== "WATCH") {
           const cid = data.conditionId || "";
           if (!cid || !cid.startsWith("0x")) {
-            data.autoCloseEnabled = false;
-            data.autoCloseBlockedReason = "no_conditionId";
+            res.writeHead(422, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "MISSING_CONDITION_ID", conditionId: cid || null }));
+            return;
           }
+        }
+        // Force autoclose always on for EXECUTE tickets
+        if (data.tradeability === "EXECUTE" && data.action && data.action !== "WATCH") {
+          data.autoCloseEnabled = true;
         }
         // --- Server-side CLOB book fetch: verify/override client entry snapshot ---
         // The server MUST NOT trust client-provided bid/ask sizes for admission gating.
@@ -1904,23 +1934,23 @@ if (url.pathname === "/trade") {
               }
             } catch (_) { /* CLOB fetch failed — use client-provided data as fallback */ }
           }
-          // HARD INVARIANT: Fail-closed on missing executable bid
+          // HARD INVARIANT: Reject EXECUTE tickets without executable bid
           // Requires: entryBid (finite > 0), entryAsk (finite > 0), entryBidSize (finite > 0)
           const vb = Number.isFinite(data.entryBid) && data.entryBid > 0;
           const va = Number.isFinite(data.entryAsk) && data.entryAsk > 0;
           const vs = Number.isFinite(data.entryBidSize) && data.entryBidSize > 0;
-          if (data.autoCloseEnabled && !(vb && va && vs)) {
-            data.autoCloseEnabled = false;
-            data.autoCloseBlockedReason = data.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
+          if (!(vb && va && vs)) {
+            res.writeHead(422, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "NO_EXECUTABLE_BID", entryBid: data.entryBid, entryAsk: data.entryAsk, entryBidSize: data.entryBidSize }));
+            return;
           }
-          // Also verify TP/SL are valid if present
-          if (data.autoCloseEnabled) {
-            const vtp = Number.isFinite(data.takeProfit) && data.takeProfit > 0;
-            const vsl = Number.isFinite(data.riskExitLimit) && data.riskExitLimit > 0;
-            if (!vtp || !vsl) {
-              data.autoCloseEnabled = false;
-              data.autoCloseBlockedReason = data.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
-            }
+          // Also verify TP/SL are valid
+          const vtp = Number.isFinite(data.takeProfit) && data.takeProfit > 0;
+          const vsl = Number.isFinite(data.riskExitLimit) && data.riskExitLimit > 0;
+          if (!vtp || !vsl) {
+            res.writeHead(422, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "NO_EXECUTABLE_BID", takeProfit: data.takeProfit, riskExitLimit: data.riskExitLimit }));
+            return;
           }
         }
         // Spread gate: reject wide-spread tickets entirely (same logic as autoSave)
@@ -1937,12 +1967,13 @@ if (url.pathname === "/trade") {
           res.end(JSON.stringify({ error: "BID_BELOW_SL", entryBid: data.entryBid, riskExitLimit: data.riskExitLimit }));
           return;
         }
-        // Admission gates for auto-close: liquidity
-        if (data.autoCloseEnabled && typeof data.entryBid === "number" && typeof data.entryBidSize === "number") {
+        // Admission gates: liquidity — reject if insufficient
+        if (typeof data.entryBid === "number" && typeof data.entryBidSize === "number") {
           const bidNotionalUsd = data.entryBid * data.entryBidSize;
           if (bidNotionalUsd < config.MIN_BID_SIZE_USD) {
-            data.autoCloseEnabled = false;
-            data.autoCloseBlockedReason = data.autoCloseBlockedReason || "INSUFFICIENT_BID_SIZE";
+            res.writeHead(422, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "INSUFFICIENT_BID_SIZE", bidNotionalUsd, threshold: config.MIN_BID_SIZE_USD }));
+            return;
           }
         }
         // Snapshot-level idempotency via dedupeKey
