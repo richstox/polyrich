@@ -162,6 +162,9 @@ let scanStatus = {
 // Mutex to prevent overlapping scans
 let scanRunning = false;
 
+// Pre-computed strategy helpers (avoids duplicated expressions across endpoints)
+const isMicroLegacyEnabled = config.STRATEGY_MODE === "MICRO_LEGACY";
+
 // In-memory auto-save telemetry (populated by autoSaveExecuteTickets, read by /metrics)
 let autoSaveTelemetry = {
   lastAutoSave: null,       // { scanId, result, createdCount, skipReasons, ts }
@@ -995,7 +998,7 @@ if (url.pathname === "/trade") {
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
       scanRunning,
       strategyMode: config.STRATEGY_MODE,
-      isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY",
+      isMicroLegacyEnabled,
       ts: new Date().toISOString(),
     };
 
@@ -1083,7 +1086,7 @@ if (url.pathname === "/trade") {
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
       scanRunning,
       strategyMode: config.STRATEGY_MODE,
-      isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY",
+      isMicroLegacyEnabled,
       ts: new Date().toISOString(),
     };
     res.writeHead(mongoOk ? 200 : 503, { "Content-Type": "application/json" });
@@ -1144,7 +1147,7 @@ if (url.pathname === "/trade") {
       lastAutoSave: autoSaveTelemetry.lastAutoSave,
       lastAutoSaveError: autoSaveTelemetry.lastAutoSaveError,
       strategyMode: config.STRATEGY_MODE,
-      isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY",
+      isMicroLegacyEnabled,
       ts: new Date().toISOString(),
     };
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -1386,7 +1389,7 @@ if (url.pathname === "/trade") {
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
       scanRunning,
       strategyMode: config.STRATEGY_MODE,
-      isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY",
+      isMicroLegacyEnabled,
       ts: new Date().toISOString(),
     };
     const body = renderHealthUi(healthData);
@@ -2928,7 +2931,7 @@ if (url.pathname === "/trade") {
 // ---------------------------------------------------------------------------
 const port = config.PORT;
 server.listen(port, () => {
-  console.log(JSON.stringify({ msg: "server started", port, STRATEGY_MODE: config.STRATEGY_MODE, isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY", ts: new Date().toISOString() }));
+  console.log(JSON.stringify({ msg: "server started", port, strategyMode: config.STRATEGY_MODE, isMicroLegacyEnabled, ts: new Date().toISOString() }));
   scanLoop();
   startMonitorLoop();
 });
