@@ -2301,14 +2301,14 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// Missing entryBid fails closed for new EXECUTE tickets
+// Missing entryBid → ticket is REJECTED (not created with autoclose off)
 // ---------------------------------------------------------------------------
 {
-  console.log("\nMissing entryBid fails closed");
+  console.log("\nMissing entryBid → ticket rejected");
   const cfg = require("../src/config");
 
   // Simulate POST /api/tickets server-side logic:
-  // EXECUTE ticket with missing entryBid → auto-close should be blocked
+  // EXECUTE ticket with missing entryBid → should be REJECTED entirely
   const data = {
     tradeability: "EXECUTE",
     action: "BUY_YES",
@@ -2319,23 +2319,21 @@ console.log("\nfinal selection: mispricing quota");
     entryAskSize: null,
   };
 
-  // Server-side fail-closed gate
-  if (data.autoCloseEnabled && (typeof data.entryBid !== "number" || data.entryBid <= 0)) {
-    data.autoCloseEnabled = false;
-    data.autoCloseBlockedReason = data.autoCloseBlockedReason || "MISSING_ENTRY_EXEC_PRICES";
-  }
+  // Server-side fail-closed gate: REJECT if bid missing (ticket not created)
+  const vb = Number.isFinite(data.entryBid) && data.entryBid > 0;
+  const va = Number.isFinite(data.entryAsk) && data.entryAsk > 0;
+  const vs = Number.isFinite(data.entryBidSize) && data.entryBidSize > 0;
+  const rejected = !(vb && va && vs);
 
-  assert(!data.autoCloseEnabled,
-    "Auto-close is disabled when entryBid is missing");
-  assert(data.autoCloseBlockedReason === "MISSING_ENTRY_EXEC_PRICES",
-    "Blocked reason is MISSING_ENTRY_EXEC_PRICES when entryBid is missing");
+  assert(rejected,
+    "Ticket is rejected when entryBid is missing — cannot be created");
 }
 
 // ---------------------------------------------------------------------------
-// INSUFFICIENT_BID_SIZE fires with real CLOB sizes
+// INSUFFICIENT_BID_SIZE → ticket rejected (not created)
 // ---------------------------------------------------------------------------
 {
-  console.log("\nINSUFFICIENT_BID_SIZE fires with real CLOB sizes");
+  console.log("\nINSUFFICIENT_BID_SIZE → ticket rejected");
   const cfg = require("../src/config");
 
   // Scenario: bid=0.20, topBidSize=50 shares → notional = $10 < MIN_BID_SIZE_USD ($20)
@@ -2346,25 +2344,16 @@ console.log("\nfinal selection: mispricing quota");
   assert(bidNotionalUsd === 10,
     "Bid notional is $10 (0.20 × 50 shares)");
   assert(bidNotionalUsd < cfg.MIN_BID_SIZE_USD,
-    "$10 notional < MIN_BID_SIZE_USD ($20) → gate should fire");
+    "$10 notional < MIN_BID_SIZE_USD ($20) → ticket should be rejected");
 
-  let autoClose = true;
-  let reason = null;
-  if (autoClose && entryBid && entryBidSize !== null) {
-    const notional = entryBid * entryBidSize;
-    if (notional < cfg.MIN_BID_SIZE_USD) {
-      autoClose = false;
-      reason = "INSUFFICIENT_BID_SIZE";
-    }
-  }
-  assert(!autoClose, "Auto-close blocked by liquidity gate with real sizes");
-  assert(reason === "INSUFFICIENT_BID_SIZE",
-    "Blocked reason is INSUFFICIENT_BID_SIZE");
+  // Ticket is rejected entirely — not created with autoclose off
+  const rejected = (entryBid && entryBidSize !== null) && (entryBid * entryBidSize < cfg.MIN_BID_SIZE_USD);
+  assert(rejected, "Ticket rejected by liquidity gate with real sizes");
 
   // Adequate size: bid=0.50, topBidSize=200 shares → notional = $100
   const okNotional = 0.50 * 200;
   assert(okNotional >= cfg.MIN_BID_SIZE_USD,
-    "$100 notional passes MIN_BID_SIZE_USD ($20) → auto-close allowed");
+    "$100 notional passes MIN_BID_SIZE_USD ($20) → ticket allowed");
 }
 
 // ---------------------------------------------------------------------------
@@ -2462,19 +2451,18 @@ console.log("\nfinal selection: mispricing quota");
 }
 
 // ---------------------------------------------------------------------------
-// B) Ticket creation fail-closed: NO_EXECUTABLE_BID
+// B) Ticket creation: NO_EXECUTABLE_BID → ticket REJECTED (not created)
 // ---------------------------------------------------------------------------
 {
-  console.log("\nTicket creation fail-closed: NO_EXECUTABLE_BID");
+  console.log("\nTicket creation: NO_EXECUTABLE_BID → rejected");
 
   // Scenario: CLOB returns bid=0.001 (normalized to valid but near-zero),
   // ask=0.32, bidSize=null (no size)
-  // The NO_EXECUTABLE_BID invariant fires because bidSize is missing.
+  // The NO_EXECUTABLE_BID gate REJECTS the ticket entirely.
   const data1 = {
     tradeability: "EXECUTE",
     action: "BUY_YES",
     autoCloseEnabled: true,
-    autoCloseBlockedReason: null,
     entryBid: 0.001,     // valid but tiny
     entryAsk: 0.32,      // valid
     entryBidSize: null,   // MISSING — no executable liquidity
@@ -2485,21 +2473,15 @@ console.log("\nfinal selection: mispricing quota");
   const vb1 = Number.isFinite(data1.entryBid) && data1.entryBid > 0;
   const va1 = Number.isFinite(data1.entryAsk) && data1.entryAsk > 0;
   const vs1 = Number.isFinite(data1.entryBidSize) && data1.entryBidSize > 0;
-  if (data1.autoCloseEnabled && !(vb1 && va1 && vs1)) {
-    data1.autoCloseEnabled = false;
-    data1.autoCloseBlockedReason = data1.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
-  }
-  assert(!data1.autoCloseEnabled,
-    "Auto-close blocked when entryBidSize is null");
-  assert(data1.autoCloseBlockedReason === "NO_EXECUTABLE_BID",
-    "Reason is NO_EXECUTABLE_BID (missing bid size)");
+  const rejected1 = !(vb1 && va1 && vs1);
+  assert(rejected1,
+    "Ticket rejected when entryBidSize is null — not created");
 
   // Scenario 2: entryBid = null (CLOB returned no bids)
   const data2 = {
     tradeability: "EXECUTE",
     action: "BUY_YES",
     autoCloseEnabled: true,
-    autoCloseBlockedReason: null,
     entryBid: null,
     entryAsk: 0.32,
     entryBidSize: 100,
@@ -2509,21 +2491,15 @@ console.log("\nfinal selection: mispricing quota");
   const vb2 = Number.isFinite(data2.entryBid) && data2.entryBid > 0;
   const va2 = Number.isFinite(data2.entryAsk) && data2.entryAsk > 0;
   const vs2 = Number.isFinite(data2.entryBidSize) && data2.entryBidSize > 0;
-  if (data2.autoCloseEnabled && !(vb2 && va2 && vs2)) {
-    data2.autoCloseEnabled = false;
-    data2.autoCloseBlockedReason = data2.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
-  }
-  assert(!data2.autoCloseEnabled,
-    "Auto-close blocked when entryBid is null");
-  assert(data2.autoCloseBlockedReason === "NO_EXECUTABLE_BID",
-    "Reason is NO_EXECUTABLE_BID (null bid)");
+  const rejected2 = !(vb2 && va2 && vs2);
+  assert(rejected2,
+    "Ticket rejected when entryBid is null — not created");
 
-  // Scenario 3: all valid → auto-close stays enabled
+  // Scenario 3: all valid → ticket accepted
   const data3 = {
     tradeability: "EXECUTE",
     action: "BUY_YES",
     autoCloseEnabled: true,
-    autoCloseBlockedReason: null,
     entryBid: 0.31,
     entryAsk: 0.33,
     entryBidSize: 200,
@@ -2533,14 +2509,11 @@ console.log("\nfinal selection: mispricing quota");
   const vb3 = Number.isFinite(data3.entryBid) && data3.entryBid > 0;
   const va3 = Number.isFinite(data3.entryAsk) && data3.entryAsk > 0;
   const vs3 = Number.isFinite(data3.entryBidSize) && data3.entryBidSize > 0;
-  if (data3.autoCloseEnabled && !(vb3 && va3 && vs3)) {
-    data3.autoCloseEnabled = false;
-    data3.autoCloseBlockedReason = data3.autoCloseBlockedReason || "NO_EXECUTABLE_BID";
-  }
-  assert(data3.autoCloseEnabled,
-    "Auto-close stays enabled with valid bid/ask/size");
-  assert(data3.autoCloseBlockedReason === null,
-    "No blocked reason when all valid");
+  const rejected3 = !(vb3 && va3 && vs3);
+  assert(!rejected3,
+    "Ticket accepted with valid bid/ask/size");
+  assert(data3.autoCloseEnabled === true,
+    "autoCloseEnabled is always true for accepted tickets");
 }
 
 // ---------------------------------------------------------------------------
@@ -2683,19 +2656,12 @@ console.log("\nfinal selection: mispricing quota");
   assert(clobBid <= exits.stop,
     "Bid (0.001) ≤ SL (0.29) → autoSave skips this ticket (bid-below-SL guard)");
 
-  // Step 4: The NO_EXECUTABLE_BID invariant also blocks auto-close
-  let autoClose = true;
-  let blocked = null;
+  // Step 4: The NO_EXECUTABLE_BID invariant rejects the ticket entirely
   const vb = Number.isFinite(clobBid) && clobBid > 0;
   const va = Number.isFinite(entryAsk) && entryAsk > 0;
   const vs = Number.isFinite(clobBidSize) && clobBidSize > 0;
-  if (autoClose && !(vb && va && vs)) {
-    autoClose = false;
-    blocked = "NO_EXECUTABLE_BID";
-  }
-  assert(!autoClose, "Auto-close is blocked (bidSize is null)");
-  assert(blocked === "NO_EXECUTABLE_BID",
-    "Blocked reason is NO_EXECUTABLE_BID — the right invariant");
+  const rejected = !(vb && va && vs);
+  assert(rejected, "Ticket rejected (bidSize is null) — not created");
 
   // Step 5: Even if TP/SL were somehow null, checkTrigger doesn't trigger
   const safeTrigger = checkTrigger(

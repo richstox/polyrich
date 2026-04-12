@@ -78,7 +78,7 @@ const tradeTicketSchema = new mongoose.Schema(
     isSimulated: { type: Boolean, default: false },
 
     // Auto-mode monitoring fields
-    autoCloseEnabled: { type: Boolean, default: false },
+    autoCloseEnabled: { type: Boolean, default: true },
     autoCloseBlockedReason: { type: String, default: null }, // non-null → why auto-close was blocked
     lastPriceCheckAt: { type: Date, default: null },
     lastObservedPrice: { type: Number, default: null },

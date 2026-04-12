@@ -1138,14 +1138,10 @@ async function monitorTick() {
       continue;
     }
 
-    // Backward compatibility: block tickets without bid-based entry microstructure.
+    // Backward compatibility: skip tickets without bid-based entry microstructure.
     // Pre-migration tickets have ask-derived TP/SL — monitoring against bid would
-    // create an apples-to-oranges comparison. Fail closed.
+    // create an apples-to-oranges comparison. Log and skip tick (will retry).
     if (typeof ticket.entryBid !== "number" || ticket.entryBid <= 0) {
-      await TradeTicket.updateOne(
-        { _id: ticket._id },
-        { $set: { autoCloseEnabled: false, autoCloseBlockedReason: "MISSING_ENTRY_EXEC_PRICES" } }
-      ).catch(() => {});
       await persistMonitorReason(ticket, "MISSING_ENTRY_EXEC_PRICES", {
         entryBid: ticket.entryBid || null,
         entryAsk: ticket.entryAsk || null,
@@ -1199,11 +1195,7 @@ async function monitorTick() {
         const clobDiag = getClobPrice._lastDiag;
         if (clobDiag && clobDiag.nullReason === "NO_ORDERBOOK_404") {
           monitorState.lastTickClobPrice404++;
-          // Block auto-close: no orderbook for this token
-          await TradeTicket.updateOne(
-            { _id: ticket._id },
-            { $set: { autoCloseEnabled: false, autoCloseBlockedReason: "NO_ORDERBOOK" } }
-          ).catch(() => {});
+          // Log reason but keep autoclose enabled — will retry next tick
           await persistMonitorReason(ticket, "NO_ORDERBOOK", { tokenId: clobDiag.tokenId, httpStatus: clobDiag.httpStatus });
         } else if (clobDiag && (clobDiag.nullReason === "NO_BIDS" || clobDiag.nullReason === "INVALID_TOP_BID")) {
           await persistMonitorReason(ticket, clobDiag.nullReason, { tokenId: clobDiag.tokenId, bidsCount: clobDiag.bidsCount });
@@ -1218,13 +1210,8 @@ async function monitorTick() {
         continue;
       }
     } else {
-      // --- No CLOB token ID: block auto-close with clear reason ---
+      // --- No CLOB token ID: log reason but keep autoclose enabled — will retry ---
       monitorState.lastTickClobTokenIdMissing++;
-      // Disable auto-close for this ticket — missing token IDs
-      await TradeTicket.updateOne(
-        { _id: ticket._id },
-        { $set: { autoCloseEnabled: false, autoCloseBlockedReason: "MISSING_TOKEN_ID" } }
-      ).catch(() => {});
       await persistMonitorReason(ticket, "MISSING_TOKEN_ID", { yesTokenId: ticket.yesTokenId || null, noTokenId: ticket.noTokenId || null });
       continue;
     }
