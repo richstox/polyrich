@@ -284,7 +284,8 @@ async function traceAutoSaveBuyYesDecisions(candidates, sizingSettings, opts) {
     // But we record it for diagnostics.
 
     // Gate 14: CLOB_SPREAD_RECHECK (hard skip — no ticket created)
-    const entryAskNum = entryNum;
+    // Use CLOB bestAsk when available (more accurate than Gamma snapshot entryNum)
+    const entryAskNum = (clobBook && clobBook.bestAsk !== null) ? clobBook.bestAsk : entryNum;
     const midNum = (hasValidBid && hasValidAsk) ? (entryAskNum + entryBidNum) / 2 : null;
     const spreadAbs = (hasValidBid && hasValidAsk) ? (entryAskNum - entryBidNum) : null;
     const spreadPct = (midNum && midNum > 0 && spreadAbs !== null) ? spreadAbs / midNum : null;

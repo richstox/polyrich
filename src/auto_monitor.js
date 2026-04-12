@@ -313,23 +313,25 @@ async function getClobPrice(ticket) {
     diag.asksCount = asks.length;
     diag.timestamp = data.timestamp || null;
 
-    // Extract top-of-book
-    const topBid = bids.length > 0 ? parseFloat(bids[0].price) : NaN;
-    const topAsk = asks.length > 0 ? parseFloat(asks[0].price) : NaN;
-    const topBidSize = bids.length > 0 ? parseFloat(bids[0].size) : NaN;
-    const topAskSize = asks.length > 0 ? parseFloat(asks[0].size) : NaN;
+    // Extract top-of-book using proper max-bid / min-ask logic
+    const tob = extractExecutableYesTopOfBook(data);
+    const topBid = tob.bestBidYes;
+    const topAsk = tob.bestAskYes;
+    const topBidSize = tob.topBidSize;
+    const topAskSize = tob.topAskSize;
 
-    diag.bestBid = Number.isFinite(topBid) ? topBid : null;
-    diag.bestAsk = Number.isFinite(topAsk) ? topAsk : null;
-    diag.topBidSize = Number.isFinite(topBidSize) ? topBidSize : null;
-    diag.topAskSize = Number.isFinite(topAskSize) ? topAskSize : null;
+    diag.bestBid = topBid;
+    diag.bestAsk = topAsk;
+    diag.topBidSize = topBidSize;
+    diag.topAskSize = topAskSize;
+    diag.tobTrace = tob.trace;
 
-    if (Number.isFinite(topBid) && Number.isFinite(topAsk)) {
+    if (topBid !== null && topAsk !== null) {
       diag.spread = Math.round((topAsk - topBid) * 10000) / 10000;
     }
 
     // Selling shares → executable price is top bid (best price someone will buy at)
-    if (!Number.isFinite(topBid) || topBid <= 0) {
+    if (topBid === null || topBid <= 0) {
       diag.nullReason = bids.length === 0 ? "NO_BIDS" : "INVALID_TOP_BID";
       getClobPrice._lastDiag = diag;
       return null;
@@ -387,6 +389,125 @@ function normalizeSize(raw) {
   return (Number.isFinite(v) && v > 0) ? v : null;
 }
 
+/**
+ * Extract executable YES top-of-book from raw CLOB book data.
+ *
+ * The CLOB API may return bids/asks in arbitrary order.  This function
+ * correctly derives:
+ *   bestBidYes = max(valid bids.price)
+ *   bestAskYes = min(valid asks.price WHERE ask > bestBidYes)
+ *
+ * It also filters complement-like ask levels near 1.0 when a sane ask
+ * exists close to the bid (within 0.30 of bestBidYes).
+ *
+ * @param {{ bids: Array<{price: string, size: string}>, asks: Array<{price: string, size: string}> }} book
+ * @returns {{ bestBidYes: number|null, bestAskYes: number|null, topBidSize: number|null, topAskSize: number|null, filterReason: string|null, trace: Object }}
+ */
+function extractExecutableYesTopOfBook(book) {
+  const bids = Array.isArray(book.bids) ? book.bids : [];
+  const asks = Array.isArray(book.asks) ? book.asks : [];
+
+  const trace = {
+    rawMaxBid: null,
+    rawMinBid: null,
+    rawMinAsk: null,
+    rawMaxAsk: null,
+    chosenBestBidYes: null,
+    chosenBestAskYes: null,
+    lastTradePrice: book.last_trade_price !== undefined ? parseFloat(book.last_trade_price) : null,
+    filterReason: null,
+  };
+
+  // Parse and validate all bid prices
+  const validBids = [];
+  for (const b of bids) {
+    const p = normalizePrice(b.price);
+    const sz = normalizeSize(b.size);
+    if (p !== null) validBids.push({ price: p, size: sz });
+  }
+
+  // Parse and validate all ask prices
+  const validAsks = [];
+  for (const a of asks) {
+    const p = normalizePrice(a.price);
+    const sz = normalizeSize(a.size);
+    if (p !== null) validAsks.push({ price: p, size: sz });
+  }
+
+  // Raw extremes for tracing
+  if (validBids.length > 0) {
+    trace.rawMaxBid = Math.max(...validBids.map((b) => b.price));
+    trace.rawMinBid = Math.min(...validBids.map((b) => b.price));
+  }
+  if (validAsks.length > 0) {
+    trace.rawMinAsk = Math.min(...validAsks.map((a) => a.price));
+    trace.rawMaxAsk = Math.max(...validAsks.map((a) => a.price));
+  }
+
+  // Best bid = max of valid bids
+  if (validBids.length === 0) {
+    trace.filterReason = "NO_VALID_BIDS";
+    return { bestBidYes: null, bestAskYes: null, topBidSize: null, topAskSize: null, filterReason: trace.filterReason, trace };
+  }
+
+  // Find the best (highest) bid and its size
+  let bestBidEntry = validBids[0];
+  for (let i = 1; i < validBids.length; i++) {
+    if (validBids[i].price > bestBidEntry.price) bestBidEntry = validBids[i];
+  }
+  const bestBidYes = bestBidEntry.price;
+  const topBidSize = bestBidEntry.size;
+  trace.chosenBestBidYes = bestBidYes;
+
+  // Filter asks: only those > bestBidYes (crossed/equal levels are invalid)
+  const candidateAsks = validAsks.filter((a) => a.price > bestBidYes);
+
+  if (candidateAsks.length === 0) {
+    trace.filterReason = "NO_EXECUTABLE_ASK";
+    return { bestBidYes, bestAskYes: null, topBidSize, topAskSize: null, filterReason: trace.filterReason, trace };
+  }
+
+  // Check for complement-like levels near 1.0.
+  // A "sane" ask is one within 0.30 of bestBidYes.  If sane asks exist,
+  // discard asks that are >= (1.0 - bestBidYes) AND >= 0.70 to avoid
+  // complement-side pollution from the NO side of the book.
+  const COMPLEMENT_THRESHOLD = 0.70;
+  const SANE_DISTANCE = 0.30;
+  const saneAsks = candidateAsks.filter((a) => a.price <= bestBidYes + SANE_DISTANCE);
+  const complementAsks = candidateAsks.filter((a) => a.price >= COMPLEMENT_THRESHOLD);
+
+  let filteredAsks;
+  if (saneAsks.length > 0 && complementAsks.length > 0) {
+    // Sane asks exist alongside complement-like asks — use only sane asks
+    filteredAsks = saneAsks;
+    trace.filterReason = "COMPLEMENT_FILTERED";
+  } else if (saneAsks.length > 0) {
+    filteredAsks = saneAsks;
+    trace.filterReason = null;
+  } else {
+    // No sane asks — all asks are far from the bid. Use all candidate asks.
+    filteredAsks = candidateAsks;
+    trace.filterReason = null;
+  }
+
+  // Best ask = min of filtered asks
+  let bestAskEntry = filteredAsks[0];
+  for (let i = 1; i < filteredAsks.length; i++) {
+    if (filteredAsks[i].price < bestAskEntry.price) bestAskEntry = filteredAsks[i];
+  }
+  const bestAskYes = bestAskEntry.price;
+  const topAskSize = bestAskEntry.size;
+  trace.chosenBestAskYes = bestAskYes;
+
+  // Final sanity: bestAskYes must be > bestBidYes, both finite and > 0
+  if (!Number.isFinite(bestAskYes) || bestAskYes <= 0 || bestAskYes <= bestBidYes) {
+    trace.filterReason = "INVALID_TOP_OF_BOOK";
+    return { bestBidYes, bestAskYes: null, topBidSize, topAskSize: null, filterReason: trace.filterReason, trace };
+  }
+
+  return { bestBidYes, bestAskYes, topBidSize, topAskSize, filterReason: trace.filterReason, trace };
+}
+
 async function fetchClobBook(tokenId) {
   if (!tokenId) return null;
   const url = `https://clob.polymarket.com/book?token_id=${encodeURIComponent(tokenId)}`;
@@ -400,28 +521,21 @@ async function fetchClobBook(tokenId) {
     const bids = Array.isArray(data.bids) ? data.bids : [];
     const asks = Array.isArray(data.asks) ? data.asks : [];
 
-    const rawBid  = bids.length > 0 ? bids[0].price : undefined;
-    const rawAsk  = asks.length > 0 ? asks[0].price : undefined;
-    const rawBidSz = bids.length > 0 ? bids[0].size : undefined;
-    const rawAskSz = asks.length > 0 ? asks[0].size : undefined;
+    const tob = extractExecutableYesTopOfBook(data);
 
-    const bestBid    = normalizePrice(rawBid);
-    const bestAsk    = normalizePrice(rawAsk);
-    const topBidSize = normalizeSize(rawBidSz);
-    const topAskSize = normalizeSize(rawAskSz);
+    // Structured traceability: log top-of-book extraction decisions
+    console.log(JSON.stringify({
+      msg: "fetchClobBook-tob",
+      tokenId,
+      ...tob.trace,
+      bestBidYes: tob.bestBidYes,
+      bestAskYes: tob.bestAskYes,
+      topBidSize: tob.topBidSize,
+      topAskSize: tob.topAskSize,
+      ts: new Date().toISOString(),
+    }));
 
-    // Structured traceability: log normalization decisions when values were
-    // present but got normalized to null (indicates bad book input).
-    const normLog = [];
-    if (rawBid !== undefined && bestBid === null)    normLog.push(`bestBid normalized to null (raw=${rawBid})`);
-    if (rawAsk !== undefined && bestAsk === null)    normLog.push(`bestAsk normalized to null (raw=${rawAsk})`);
-    if (rawBidSz !== undefined && topBidSize === null) normLog.push(`topBidSize normalized to null (raw=${rawBidSz})`);
-    if (rawAskSz !== undefined && topAskSize === null) normLog.push(`topAskSize normalized to null (raw=${rawAskSz})`);
-    if (normLog.length > 0) {
-      console.log(JSON.stringify({ msg: "fetchClobBook-normalization", tokenId, decisions: normLog, ts: new Date().toISOString() }));
-    }
-
-    return { bestBid, bestAsk, topBidSize, topAskSize };
+    return { bestBid: tob.bestBidYes, bestAsk: tob.bestAskYes, topBidSize: tob.topBidSize, topAskSize: tob.topAskSize };
   } catch (err) {
     clearTimeout(timer);
     return null;
@@ -1354,6 +1468,7 @@ module.exports = {
   getCurrentCloseablePrice,
   getClobPrice,
   fetchClobBook,
+  extractExecutableYesTopOfBook,
   normalizePrice,
   normalizeSize,
   resolveTokenId,
