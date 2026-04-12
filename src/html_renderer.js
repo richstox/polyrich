@@ -2014,7 +2014,7 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
         .map(([k, v]) => `${v}×${k}`)
         .join(", ");
       autoSaveResultHtml = `<div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#fca5a5;">` +
-        `📊 Last Auto‑Save: <b>NO_VIABLE_CANDIDATE</b> (scanId: ${escHtml(r.scanId || "")})` +
+        `📊 Auto‑Save for this scan: <b>NO_VIABLE_CANDIDATE</b> (scanId: ${escHtml(r.scanId || "")})` +
         (reasonParts ? ` — ${escHtml(reasonParts)}` : "") +
         (watchCodeParts ? `<br><span style="color:#f59e0b;font-size:0.78rem;">🔍 Watch reasons: ${escHtml(watchCodeParts)}</span>` : "") +
         (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
@@ -2022,19 +2022,19 @@ function renderStatusBar(scanStatus, candidateCount, relaxedMode, systemSettings
     } else if (r.result === "CREATED") {
       const ts = r.createdAt ? new Date(r.createdAt).toISOString().slice(11, 19) + "Z" : "";
       autoSaveResultHtml = `<div style="background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#86efac;">` +
-        `✅ Last Auto‑Save: <b>CREATED</b> ticket` +
+        `✅ Auto‑Save for this scan: <b>CREATED</b> ticket` +
         (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
         `</div>`;
     } else if (r.result === "DISABLED") {
       const ts = r.createdAt ? new Date(r.createdAt).toISOString().slice(11, 19) + "Z" : "";
       autoSaveResultHtml = `<div style="background:rgba(107,114,128,.12);border:1px solid rgba(107,114,128,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#9ca3af;">` +
-        `⏸️ Last Auto‑Save: <b>DISABLED</b> (scanId: ${escHtml(r.scanId || "")})` +
+        `⏸️ Auto‑Save for this scan: <b>DISABLED</b> (scanId: ${escHtml(r.scanId || "")})` +
         (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
         `</div>`;
     } else if (r.result === "ERROR") {
       const ts = r.createdAt ? new Date(r.createdAt).toISOString().slice(11, 19) + "Z" : "";
       autoSaveResultHtml = `<div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:6px 14px;margin-bottom:8px;font-size:0.82rem;color:#fca5a5;">` +
-        `❌ Last Auto‑Save: <b>ERROR</b> — ${escHtml(r.error || "unknown")} (scanId: ${escHtml(r.scanId || "")})` +
+        `❌ Auto‑Save for this scan: <b>ERROR</b> — ${escHtml(r.error || "unknown")} (scanId: ${escHtml(r.scanId || "")})` +
         (ts ? ` <span style="color:#6b7280;font-size:0.75rem;">at ${ts}</span>` : "") +
         `</div>`;
     }
@@ -2116,15 +2116,8 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
   // Determine pageScanId — prefer scanStatus.lastScanId, fallback to first item's scanId
   const pageScanId = scanStatus.lastScanId || (cards.length > 0 && cards[0].scanId) || null;
 
-  // ScanId mismatch warning banner
-  const autoSaveScanId = (lastAutoSaveResult && lastAutoSaveResult.scanId) || null;
-  const scanIdMismatch = pageScanId && autoSaveScanId && pageScanId !== autoSaveScanId;
-  const scanIdMismatchHtml = scanIdMismatch
-    ? `<div style="background:rgba(234,179,8,.15);border:2px solid rgba(234,179,8,.4);border-radius:8px;padding:8px 14px;margin-bottom:10px;font-size:0.85rem;color:#fde047;">` +
-      `⚠️ <b>ScanId mismatch:</b> Trade page is showing scanId <code>${escHtml(pageScanId)}</code> but last Auto‑Save used scanId <code>${escHtml(autoSaveScanId)}</code>. ` +
-      `Results may differ. <a href="/scan?returnTo=/trade" style="color:#fde047;text-decoration:underline;">Run a fresh scan</a> to sync.` +
-      `</div>`
-    : "";
+  // Auto-save result is already scoped to pageScanId by the server query,
+  // so no mismatch warning is needed.
 
   // Prominent scanId display
   const scanIdHtml = pageScanId
@@ -2178,7 +2171,6 @@ function renderTradePage(scanStatus, tradeCandidates, relaxedMode, systemSetting
   return `
     ${statusBar}
     ${scanIdHtml}
-    ${scanIdMismatchHtml}
     ${noDataHtml}
     ${cards.length > 0 ? `
     <h2 style="margin:20px 0 12px;font-size:1.25rem;">Today: EXECUTE (${execSlice.length})</h2>

@@ -819,10 +819,15 @@ if (url.pathname === "/trade") {
 
     scanStatus.lastInterestingCount = rawCandidates.length;
 
-    // Fetch last auto-save result for status panel (most recent log entry)
+    // Determine pageScanId — same logic as renderTradePage
+    const pageScanId = scanStatus.lastScanId || (rawCandidates.length > 0 && rawCandidates[0].scanId) || null;
+
+    // Fetch auto-save result for the page's scanId (not global latest)
     let lastAutoSaveResult = null;
     try {
-      lastAutoSaveResult = await AutoSaveLog.findOne().sort({ createdAt: -1 }).lean();
+      if (pageScanId) {
+        lastAutoSaveResult = await AutoSaveLog.findOne({ scanId: pageScanId }).sort({ createdAt: -1 }).lean();
+      }
     } catch (_) {}
 
     const body = renderTradePage(scanStatus, rawCandidates, relaxedMode, systemSettings, lastAutoSaveResult);
