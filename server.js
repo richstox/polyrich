@@ -994,6 +994,8 @@ if (url.pathname === "/trade") {
       mongoConnected: mongoOk,
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
       scanRunning,
+      strategyMode: config.STRATEGY_MODE,
+      isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY",
       ts: new Date().toISOString(),
     };
 
@@ -1080,6 +1082,8 @@ if (url.pathname === "/trade") {
       mongoConnected: mongoOk,
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
       scanRunning,
+      strategyMode: config.STRATEGY_MODE,
+      isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY",
       ts: new Date().toISOString(),
     };
     res.writeHead(mongoOk ? 200 : 503, { "Content-Type": "application/json" });
@@ -1139,6 +1143,8 @@ if (url.pathname === "/trade") {
       autoSavedToday,
       lastAutoSave: autoSaveTelemetry.lastAutoSave,
       lastAutoSaveError: autoSaveTelemetry.lastAutoSaveError,
+      strategyMode: config.STRATEGY_MODE,
+      isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY",
       ts: new Date().toISOString(),
     };
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -1379,6 +1385,8 @@ if (url.pathname === "/trade") {
       mongoConnected: mongoOk,
       lastScanAt: scanStatus.lastScanAt ? scanStatus.lastScanAt.toISOString() : null,
       scanRunning,
+      strategyMode: config.STRATEGY_MODE,
+      isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY",
       ts: new Date().toISOString(),
     };
     const body = renderHealthUi(healthData);
@@ -2920,7 +2928,7 @@ if (url.pathname === "/trade") {
 // ---------------------------------------------------------------------------
 const port = config.PORT;
 server.listen(port, () => {
-  console.log(JSON.stringify({ msg: "server started", port, ts: new Date().toISOString() }));
+  console.log(JSON.stringify({ msg: "server started", port, STRATEGY_MODE: config.STRATEGY_MODE, isMicroLegacyEnabled: config.STRATEGY_MODE === "MICRO_LEGACY", ts: new Date().toISOString() }));
   scanLoop();
   startMonitorLoop();
 });
