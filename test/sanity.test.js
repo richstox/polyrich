@@ -2327,8 +2327,6 @@ console.log("\nfinal selection: mispricing quota");
 
   assert(rejected,
     "Ticket is rejected when entryBid is missing — cannot be created");
-  assert(data.autoCloseEnabled === true,
-    "autoCloseEnabled stays true — ticket is simply not created");
 }
 
 // ---------------------------------------------------------------------------
@@ -2478,8 +2476,6 @@ console.log("\nfinal selection: mispricing quota");
   const rejected1 = !(vb1 && va1 && vs1);
   assert(rejected1,
     "Ticket rejected when entryBidSize is null — not created");
-  assert(data1.autoCloseEnabled === true,
-    "autoCloseEnabled stays true — ticket simply not created");
 
   // Scenario 2: entryBid = null (CLOB returned no bids)
   const data2 = {

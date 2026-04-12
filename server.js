@@ -1899,9 +1899,7 @@ if (url.pathname === "/trade") {
             res.end(JSON.stringify({ error: "MISSING_CONDITION_ID", conditionId: cid || null }));
             return;
           }
-        }
-        // Force autoclose always on for EXECUTE tickets
-        if (data.tradeability === "EXECUTE" && data.action && data.action !== "WATCH") {
+          // Force autoclose always on for EXECUTE tickets
           data.autoCloseEnabled = true;
         }
         // --- Server-side CLOB book fetch: verify/override client entry snapshot ---
@@ -1949,7 +1947,7 @@ if (url.pathname === "/trade") {
           const vsl = Number.isFinite(data.riskExitLimit) && data.riskExitLimit > 0;
           if (!vtp || !vsl) {
             res.writeHead(422, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "NO_EXECUTABLE_BID", takeProfit: data.takeProfit, riskExitLimit: data.riskExitLimit }));
+            res.end(JSON.stringify({ error: "MISSING_EXIT_LEVELS", takeProfit: data.takeProfit, riskExitLimit: data.riskExitLimit }));
             return;
           }
         }
