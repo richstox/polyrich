@@ -52,6 +52,8 @@ const {
   whyNowSummary,
 } = require("./src/html_renderer");
 const { startMonitorLoop, getMonitorStatus, fetchClobBook } = require("./src/auto_monitor");
+const { evaluateTheses, persistThesisSnapshots } = require("./src/outcome_engine");
+const ThesisSnapshot = require("./models/ThesisSnapshot");
 
 const MonitorLease = require("./models/MonitorLease");
 const PaperRunnerLog = require("./models/PaperRunnerLog");
@@ -281,6 +283,29 @@ async function runScan() {
       autoSaveTelemetry.lastAutoSaveError = err.message;
     }
 
+    // ── OUTCOME mode: evaluate theses and persist snapshots ────────────
+    if (config.STRATEGY_MODE === "OUTCOME") {
+      try {
+        const ideasResult = await buildIdeas(scanStatus, {});
+        const allItems = (ideasResult && ideasResult.tradeCandidates) || [];
+        if (allItems.length > 0) {
+          const theses = evaluateTheses(allItems);
+          const stored = await persistThesisSnapshots(scanId, theses);
+          console.log(JSON.stringify({
+            msg: "outcome: thesis snapshots persisted",
+            scanId,
+            evaluated: allItems.length,
+            stored,
+            enter: theses.filter(t => t.verdict === "ENTER").length,
+            watch: theses.filter(t => t.verdict === "WATCH").length,
+            avoid: theses.filter(t => t.verdict === "AVOID").length,
+          }));
+        }
+      } catch (err) {
+        console.warn(JSON.stringify({ msg: "outcome: thesis evaluation error", scanId, err: err.message }));
+      }
+    }
+
     return candidates;
   } catch (err) {
     const durationMs = Date.now() - startedAt.getTime();
@@ -306,6 +331,16 @@ async function runScan() {
 // Auto-Save EXECUTE tickets after a successful scan
 // ---------------------------------------------------------------------------
 async function autoSaveExecuteTickets(scanId) {
+  // ── Strategy mode gate ──────────────────────────────────────────────
+  // Auto-save EXECUTE is only active in MICRO_LEGACY mode.
+  if (config.STRATEGY_MODE !== "MICRO_LEGACY") {
+    console.log(JSON.stringify({ msg: "autoSave: skipped (STRATEGY_MODE is not MICRO_LEGACY)", scanId, strategyMode: config.STRATEGY_MODE }));
+    autoSaveTelemetry.lastAutoSave = { scanId, result: "STRATEGY_DISABLED", createdCount: 0, skipReasons: null, ts: new Date().toISOString() };
+    autoSaveTelemetry.lastAutoSaveError = null;
+    await AutoSaveLog.create({ scanId, result: "STRATEGY_DISABLED" }).catch(() => {});
+    return;
+  }
+
   // ── Atomic once-per-scan idempotency guard ──────────────────────────
   // Prevents duplicate auto-saves if the same scanId is processed twice
   // (e.g. overlapping instances, retries). Uses a single Mongo atomic
@@ -1025,6 +1060,7 @@ if (url.pathname === "/trade") {
     const envKillSwitches = {
       autoModeEnv: config.AUTO_MODE_ENABLED,
       paperCloseEnv: config.AUTO_MODE_PAPER_CLOSE,
+      strategyMode: config.STRATEGY_MODE,
     };
 
     // Extract persisted debug snapshot from system settings
@@ -1710,6 +1746,11 @@ if (url.pathname === "/trade") {
 
   // ── POST /api/tickets/autoclose ────────────────────────────────────
   if (url.pathname === "/api/tickets/autoclose" && req.method === "POST") {
+    if (config.STRATEGY_MODE !== "MICRO_LEGACY") {
+      res.writeHead(422, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "AUTOCLOSE_DISABLED", strategyMode: config.STRATEGY_MODE }));
+      return;
+    }
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", async () => {
@@ -1753,6 +1794,11 @@ if (url.pathname === "/trade") {
 
   // ── POST /api/tickets/autoclose-all ─────────────────────────────────
   if (url.pathname === "/api/tickets/autoclose-all" && req.method === "POST") {
+    if (config.STRATEGY_MODE !== "MICRO_LEGACY") {
+      res.writeHead(422, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "AUTOCLOSE_DISABLED", strategyMode: config.STRATEGY_MODE }));
+      return;
+    }
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", async () => {
@@ -1891,6 +1937,14 @@ if (url.pathname === "/trade") {
         // Persist CLOB token IDs from payload
         if (data.yesTokenId) data.yesTokenId = String(data.yesTokenId).trim() || null;
         if (data.noTokenId) data.noTokenId = String(data.noTokenId).trim() || null;
+        // ── Strategy mode gate: EXECUTE tickets require MICRO_LEGACY ──
+        if (data.tradeability === "EXECUTE" && data.action && data.action !== "WATCH" &&
+            config.STRATEGY_MODE !== "MICRO_LEGACY") {
+          res.writeHead(422, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "EXECUTE_DISABLED", strategyMode: config.STRATEGY_MODE,
+            detail: "EXECUTE tickets require STRATEGY_MODE=MICRO_LEGACY" }));
+          return;
+        }
         // Strict auto-close gate: require valid conditionId for monitoring
         if (data.tradeability === "EXECUTE" && data.action && data.action !== "WATCH") {
           const cid = data.conditionId || "";
@@ -2004,6 +2058,27 @@ if (url.pathname === "/trade") {
       const tickets = await TradeTicket.find(query).sort({ createdAt: -1 }).limit(limit).lean();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(tickets));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // ── GET /api/thesis ───────────────────────────────────────────────────
+  // Query thesis snapshots from OUTCOME mode evaluations.
+  // Params: ?verdict=ENTER|WATCH|AVOID  &limit=N  &scanId=...
+  if (url.pathname === "/api/thesis" && req.method === "GET") {
+    try {
+      const verdict = url.searchParams.get("verdict");
+      const scanId = url.searchParams.get("scanId");
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "100", 10) || 100, 500);
+      const query = {};
+      if (["ENTER", "WATCH", "AVOID"].includes(verdict)) query.verdict = verdict;
+      if (scanId) query.scanId = scanId;
+      const snapshots = await ThesisSnapshot.find(query).sort({ createdAt: -1 }).limit(limit).lean();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ strategyMode: config.STRATEGY_MODE, count: snapshots.length, snapshots }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: err.message }));
@@ -2710,7 +2785,7 @@ if (url.pathname === "/trade") {
   // ── GET /api/system/danger-zone/counts ──────────────────────────────
   if (url.pathname === "/api/system/danger-zone/counts" && req.method === "GET") {
     try {
-      const [allTickets, closedTickets, openClosingTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches, monitorLeases, decisionLogs] = await Promise.all([
+      const [allTickets, closedTickets, openClosingTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches, monitorLeases, decisionLogs, thesisSnapshots] = await Promise.all([
         TradeTicket.countDocuments({}),
         TradeTicket.countDocuments({ status: "CLOSED" }),
         TradeTicket.countDocuments({ status: { $in: ["OPEN", "CLOSING"] } }),
@@ -2722,6 +2797,7 @@ if (url.pathname === "/trade") {
         TagCache.estimatedDocumentCount(),
         MonitorLease.estimatedDocumentCount(),
         AutoSaveDecisionLog.estimatedDocumentCount(),
+        ThesisSnapshot.estimatedDocumentCount(),
       ]);
       const closedTicketIds = await TradeTicket.find({ status: "CLOSED" }).select("_id").lean();
       const closedCloseAttempts = closedTicketIds.length > 0
@@ -2733,7 +2809,7 @@ if (url.pathname === "/trade") {
         DELETE_CLOSED: { tickets: closedTickets, closeAttempts: closedCloseAttempts },
         DELETE_OPEN: { tickets: openClosingTickets },
         RESET_TRADES: { tickets: allTickets, closeAttempts },
-        FACTORY_RESET: { tickets: allTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches, monitorLeases, decisionLogs },
+        FACTORY_RESET: { tickets: allTickets, closeAttempts, autoSaveLogs, snapshots, scans, shownCandidates, tagCaches, monitorLeases, decisionLogs, thesisSnapshots },
       }));
     } catch (err) {
       res.writeHead(500, { "Content-Type": "application/json" });
@@ -2796,7 +2872,7 @@ if (url.pathname === "/trade") {
           deleted.tickets = ticketResult.deletedCount;
           deleted.closeAttempts = closeAttemptResult.deletedCount;
         } else if (action === "FACTORY_RESET") {
-          const [ticketResult, closeAttemptResult, autoSaveResult, snapshotResult, scanResult, shownResult, tagResult, leaseResult, decisionLogResult] = await Promise.all([
+          const [ticketResult, closeAttemptResult, autoSaveResult, snapshotResult, scanResult, shownResult, tagResult, leaseResult, decisionLogResult, thesisResult] = await Promise.all([
             TradeTicket.deleteMany({}),
             CloseAttempt.deleteMany({}),
             AutoSaveLog.deleteMany({}),
@@ -2806,6 +2882,7 @@ if (url.pathname === "/trade") {
             TagCache.deleteMany({}),
             MonitorLease.deleteMany({}),
             AutoSaveDecisionLog.deleteMany({}),
+            ThesisSnapshot.deleteMany({}),
           ]);
           // Reset the lastAutoSaveScanId so next scan can auto-save
           await SystemSetting.updateOne({ _id: "system" }, { $set: { lastAutoSaveScanId: null } });
@@ -2821,6 +2898,7 @@ if (url.pathname === "/trade") {
           deleted.tagCaches = tagResult.deletedCount;
           deleted.monitorLeases = leaseResult.deletedCount;
           deleted.decisionLogs = decisionLogResult.deletedCount;
+          deleted.thesisSnapshots = thesisResult.deletedCount;
         }
 
         res.writeHead(200, { "Content-Type": "application/json" });

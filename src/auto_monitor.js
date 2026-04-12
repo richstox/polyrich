@@ -1083,6 +1083,13 @@ async function monitorTick() {
   resetDailyCountersIfNeeded();
   resetTickDiagnostics();
 
+  // ── Strategy mode gate ──────────────────────────────────────────────
+  // Auto-close monitoring is only active in MICRO_LEGACY mode.
+  if (config.STRATEGY_MODE !== "MICRO_LEGACY") {
+    monitorState.openMonitored = 0;
+    return;
+  }
+
   // Check DB-level auto-mode toggle — if disabled, skip this tick entirely
   let dbSettings;
   try {
