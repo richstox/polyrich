@@ -1589,6 +1589,106 @@ if (url.pathname === "/trade") {
     return;
   }
 
+  // ── POST /api/system/autosave-trace/replay ──────────────────────────
+  // Re-run BUY YES decision trace for a specific scanId using stored snapshots.
+  // Does NOT re-scan markets — uses buildIdeas() against existing DB snapshots.
+  // Body: { "scanId": "..." } — optional; defaults to scanStatus.lastScanId.
+  // Env override: SCAN_ID=... takes precedence.
+  if (url.pathname === "/api/system/autosave-trace/replay" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", async () => {
+      try {
+        let data = {};
+        try { data = JSON.parse(body); } catch (_) {}
+        const envScanId = process.env.SCAN_ID || null;
+        const targetScanId = envScanId || data.scanId || scanStatus.lastScanId;
+        if (!targetScanId) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "No scanId provided (body, env SCAN_ID, or lastScanId)" }));
+          return;
+        }
+
+        // Build candidates from stored snapshots
+        let tradeCandidates;
+        try {
+          const result = await buildIdeas(scanStatus, {});
+          tradeCandidates = result.tradeCandidates || [];
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "buildIdeas failed: " + err.message }));
+          return;
+        }
+
+        // Read user sizing settings
+        let settings;
+        try {
+          settings = await SystemSetting.getSettings();
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Cannot read settings: " + err.message }));
+          return;
+        }
+        const userCap = typeof settings.maxTradeCapUsd === "number" && settings.maxTradeCapUsd > 0
+          ? settings.maxTradeCapUsd : null;
+        const userBankroll = typeof settings.bankrollUsd === "number" && settings.bankrollUsd > 0
+          ? settings.bankrollUsd : null;
+        const userRiskPct = typeof settings.riskPct === "number" && settings.riskPct > 0
+          ? settings.riskPct : null;
+        const sizingSettings = { bankrollUsd: userBankroll, riskPct: userRiskPct, maxTradeCapUsd: userCap };
+
+        // Run trace with real CLOB + real dedupe
+        const traceRecords = await traceAutoSaveBuyYesDecisions(
+          tradeCandidates.slice(0, 20),
+          sizingSettings,
+          {
+            fetchClobBookFn: fetchClobBook,
+            checkDedupeFn: async (dedupeKey) => {
+              const existing = await TradeTicket.findOne({
+                dedupeKey,
+                status: { $in: ["OPEN", "CLOSING"] },
+              }).lean();
+              return !!existing;
+            },
+            maxCandidates: 20,
+          }
+        );
+
+        // Persist with replay scanId
+        if (traceRecords.length > 0) {
+          await AutoSaveDecisionLog.insertMany(
+            traceRecords.map((r) => ({ ...r, scanId: targetScanId + "_replay" })),
+            { ordered: false }
+          ).catch(() => {});
+        }
+
+        // Summarize
+        const buyYesTraces = traceRecords.filter((r) => r.action === "BUY_YES");
+        const passTraces = traceRecords.filter((r) => r.decision === "PASS");
+        const gateCounts = {};
+        for (const r of traceRecords) {
+          gateCounts[r.firstFailGate] = (gateCounts[r.firstFailGate] || 0) + 1;
+        }
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          scanId: targetScanId,
+          envOverride: envScanId || null,
+          totalCandidates: tradeCandidates.length,
+          totalTraced: traceRecords.length,
+          buyYesCandidates: buyYesTraces.length,
+          passedAllGates: passTraces.length,
+          gateCounts,
+          traces: traceRecords,
+        }, null, 2));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
   // ── POST /api/tickets/autoclose ────────────────────────────────────
   if (url.pathname === "/api/tickets/autoclose" && req.method === "POST") {
     let body = "";
