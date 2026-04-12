@@ -2,6 +2,7 @@
 
 const crypto = require("crypto");
 const config = require("./config");
+const { getEffectiveStrategyMode, isAppPaused, setCachedSettings } = require("./runtime_config");
 const TradeTicket = require("../models/TradeTicket");
 const CloseAttempt = require("../models/CloseAttempt");
 const MonitorLease = require("../models/MonitorLease");
@@ -1083,9 +1084,15 @@ async function monitorTick() {
   resetDailyCountersIfNeeded();
   resetTickDiagnostics();
 
+  // ── App paused guard ─────────────────────────────────────────────────
+  if (isAppPaused()) {
+    monitorState.openMonitored = 0;
+    return;
+  }
+
   // ── Strategy mode gate ──────────────────────────────────────────────
   // Auto-close monitoring is only active in MICRO_LEGACY mode.
-  if (config.STRATEGY_MODE !== "MICRO_LEGACY") {
+  if (getEffectiveStrategyMode().mode !== "MICRO_LEGACY") {
     monitorState.openMonitored = 0;
     return;
   }
@@ -1094,6 +1101,7 @@ async function monitorTick() {
   let dbSettings;
   try {
     dbSettings = await SystemSetting.getSettings();
+    setCachedSettings(dbSettings);
   } catch (err) {
     console.warn(JSON.stringify({ msg: "failed to fetch SystemSetting, defaulting to disabled", err: err.message, ts: new Date().toISOString() }));
     dbSettings = { autoModeEnabled: false, paperCloseEnabled: false };

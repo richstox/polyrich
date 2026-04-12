@@ -15,6 +15,10 @@ const systemSettingSchema = new mongoose.Schema(
     bankrollUsd: { type: Number, default: null },
     riskPct: { type: Number, default: null },        // decimal, e.g. 0.01 = 1%
     maxTradeCapUsd: { type: Number, default: null },  // absolute $ cap per trade
+    // Strategy mode override: "OUTCOME" | "MICRO_LEGACY" | null (null = use env/default)
+    strategyModeOverride: { type: String, enum: ["OUTCOME", "MICRO_LEGACY", null], default: null },
+    // Global pause switch — when true, all background activity stops and manual endpoints reject
+    appPaused: { type: Boolean, default: false },
     // Debug: persisted null-price sample from auto-monitor (rate-limited writes)
     debugNullPriceSample: { type: mongoose.Schema.Types.Mixed, default: null },
   },

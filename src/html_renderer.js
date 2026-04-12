@@ -3056,6 +3056,121 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
     </script>
   `;
 
+  // --- Strategy Mode & Pause controls ---
+  const currentStrategyMode = envKillSwitches.strategyMode || "OUTCOME";
+  const strategyModeSource = envKillSwitches.strategyModeSource || "env_default";
+  const currentAppPaused = envKillSwitches.appPaused || false;
+  const strategyOverride = systemSettings.strategyModeOverride || null;
+
+  const strategySourceBadge = strategyModeSource === "mongo_override"
+    ? '<span style="background:#854d0e;color:#fef08a;padding:2px 8px;border-radius:6px;font-size:0.75rem;font-weight:600;">mongo_override</span>'
+    : '<span style="background:#374151;color:#9ca3af;padding:2px 8px;border-radius:6px;font-size:0.75rem;font-weight:600;">env_default</span>';
+
+  const pausedBadge = currentAppPaused
+    ? '<span style="background:#7f1d1d;color:#fecaca;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">⏸ PAUSED</span>'
+    : '<span style="background:#166534;color:#bbf7d0;padding:2px 10px;border-radius:8px;font-size:0.82rem;font-weight:600;">▶ RUNNING</span>';
+
+  const strategyControlPanel = `
+    <div class="card" style="margin-top:16px;">
+      <h2 style="margin-top:0;">🎯 Strategy Mode & Pause</h2>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span class="label" style="font-weight:600;">Effective Mode:</span>
+            <strong style="color:#60a5fa;">${escHtml(currentStrategyMode)}</strong>
+            ${strategySourceBadge}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="label" style="font-weight:600;">App Status:</span>
+            ${pausedBadge}
+          </div>
+        </div>
+        <div style="border-top:1px solid #1e293b;padding-top:12px;">
+          <div style="margin-bottom:8px;font-size:0.85rem;color:#e2e8f0;font-weight:600;">Strategy Mode Override</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.85rem;color:#e2e8f0;">
+              <input type="radio" name="strategyMode" value="OUTCOME" ${strategyOverride === "OUTCOME" ? "checked" : ""}>
+              OUTCOME
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.85rem;color:#e2e8f0;">
+              <input type="radio" name="strategyMode" value="MICRO_LEGACY" ${strategyOverride === "MICRO_LEGACY" ? "checked" : ""}>
+              MICRO_LEGACY
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.85rem;color:#94a3b8;">
+              <input type="radio" name="strategyMode" value="null" ${!strategyOverride ? "checked" : ""}>
+              Clear override (use env/default)
+            </label>
+          </div>
+        </div>
+        <div style="border-top:1px solid #1e293b;padding-top:12px;">
+          <div style="margin-bottom:8px;font-size:0.85rem;color:#e2e8f0;font-weight:600;">Pause App</div>
+          <div style="display:flex;gap:8px;">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.85rem;color:#e2e8f0;">
+              <input type="radio" name="appPaused" value="true" ${currentAppPaused ? "checked" : ""}>
+              ON (paused)
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.85rem;color:#e2e8f0;">
+              <input type="radio" name="appPaused" value="false" ${!currentAppPaused ? "checked" : ""}>
+              OFF (running)
+            </label>
+          </div>
+        </div>
+        <div>
+          <button id="save-strategy-pause-btn"
+            style="background:#2563eb;color:#fff;border:none;padding:8px 24px;border-radius:6px;font-size:0.85rem;font-weight:600;cursor:pointer;">
+            Save
+          </button>
+          <span id="save-strategy-pause-status" style="margin-left:12px;font-size:0.82rem;color:#94a3b8;"></span>
+        </div>
+        <p style="font-size:0.75rem;color:#64748b;margin:0;">
+          Strategy mode changes take effect on the next background cycle. No restart required.<br>
+          Pausing stops all background activity and rejects manual scan/runner endpoints with <code>APP_PAUSED</code>.
+        </p>
+      </div>
+    </div>
+    <script>
+    (function() {
+      var btn = document.getElementById("save-strategy-pause-btn");
+      var status = document.getElementById("save-strategy-pause-status");
+      btn.addEventListener("click", async function() {
+        btn.disabled = true;
+        btn.textContent = "Saving…";
+        status.textContent = "";
+        try {
+          // Strategy mode
+          var modeRadio = document.querySelector('input[name="strategyMode"]:checked');
+          var modeVal = modeRadio ? modeRadio.value : "null";
+          var modeBody = modeVal === "null" ? null : modeVal;
+          var smRes = await fetch("/api/system/strategy-mode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: modeBody }),
+          });
+          var smData = await smRes.json();
+          if (smData.error) { status.textContent = "Error: " + smData.error; btn.disabled = false; btn.textContent = "Save"; return; }
+
+          // Pause
+          var pauseRadio = document.querySelector('input[name="appPaused"]:checked');
+          var pauseVal = pauseRadio ? pauseRadio.value === "true" : false;
+          var pRes = await fetch("/api/system/pause", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ paused: pauseVal }),
+          });
+          var pData = await pRes.json();
+          if (pData.error) { status.textContent = "Error: " + pData.error; btn.disabled = false; btn.textContent = "Save"; return; }
+
+          location.reload();
+        } catch(e) {
+          status.textContent = "Network error";
+          btn.disabled = false;
+          btn.textContent = "Save";
+        }
+      });
+    })();
+    </script>
+  `;
+
   const attemptRows = recentCloseAttempts.map((a) => {
     const resultCls = a.result === "INTENT_RECORDED" ? "color:#22c55e"
       : a.result === "PAPER_CLOSED" ? "color:#eab308"
@@ -3254,6 +3369,7 @@ function renderSystemPage(healthData, metrics, autoModeStatus, recentCloseAttemp
     ${renderHealthUi(healthData)}
     ${renderMetricsUi(metrics)}
     ${togglesPanel}
+    ${strategyControlPanel}
     ${autoSavePanel}
     ${autoModePanel}
     <div class="card">
